@@ -296,7 +296,7 @@ def main() -> None:
     yaml.preserve_quotes = True
     yaml.width = 4096  # Avoid unwanted line wrapping.
 
-    with open(input_path) as f:
+    with open(input_path, encoding="utf-8") as f:
         data = yaml.load(f)
 
     if data is None:
@@ -308,7 +308,7 @@ def main() -> None:
     if args.dry_run:
         yaml.dump(data, sys.stdout)
     else:
-        with open(output_path, "w") as f:
+        with open(output_path, "w", encoding="utf-8") as f:
             yaml.dump(data, f)
         print(f"Migrated config written to {output_path}")
 
