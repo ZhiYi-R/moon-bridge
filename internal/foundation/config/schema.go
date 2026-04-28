@@ -65,9 +65,13 @@ func DumpConfigSchema(configPath string, extraPlugins map[string]func() any) err
 			continue
 		}
 		base := strings.TrimSuffix(strings.TrimSuffix(entry.Name(), ".yaml"), ".yml")
+		// Only generate schemas for known plugins with a registered config type.
 		data, err := generatePluginSchema(base, allTypes)
 		if err != nil {
 			return fmt.Errorf("generate schema for plugin %s: %w", base, err)
+		}
+		if data == nil {
+			continue
 		}
 		schemaPath := filepath.Join(pluginDir, base+".schema.json")
 		if err := writeSchemaIfStale(schemaPath, data); err != nil {
@@ -96,23 +100,13 @@ func generateMainSchema() []byte {
 // reflects its config struct. Otherwise a generic open-object schema is used.
 func generatePluginSchema(name string, allTypes map[string]func() any) ([]byte, error) {
 	factory, ok := allTypes[name]
-	if ok {
-		r := &jsonschema.Reflector{}
-		raw := schemaToMap(r.Reflect(factory()))
-		raw["$metadata"] = map[string]any{
-			"schemaVersion": SchemaVersion,
-		}
-		return json.MarshalIndent(raw, "", "  ")
+	if !ok {
+		return nil, nil // unknown plugin, skip
 	}
-
-	// Unknown plugin — generic open-object schema.
-	raw := map[string]any{
-		"$schema":              "https://json-schema.org/draft/2020-12/schema",
-		"type":                 "object",
-		"additionalProperties": map[string]any{"type": "object"},
-		"$metadata": map[string]any{
-			"schemaVersion": SchemaVersion,
-		},
+	r := &jsonschema.Reflector{}
+	raw := schemaToMap(r.Reflect(factory()))
+	raw["$metadata"] = map[string]any{
+		"schemaVersion": SchemaVersion,
 	}
 	return json.MarshalIndent(raw, "", "  ")
 }
