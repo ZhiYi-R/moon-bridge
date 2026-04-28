@@ -807,6 +807,15 @@ func TestDumpConfigSchemaWritesMainSchemaAndPluginSchemas(t *testing.T) {
 	if _, err := os.Stat(pluginSchemaPath); err != nil {
 		t.Fatalf("plugin schema not found: %v", err)
 	}
+
+	// Plugin file schema should have field-level definitions.
+	pluginData, err := os.ReadFile(pluginSchemaPath)
+	if err != nil {
+		t.Fatalf("read plugin schema: %v", err)
+	}
+	if !strings.Contains(string(pluginData), "reinforce_instructions") {
+		t.Fatal("plugin schema missing reinforce_instructions field")
+	}
 }
 
 func TestDumpConfigSchemaSkipsUpToDateSchema(t *testing.T) {
