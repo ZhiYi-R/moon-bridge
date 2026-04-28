@@ -98,6 +98,20 @@ func TestXDGDefaultConfigPathUsesXDGConfigHome(t *testing.T) {
 	}
 }
 
+func TestXDGDefaultConfigPathFallsBackToHome(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", "")
+	t.Setenv("HOME", configHome)
+
+	got, err := config.XDGDefaultConfigPath()
+	if err != nil {
+		t.Fatalf("XDGDefaultConfigPath() error = %v", err)
+	}
+	want := filepath.Join(configHome, ".config", "moonbridge", "config.yml")
+	if got != want {
+		t.Fatalf("XDGDefaultConfigPath() = %q, want %q", got, want)
+	}
+}
 func TestLoadFromFileMergesSplitPluginConfigFiles(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yml")

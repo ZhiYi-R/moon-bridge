@@ -141,6 +141,9 @@ func LoadFromFile(path string) (Config, error) {
 	return FromFileConfig(fileConfig)
 }
 
+// LoadFromYAML parses YAML bytes into a Config. Unlike LoadFromFile, it does
+// not discover split plugin config files from the plugins/ directory; it only
+// processes the inline plugins: section of the provided YAML content.
 func LoadFromYAML(data []byte) (Config, error) {
 	fileConfig, err := decodeFileConfig(data)
 	if err != nil {
@@ -187,14 +190,20 @@ func loadPluginConfigFiles(configPath string, fileConfig *FileConfig) error {
 		}
 		return fmt.Errorf("read plugin config dir %s: %w", pluginDir, err)
 	}
+	seen := make(map[string]bool, len(entries))
 	for _, entry := range entries {
 		if entry.IsDir() || !isYAMLFile(entry.Name()) {
 			continue
 		}
-		pluginName := strings.TrimSuffix(strings.TrimSuffix(entry.Name(), ".yaml"), ".yml")
-		if strings.TrimSpace(pluginName) == "" {
+		baseName := strings.TrimSuffix(strings.TrimSuffix(entry.Name(), ".yaml"), ".yml")
+		if strings.TrimSpace(baseName) == "" {
 			continue
 		}
+		// Deduplicate: skip if we already processed a .yml variant of this base name.
+		if seen[baseName] {
+			continue
+		}
+		seen[baseName] = true
 		pluginPath := filepath.Join(pluginDir, entry.Name())
 		raw, err := os.ReadFile(pluginPath)
 		if err != nil {
@@ -204,7 +213,11 @@ func loadPluginConfigFiles(configPath string, fileConfig *FileConfig) error {
 		if err != nil {
 			return fmt.Errorf("parse plugin config %s: %w", pluginPath, err)
 		}
-		mergePluginConfig(fileConfig, pluginName, pluginConfig)
+		// Skip empty or whitespace-only plugin files.
+		if len(pluginConfig) == 0 {
+			continue
+		}
+		mergePluginConfig(fileConfig, baseName, pluginConfig)
 	}
 	return nil
 }
