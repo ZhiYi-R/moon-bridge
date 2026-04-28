@@ -27,6 +27,7 @@ type Registry struct {
 	errorTransformers  []ErrorTransformer
 	sessionProviders   []SessionStateProvider
 	logConsumers       []LogConsumer
+	configSpecs        []config.ExtensionConfigSpec
 	logger             *slog.Logger
 }
 
@@ -41,7 +42,15 @@ func NewRegistry(logger *slog.Logger) *Registry {
 // Register adds a plugin and detects its capabilities.
 func (r *Registry) Register(p Plugin) {
 	r.plugins = append(r.plugins, p)
-	if ctp, ok := p.(ConfigTypeProvider); ok {
+	if csp, ok := p.(ConfigSpecProvider); ok {
+		specs := csp.ConfigSpecs()
+		r.configSpecs = append(r.configSpecs, specs...)
+		for _, spec := range specs {
+			if spec.Factory != nil {
+				config.RegisterPluginConfigType(spec.Name, spec.Factory)
+			}
+		}
+	} else if ctp, ok := p.(ConfigTypeProvider); ok {
 		config.RegisterPluginConfigType(p.Name(), ctp.ConfigType)
 	}
 	if v, ok := p.(InputPreprocessor); ok {
@@ -82,18 +91,43 @@ func (r *Registry) Register(p Plugin) {
 	}
 }
 
+func (r *Registry) ConfigSpecs() []config.ExtensionConfigSpec {
+	if r == nil || len(r.configSpecs) == 0 {
+		return nil
+	}
+	specs := make([]config.ExtensionConfigSpec, len(r.configSpecs))
+	copy(specs, r.configSpecs)
+	return specs
+}
+
 // InitAll calls Init on all registered plugins.
 func (r *Registry) InitAll(appCfg interface {
 	PluginConfig(name string) map[string]any
 }) error {
 	for _, p := range r.plugins {
 		var pluginCfg map[string]any
+		var appConfig config.Config
+		var typedCfg any
 		if appCfg != nil {
 			pluginCfg = appCfg.PluginConfig(p.Name())
+			if extCfg, ok := any(appCfg).(interface {
+				ExtensionConfig(name string, modelAlias string) any
+			}); ok {
+				typedCfg = extCfg.ExtensionConfig(p.Name(), "")
+			}
+			if cfg, ok := any(appCfg).(*config.Config); ok && cfg != nil {
+				appConfig = *cfg
+			} else if cfg, ok := any(appCfg).(config.Config); ok {
+				appConfig = cfg
+			}
+		}
+		if typedCfg == nil {
+			typedCfg = config.DecodePluginConfig(p.Name(), pluginCfg)
 		}
 		ctx := PluginContext{
-			Config: config.DecodePluginConfig(p.Name(), pluginCfg),
-			Logger: r.logger.With("plugin", p.Name()),
+			Config:    typedCfg,
+			AppConfig: appConfig,
+			Logger:    r.logger.With("plugin", p.Name()),
 		}
 		if err := p.Init(ctx); err != nil {
 			return fmt.Errorf("plugin %s init failed: %w", p.Name(), err)

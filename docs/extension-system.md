@@ -18,9 +18,13 @@ type Plugin interface {
 }
 
 type PluginContext struct {
-    Config    map[string]any // 来自 config.yml plugins.<name>
+    Config    any           // 已按 extension config spec 解码的 typed config
     AppConfig config.Config  // 全局配置（只读）
     Logger    *slog.Logger   // 带插件名的 logger
+}
+
+type ConfigSpecProvider interface {
+    ConfigSpecs() []config.ExtensionConfigSpec
 }
 
 type BasePlugin struct{}  // 提供所有方法的 no-op 默认实现
@@ -108,11 +112,11 @@ type Registry struct {
 // 1. 创建注册表
 registry := plugin.NewRegistry(logger.L())
 
-// 2. 注册插件（自动检测能力）
-registry.Register(deepseekv4.NewPlugin(isEnabled))
+// 2. 注册插件（自动检测能力和配置规格）
+registry.Register(deepseekv4.NewPlugin())
 
-// 3. 初始化（传递插件配置）
-registry.InitAll(&cfg)  // cfg.PluginConfig("deepseek_v4") → map[string]any
+// 3. 初始化（传递 AppConfig 和 typed extension 配置）
+registry.InitAll(&cfg)  // cfg.ExtensionConfig("deepseek_v4", "") → *deepseekv4.Config
 
 // 4. 在应用关闭时清理
 defer registry.ShutdownAll()
@@ -158,23 +162,49 @@ flowchart LR
 
 ## 配置方式
 
-在 `config.yml` 的 `plugins` 节配置插件参数：
+在 `config.yml` 的 `extensions` 节配置扩展参数。扩展自己的参数放在 `config:`，启用状态放在对应 scope 的 `enabled` 中：
 
 ```yaml
-plugins:
+extensions:
   deepseek_v4:
-    reinforce_instructions: true
-    reinforce_prompt: "[System Reminder]: ...\n[User]:"
+    config:
+      reinforce_instructions: true
+      reinforce_prompt: "[System Reminder]: ...\n[User]:"
+
+provider:
+  providers:
+    deepseek:
+      models:
+        deepseek-v4-pro:
+          extensions:
+            deepseek_v4:
+              enabled: true
 ```
 
-在 `Init()` 中通过 `PluginContext.Config` 接收：
+插件通过 `ConfigSpecProvider` 声明自己的配置结构：
 
 ```go
+func (p *DSPlugin) ConfigSpecs() []config.ExtensionConfigSpec {
+    return []config.ExtensionConfigSpec{{
+        Name: "deepseek_v4",
+        Scopes: []config.ExtensionScope{
+            config.ExtensionScopeGlobal,
+            config.ExtensionScopeProvider,
+            config.ExtensionScopeModel,
+            config.ExtensionScopeRoute,
+        },
+        Factory: func() any { return &Config{} },
+    }}
+}
+
 func (p *DSPlugin) Init(ctx plugin.PluginContext) error {
-    if cfg, ok := ctx.Config["reinforce_instructions"]; ok {
-        p.reinforceEnabled = cfg.(bool)
-    }
+    p.cfg = plugin.Config[Config](ctx)
+    p.appCfg = ctx.AppConfig
     return nil
+}
+
+func (p *DSPlugin) EnabledForModel(model string) bool {
+    return p.appCfg.ExtensionEnabled("deepseek_v4", model)
 }
 ```
 
@@ -191,6 +221,10 @@ import (
 
 const PluginName = "demo"
 
+type DemoConfig struct {
+    Prefix string `json:"prefix,omitempty" yaml:"prefix"`
+}
+
 type DemoPlugin struct {
     plugin.BasePlugin
     prefix string
@@ -203,8 +237,9 @@ func NewPlugin() *DemoPlugin {
 func (p *DemoPlugin) Name() string { return PluginName }
 
 func (p *DemoPlugin) Init(ctx plugin.PluginContext) error {
-    if v, ok := ctx.Config["prefix"].(string); ok {
-        p.prefix = v
+    cfg := plugin.Config[DemoConfig](ctx)
+    if cfg != nil {
+        p.prefix = cfg.Prefix
     }
     ctx.Logger.Info("demo plugin initialized", "prefix", p.prefix)
     return nil

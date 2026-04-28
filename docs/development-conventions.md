@@ -106,9 +106,11 @@ foundation → （无内部依赖）
 项目仍在开发中，不需要保留旧配置兼容性。配置结构变更时直接：
 
 1. 更新 `config.example.yml`
-2. 更新 `internal/foundation/config/config_loader.go` 的 `FileConfig` 和 `FromFileConfig()`
+2. 更新 `internal/foundation/config/config_loader.go` 的 `FileConfig` 和 `FromFileConfigWithOptions()`
 3. 更新相关脚本（`scripts/` 目录）
-4. 更新本文档
+4. 更新 README、`docs/config-migration.md` 和本文档
+
+Extension 专属配置不得再直接加到 core config struct。新增 extension 配置时应由 extension 实现 `plugin.ConfigSpecProvider`，在 spec 中声明 `extensions.<name>.enabled/config` 的 scope、默认值、typed config factory 和校验函数；core config 只保留通用 `extensions` 插槽和 `ExtensionEnabled` / `ExtensionConfig` resolver。
 
 ### Makefile
 
@@ -143,5 +145,6 @@ foundation → （无内部依赖）
 - 插件必须实现 `plugin.Plugin` 接口（Name + Init + Shutdown + EnabledForModel）
 - 可按需实现零个或多个能力接口（ToolInjector、ContentFilter 等）
 - 在 `plugin.go` 的末尾用编译期断言验证接口实现
-- 插件的 `Init()` 通过 `PluginContext` 接收配置（来自 `config.yml` 的 `plugins.<name>`）
-- 通过 `plugin.Registry` 注册，在 `service/app/app.go` 中 `runTransform()` 中注册
+- 需要配置的 extension 实现 `plugin.ConfigSpecProvider`，配置来自 `extensions.<name>.config`，启用状态通过 `extensions.<name>.enabled` 按 global/provider/model/route 继承解析
+- `PluginContext.Config` 接收 typed config，`PluginContext.AppConfig` 提供只读全局配置和 per-model resolver
+- 内置 extension 通过 `internal/service/app/extensions.go` 的 catalog 汇总 specs 并创建 `plugin.Registry`

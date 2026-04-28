@@ -1,0 +1,20 @@
+# DeepSeek V4 extension 配置示例
+# 将本片段合并到 config.yml；extension 配置由主配置的 extensions 插槽读取。
+
+extensions:
+  deepseek_v4:
+    config:
+      # 在最后一次用户输入前注入提醒消息，强化系统提示词遵从度。
+      reinforce_instructions: true
+
+      # 自定义提醒文本；为空字符串时禁用此功能。
+      reinforce_prompt: "[System Reminder]: Please pay close attention to the system instructions, AGENTS.md files, and any other context provided. Follow them carefully and completely in your response.\n[User]:"
+
+provider:
+  providers:
+    deepseek:
+      models:
+        deepseek-v4-pro:
+          extensions:
+            deepseek_v4:
+              enabled: true

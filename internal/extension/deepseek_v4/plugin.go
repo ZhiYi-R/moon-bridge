@@ -2,10 +2,12 @@ package deepseekv4
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 
 	"moonbridge/internal/extension/plugin"
+	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
 )
@@ -33,21 +35,81 @@ type EnabledFunc func(modelAlias string) bool
 type DSPlugin struct {
 	plugin.BasePlugin
 	isEnabled EnabledFunc
+	appCfg    config.Config
 	logger    *slog.Logger
 	cfg       *Config
 }
 
 // NewPlugin creates a DeepSeek V4 plugin.
-func NewPlugin(isEnabled EnabledFunc) *DSPlugin {
-	return &DSPlugin{isEnabled: isEnabled}
+func NewPlugin(isEnabled ...EnabledFunc) *DSPlugin {
+	var enabled EnabledFunc
+	if len(isEnabled) > 0 {
+		enabled = isEnabled[0]
+	}
+	return &DSPlugin{isEnabled: enabled}
 }
 
-func (p *DSPlugin) Name() string                      { return PluginName }
-func (p *DSPlugin) ConfigType() any                       { return &Config{} }
-func (p *DSPlugin) EnabledForModel(model string) bool { return p.isEnabled(model) }
+func (p *DSPlugin) Name() string                              { return PluginName }
+func (p *DSPlugin) ConfigType() any                           { return &Config{} }
+func (p *DSPlugin) ConfigSpecs() []config.ExtensionConfigSpec { return ConfigSpecs() }
+func (p *DSPlugin) EnabledForModel(model string) bool {
+	if p.isEnabled != nil {
+		return p.isEnabled(model)
+	}
+	return p.appCfg.ExtensionEnabled(PluginName, model)
+}
 func (p *DSPlugin) Init(ctx plugin.PluginContext) error {
+	p.appCfg = ctx.AppConfig
 	p.logger = ctx.Logger
 	p.cfg = plugin.Config[Config](ctx)
+	return nil
+}
+
+func ConfigSpecs() []config.ExtensionConfigSpec {
+	return []config.ExtensionConfigSpec{{
+		Name: PluginName,
+		Scopes: []config.ExtensionScope{
+			config.ExtensionScopeGlobal,
+			config.ExtensionScopeProvider,
+			config.ExtensionScopeModel,
+			config.ExtensionScopeRoute,
+		},
+		Factory:  func() any { return &Config{} },
+		Validate: ValidateConfig,
+	}}
+}
+
+func ValidateConfig(cfg config.Config) error {
+	for alias, route := range cfg.Routes {
+		if !cfg.ExtensionEnabled(PluginName, alias) {
+			continue
+		}
+		if err := validateAnthropicProvider(cfg, route.Provider, alias); err != nil {
+			return err
+		}
+	}
+	for providerKey, def := range cfg.ProviderDefs {
+		for modelName := range def.Models {
+			alias := providerKey + "/" + modelName
+			if !cfg.ExtensionEnabled(PluginName, alias) {
+				continue
+			}
+			if err := validateAnthropicProvider(cfg, providerKey, alias); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateAnthropicProvider(cfg config.Config, providerKey string, modelAlias string) error {
+	def, ok := cfg.ProviderDefs[providerKey]
+	if !ok {
+		return nil
+	}
+	if def.Protocol != "" && def.Protocol != config.ProtocolAnthropic {
+		return fmt.Errorf("extensions.%s enabled for %s requires anthropic protocol (provider %s uses %s)", PluginName, modelAlias, providerKey, def.Protocol)
+	}
 	return nil
 }
 

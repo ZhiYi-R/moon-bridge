@@ -34,12 +34,13 @@ provider:
       models:
         deepseek-v4-pro: {}
   routes:
-    moonbridge: "deepseek/deepseek-v4-pro"
+    moonbridge:
+      to: "deepseek/deepseek-v4-pro"
 ```
 
 ## DeepSeek V4
 
-旧的 `provider.deepseek_v4: true` 或 `provider.providers.<key>.deepseek_v4: true` 会迁移到模型级：
+旧的 `provider.deepseek_v4: true`、`provider.providers.<key>.deepseek_v4: true` 或模型级 `deepseek_v4: true` 会迁移到统一 extension 插槽：
 
 ```yaml
 provider:
@@ -47,26 +48,31 @@ provider:
     deepseek:
       models:
         deepseek-v4-pro:
-          deepseek_v4: true
+          extensions:
+            deepseek_v4:
+              enabled: true
 ```
 
 ## Visual
 
-旧的 `provider.visual: true` 或 `provider.providers.<key>.visual: true` 会迁移到两层新配置：
+旧的 `provider.visual: true`、`provider.providers.<key>.visual: true`、模型级 `visual: true` / `enable_visual_extension: true` 会迁移到两层新配置：
 
 ```yaml
-provider:
+extensions:
   visual:
-    enabled: true
-    provider: kimi
-    model: kimi-for-coding
-    max_rounds: 4
-    max_tokens: 2048
+    config:
+      provider: kimi
+      model: kimi-for-coding
+      max_rounds: 4
+      max_tokens: 2048
+provider:
   providers:
     deepseek:
       models:
         deepseek-v4-pro:
-          visual: true
+          extensions:
+            visual:
+              enabled: true
     kimi:
       base_url: "https://api.moonshot.cn/anthropic"
       api_key: "replace-with-kimi-api-key"
@@ -74,6 +80,6 @@ provider:
         kimi-for-coding: {}
 ```
 
-迁移脚本会把 `provider.providers.<key>.visual: true` 下推到该 provider 的所有模型。旧的全局 `provider.visual: true` 会下推到所有非 Kimi 的 Anthropic 模型，Kimi/Moonshot provider 只作为视觉 provider 使用。如果配置里已有 Kimi/Moonshot provider，会自动填 `provider.visual.provider` 和 `provider.visual.model`；无法推断时会打印 warning，需要手动补齐。
+迁移脚本会把 `provider.providers.<key>.visual: true` 下推到该 provider 的所有模型，并把旧的模型级 `visual: true` / `enable_visual_extension: true` 改为 `extensions.visual.enabled: true`。旧的全局 `provider.visual: true` 会下推到所有非 Kimi 的 Anthropic 模型，Kimi/Moonshot provider 只作为视觉 provider 使用。如果配置里已有 Kimi/Moonshot provider，会自动填 `extensions.visual.config.provider` 和 `extensions.visual.config.model`；无法推断时会打印 warning，需要手动补齐。
 
-Visual 只支持 Anthropic-routed 主模型和 Anthropic-compatible 视觉 provider。`protocol: "openai-response"` 的模型不能设置 `visual: true`，也不能作为 `provider.visual.provider`。
+Visual 只支持 Anthropic-routed 主模型和 Anthropic-compatible 视觉 provider。`protocol: "openai-response"` 的模型不能设置 `extensions.visual.enabled: true`，也不能作为 `extensions.visual.config.provider`。

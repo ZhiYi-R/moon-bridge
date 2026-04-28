@@ -277,7 +277,13 @@ func TestToAnthropicAppliesDeepSeekV4SamplingQuirksOnlyForRoutedProvider(t *test
 	cfg := config.Config{
 		DefaultMaxTokens: 1024,
 		Routes: map[string]config.RouteEntry{
-			"deep":   {Provider: "deepseek", Model: "deepseek-v4-pro", DeepSeekV4: true},
+			"deep": {
+				Provider: "deepseek",
+				Model:    "deepseek-v4-pro",
+				Extensions: map[string]config.ExtensionSettings{
+					deepseekv4.PluginName: extensionEnabled(true),
+				},
+			},
 			"claude": {Provider: "anthropic", Model: "claude-test"},
 		},
 		ProviderDefs: map[string]config.ProviderDef{
@@ -287,7 +293,10 @@ func TestToAnthropicAppliesDeepSeekV4SamplingQuirksOnlyForRoutedProvider(t *test
 		Cache: config.CacheConfig{Mode: "off"},
 	}
 	plugins := plugin.NewRegistry(nil)
-	plugins.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
+	plugins.Register(deepseekv4.NewPlugin())
+	if err := plugins.InitAll(&cfg); err != nil {
+		t.Fatalf("InitAll() error = %v", err)
+	}
 	bridgeUnderTest := bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(plugins))
 	temperature := 0.2
 	topP := 0.9

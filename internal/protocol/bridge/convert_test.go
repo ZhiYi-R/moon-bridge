@@ -33,9 +33,16 @@ func testBridge() *bridge.Bridge {
 
 func testBridgeWithConfig(cfg config.Config) *bridge.Bridge {
 	plugins := plugin.NewRegistry(nil)
-	plugins.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
-	plugins.Register(visual.NewPlugin(cfg.VisualForModel))
+	plugins.Register(deepseekv4.NewPlugin())
+	plugins.Register(visual.NewPlugin())
+	if err := plugins.InitAll(&cfg); err != nil {
+		panic(err)
+	}
 	return bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(plugins))
+}
+
+func extensionEnabled(enabled bool) config.ExtensionSettings {
+	return config.ExtensionSettings{Enabled: &enabled}
 }
 
 func testBridgeWithWebSearchDisabled() *bridge.Bridge {
@@ -111,9 +118,14 @@ func TestToAnthropicConvertsTextToolsToolChoiceAndCache(t *testing.T) {
 func TestToAnthropicInjectsVisualToolsForOptInModel(t *testing.T) {
 	cfg := config.Config{
 		DefaultMaxTokens: 1024,
-		Visual:           config.VisualConfig{Enabled: true, Provider: "kimi", Model: "kimi-vision"},
-		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test", Visual: true}},
-		Cache:            config.CacheConfig{Mode: "off"},
+		Routes: map[string]config.RouteEntry{"gpt-test": {
+			Provider: "default",
+			Model:    "claude-test",
+			Extensions: map[string]config.ExtensionSettings{
+				visual.PluginName: extensionEnabled(true),
+			},
+		}},
+		Cache: config.CacheConfig{Mode: "off"},
 	}
 	converted, _, err := testBridgeWithConfig(cfg).ToAnthropic(openai.ResponsesRequest{
 		Model: "gpt-test",

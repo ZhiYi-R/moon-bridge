@@ -28,6 +28,10 @@ import (
 	mbtrace "moonbridge/internal/service/trace"
 )
 
+func extensionEnabled(enabled bool) config.ExtensionSettings {
+	return config.ExtensionSettings{Enabled: &enabled}
+}
+
 type fakeProvider struct {
 	request      anthropic.MessageRequest
 	streamEvents []anthropic.StreamEvent
@@ -271,7 +275,6 @@ func TestBuildModelInfosFromConfigIncludesProviderModelsBeforeRouteFallback(t *t
 
 func TestBuildModelInfoPreservesReasoningLevelsForDeepSeekV4(t *testing.T) {
 	info := codex.BuildModelInfoFromProviderModel("deepseek-v4-pro(deepseek)", "deepseek", config.ModelMeta{
-		DeepSeekV4:            true,
 		DefaultReasoningLevel: "high",
 		SupportedReasoningLevels: []config.ReasoningLevelPreset{
 			{Effort: "high", Description: "High reasoning effort"},
@@ -369,12 +372,21 @@ func TestResponsesHandlerReusesCodexSessionForDeepSeekThinking(t *testing.T) {
 	}
 	cfg := config.Config{
 		DefaultMaxTokens: 1024,
-		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
-		ProviderDefs:     map[string]config.ProviderDef{"default": {}},
-		Cache:            config.CacheConfig{Mode: "off"},
+		Routes: map[string]config.RouteEntry{"gpt-test": {
+			Provider: "default",
+			Model:    "deepseek-v4-pro",
+			Extensions: map[string]config.ExtensionSettings{
+				deepseekv4.PluginName: extensionEnabled(true),
+			},
+		}},
+		ProviderDefs: map[string]config.ProviderDef{"default": {}},
+		Cache:        config.CacheConfig{Mode: "off"},
 	}
 	plugins := plugin.NewRegistry(nil)
-	plugins.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
+	plugins.Register(deepseekv4.NewPlugin())
+	if err := plugins.InitAll(&cfg); err != nil {
+		t.Fatalf("InitAll() error = %v", err)
+	}
 	handler := server.New(server.Config{
 		Bridge:   bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(plugins)),
 		Provider: provider,

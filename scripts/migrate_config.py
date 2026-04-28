@@ -36,7 +36,8 @@ New format:
             pricing:
               input_price: 2
     routes:
-      moonbridge: "deepseek/deepseek-v4-pro"
+      moonbridge:
+        to: "deepseek/deepseek-v4-pro"
 
 Old DeepSeek V4 extension format (global):
   provider:
@@ -48,13 +49,19 @@ Intermediate format (provider-level, also migrated):
       deepseek:
         deepseek_v4: true
 
-New format (model-level):
+New format (extension slot):
+  extensions:
+    deepseek_v4:
+      config:
+        reinforce_instructions: true
   provider:
     providers:
       deepseek:
         models:
           deepseek-v4-pro:
-            deepseek_v4: true
+            extensions:
+              deepseek_v4:
+                enabled: true
 
 Old Visual extension formats (migrated):
   provider:
@@ -66,18 +73,21 @@ Old Visual extension formats (migrated):
         visual: true
 
 New Visual extension format:
-  provider:
+  extensions:
     visual:
-      enabled: true
-      provider: kimi
-      model: kimi-for-coding
-      max_rounds: 4
-      max_tokens: 2048
+      config:
+        provider: kimi
+        model: kimi-for-coding
+        max_rounds: 4
+        max_tokens: 2048
+  provider:
     providers:
       deepseek:
         models:
           deepseek-v4-pro:
-            visual: true
+            extensions:
+              visual:
+                enabled: true
 
 Usage:
   python3 scripts/migrate_config.py                     # reads config.yml, writes config.yml
@@ -96,6 +106,12 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 
+DEEPSEEK_EXTENSION = "deepseek_v4"
+VISUAL_EXTENSION = "visual"
+VISUAL_MODEL_FLAG = "enable_visual_extension"
+LEGACY_VISUAL_MODEL_FLAG = "visual"
+
+
 def needs_migration(provider_block: dict) -> bool:
     """Return True if the provider block still has any obsolete shape."""
     if "deepseek_v4" in provider_block:
@@ -104,7 +120,14 @@ def needs_migration(provider_block: dict) -> bool:
         return True
     if needs_visual_migration(provider_block):
         return True
+    if needs_route_migration(provider_block):
+        return True
     return needs_model_migration(provider_block)
+
+
+def needs_root_migration(data: dict) -> bool:
+    plugins = data.get("plugins")
+    return isinstance(plugins, dict) and bool(plugins)
 
 
 def needs_model_migration(provider_block: dict) -> bool:
@@ -130,13 +153,24 @@ def needs_provider_level_deepseek_v4_migration(provider_block: dict) -> bool:
     for pdef in providers.values():
         if isinstance(pdef, dict) and "deepseek_v4" in pdef:
             return True
+        models = pdef.get("models") if isinstance(pdef, dict) else None
+        for mdef in (models or {}).values():
+            if isinstance(mdef, dict) and "deepseek_v4" in mdef:
+                return True
     return False
 
 
+def needs_route_migration(provider_block: dict) -> bool:
+    routes = provider_block.get("routes") or {}
+    return any(isinstance(route, str) for route in routes.values())
+
+
 def needs_visual_migration(provider_block: dict) -> bool:
-    """Return True if Visual still uses an obsolete scalar/provider-level shape."""
+    """Return True if Visual still uses an obsolete shape or flag name."""
     visual = provider_block.get("visual")
     if visual is not None and not isinstance(visual, dict):
+        return True
+    if isinstance(visual, dict):
         return True
 
     providers = provider_block.get("providers")
@@ -145,11 +179,10 @@ def needs_visual_migration(provider_block: dict) -> bool:
     for pdef in providers.values():
         if isinstance(pdef, dict) and "visual" in pdef:
             return True
-    if has_model_level_visual(providers):
-        if visual is None:
-            return True
-        if isinstance(visual, dict) and boolish(visual.get("enabled")):
-            return not str(visual.get("provider", "")).strip() or not str(visual.get("model", "")).strip()
+    if has_legacy_model_level_visual(providers):
+        return True
+    if has_old_visual_model_flag(providers):
+        return True
     return False
 
 
@@ -157,20 +190,23 @@ def migrate(data: dict) -> dict:
     """Transform the config dict in-place from old to new format."""
     provider_block = data.get("provider")
     if not provider_block:
+        migrate_plugin_configs(data)
         return data
 
-    if not needs_migration(provider_block):
+    if not needs_migration(provider_block) and not needs_root_migration(data):
         print("Config already uses the current format. Nothing to do.")
         return data
 
     migrate_models = needs_model_migration(provider_block)
     providers = provider_block.get("providers") or {}
-    migrate_deepseek_v4(provider_block, providers)
-    migrate_visual(provider_block, providers)
+    migrate_plugin_configs(data)
+    migrate_deepseek_v4(data, provider_block, providers)
+    migrate_visual(data, provider_block, providers)
+    migrate_routes(provider_block)
     if not migrate_models:
         return data
 
-    routes: dict[str, str] = {}
+    routes: dict[str, dict] = {}
 
     for provider_key, pdef in providers.items():
         old_models = pdef.get("models")
@@ -182,14 +218,14 @@ def migrate(data: dict) -> dict:
             if not isinstance(mdef, dict):
                 # Bare value or empty -- treat alias as upstream name.
                 new_models[alias] = mdef
-                routes[alias] = f"{provider_key}/{alias}"
+                routes[alias] = {"to": f"{provider_key}/{alias}"}
                 continue
 
             upstream_name = mdef.pop("name", None)
             if not upstream_name:
                 # No "name" field -- alias IS the upstream name (already new format).
                 new_models[alias] = mdef
-                routes[alias] = f"{provider_key}/{alias}"
+                routes[alias] = {"to": f"{provider_key}/{alias}"}
                 continue
 
             # Migrate: alias -> upstream_name, strip "name" field.
@@ -203,7 +239,7 @@ def migrate(data: dict) -> dict:
                     existing.update({k: v for k, v in cleaned.items() if v})
                     cleaned = existing
             new_models[upstream_name] = cleaned if cleaned else {}
-            routes[alias] = f"{provider_key}/{upstream_name}"
+            routes[alias] = {"to": f"{provider_key}/{upstream_name}"}
 
         pdef["models"] = new_models
 
@@ -215,16 +251,60 @@ def migrate(data: dict) -> dict:
     else:
         provider_block["routes"] = routes
 
+    migrate_routes(provider_block)
+
     return data
 
 
-def migrate_deepseek_v4(provider_block: dict, providers: dict) -> None:
+def ensure_extension_block(data: dict, name: str) -> dict:
+    extensions = data.setdefault("extensions", {})
+    return extensions.setdefault(name, {})
+
+
+def ensure_extension_config(data: dict, name: str) -> dict:
+    block = ensure_extension_block(data, name)
+    return block.setdefault("config", {})
+
+
+def set_model_extension_enabled(models: dict, model_name: str, mdef: object, name: str, enabled: bool = True) -> None:
+    if mdef is None:
+        mdef = {}
+        models[model_name] = mdef
+    if not isinstance(mdef, dict):
+        return
+    extensions = mdef.setdefault("extensions", {})
+    extensions.setdefault(name, {})["enabled"] = enabled
+
+
+def migrate_plugin_configs(data: dict) -> None:
+    plugins = data.get("plugins")
+    if not isinstance(plugins, dict):
+        return
+    for name, cfg in plugins.items():
+        if not isinstance(cfg, dict):
+            continue
+        target = ensure_extension_config(data, str(name))
+        for key, value in cfg.items():
+            target.setdefault(key, value)
+    data.pop("plugins", None)
+
+
+def migrate_routes(provider_block: dict) -> None:
+    routes = provider_block.get("routes")
+    if not isinstance(routes, dict):
+        return
+    for alias, route in list(routes.items()):
+        if isinstance(route, str):
+            routes[alias] = {"to": route}
+
+
+def migrate_deepseek_v4(data: dict, provider_block: dict, providers: dict) -> None:
     """Migrate deepseek_v4 from global/provider level to model level.
 
     Handles three source locations:
     1. provider.deepseek_v4 (global, oldest format)
     2. provider.providers.<key>.deepseek_v4 (intermediate format)
-    Both are migrated to provider.providers.<key>.models.<name>.deepseek_v4.
+    Both are migrated to provider.providers.<key>.models.<name>.extensions.deepseek_v4.enabled.
     """
     # Step 1: Collect provider keys that should have deepseek_v4 enabled.
     enabled_provider_keys: set[str] = set()
@@ -237,8 +317,8 @@ def migrate_deepseek_v4(provider_block: dict, providers: dict) -> None:
             if not keys:
                 print(
                     "Warning: provider.deepseek_v4 was true, but no DeepSeek-like "
-                    "provider could be identified. Add deepseek_v4: true under the "
-                    "right model entries manually.",
+                    "provider could be identified. Enable extensions.deepseek_v4 "
+                    "under the right model entries manually.",
                     file=sys.stderr,
                 )
             else:
@@ -262,27 +342,33 @@ def migrate_deepseek_v4(provider_block: dict, providers: dict) -> None:
         if not models:
             print(
                 f"Warning: deepseek_v4 enabled for provider {key!r}, but it has "
-                f"no models defined. Add deepseek_v4: true to model entries manually.",
+                f"no models defined. Add extensions.deepseek_v4.enabled to model entries manually.",
                 file=sys.stderr,
             )
             continue
         for model_name, mdef in models.items():
-            if mdef is None:
-                models[model_name] = {"deepseek_v4": True}
-            elif isinstance(mdef, dict):
-                if "deepseek_v4" not in mdef:
-                    mdef["deepseek_v4"] = True
-            # else: scalar value, skip (unusual)
+            set_model_extension_enabled(models, model_name, mdef, DEEPSEEK_EXTENSION, True)
+
+    # Step 3: Rename any existing model-level deepseek_v4 flags.
+    for pdef in providers.values():
+        if not isinstance(pdef, dict):
+            continue
+        models = pdef.get("models") or {}
+        for model_name, mdef in models.items():
+            if not isinstance(mdef, dict) or "deepseek_v4" not in mdef:
+                continue
+            enabled = boolish(mdef.pop("deepseek_v4"))
+            set_model_extension_enabled(models, model_name, mdef, DEEPSEEK_EXTENSION, enabled)
 
 
-def migrate_visual(provider_block: dict, providers: dict) -> None:
-    """Migrate Visual enablement to provider.visual config + model-level flags."""
-    visual = provider_block.get("visual")
+def migrate_visual(data: dict, provider_block: dict, providers: dict) -> None:
+    """Migrate Visual enablement to extensions.visual config + model-level flags."""
+    visual = provider_block.pop("visual", None)
     global_visual_enabled = False
     if visual is not None and not isinstance(visual, dict):
         enabled = boolish(visual)
         global_visual_enabled = enabled
-        provider_block["visual"] = {"enabled": enabled}
+        visual = {"enabled": enabled}
 
     enabled_provider_keys: set[str] = set()
     for key, pdef in providers.items():
@@ -301,42 +387,101 @@ def migrate_visual(provider_block: dict, providers: dict) -> None:
         if not models:
             print(
                 f"Warning: visual enabled for provider {key!r}, but it has "
-                f"no models defined. Add visual: true to model entries manually.",
+                f"no models defined. Add {VISUAL_MODEL_FLAG}: true to model entries manually.",
                 file=sys.stderr,
             )
             continue
         for model_name, mdef in models.items():
-            if mdef is None:
-                models[model_name] = {"visual": True}
-            elif isinstance(mdef, dict):
-                if "visual" not in mdef:
-                    mdef["visual"] = True
-            # else: scalar value, skip (unusual)
+            enable_visual_extension(models, model_name, mdef)
 
-    visual_enabled = bool(enabled_provider_keys) or has_model_level_visual(providers)
-    visual = provider_block.get("visual")
+    migrate_model_visual_flags(providers)
+
+    visual_enabled = bool(enabled_provider_keys) or has_visual_extension_model(providers)
     if visual_enabled and visual is None:
         visual = {"enabled": True}
-        provider_block["visual"] = visual
 
-    if isinstance(visual, dict) and boolish(visual.get("enabled")):
+    if isinstance(visual, dict) and (boolish(visual.get("enabled")) or visual_enabled):
         fill_visual_provider_model(visual, providers)
-        visual.setdefault("max_rounds", 4)
-        visual.setdefault("max_tokens", 2048)
+        cfg = ensure_extension_config(data, VISUAL_EXTENSION)
+        for key in ("provider", "model", "max_rounds", "max_tokens"):
+            if key in visual and key != "enabled":
+                cfg.setdefault(key, visual[key])
+        cfg.setdefault("max_rounds", 4)
+        cfg.setdefault("max_tokens", 2048)
         if global_visual_enabled:
             mark_global_visual_models(providers, str(visual.get("provider", "")).strip())
 
 
-def has_model_level_visual(providers: dict) -> bool:
+def has_visual_extension_model(providers: dict) -> bool:
     """Return True if any provider model already opts in to Visual."""
     for pdef in providers.values():
         if not isinstance(pdef, dict):
             continue
         models = pdef.get("models") or {}
         for mdef in models.values():
-            if isinstance(mdef, dict) and boolish(mdef.get("visual")):
+            if not isinstance(mdef, dict):
+                continue
+            if boolish(mdef.get(VISUAL_MODEL_FLAG)):
+                return True
+            ext = (mdef.get("extensions") or {}).get(VISUAL_EXTENSION)
+            if isinstance(ext, dict) and boolish(ext.get("enabled")):
                 return True
     return False
+
+
+def has_legacy_model_level_visual(providers: dict) -> bool:
+    """Return True if any provider model still uses the old Visual flag name."""
+    for pdef in providers.values():
+        if not isinstance(pdef, dict):
+            continue
+        models = pdef.get("models") or {}
+        for mdef in models.values():
+            if isinstance(mdef, dict) and LEGACY_VISUAL_MODEL_FLAG in mdef:
+                return True
+    return False
+
+
+def has_old_visual_model_flag(providers: dict) -> bool:
+    for pdef in providers.values():
+        if not isinstance(pdef, dict):
+            continue
+        models = pdef.get("models") or {}
+        for mdef in models.values():
+            if isinstance(mdef, dict) and VISUAL_MODEL_FLAG in mdef:
+                return True
+    return False
+
+
+def migrate_model_visual_flags(providers: dict) -> None:
+    """Rename model-level visual flags to extensions.visual.enabled."""
+    for pdef in providers.values():
+        if not isinstance(pdef, dict):
+            continue
+        models = pdef.get("models") or {}
+        for mdef in models.values():
+            if not isinstance(mdef, dict) or LEGACY_VISUAL_MODEL_FLAG not in mdef:
+                continue
+            legacy_value = mdef.pop(LEGACY_VISUAL_MODEL_FLAG)
+            extensions = mdef.setdefault("extensions", {})
+            extensions.setdefault(VISUAL_EXTENSION, {})["enabled"] = boolish(legacy_value)
+            if VISUAL_MODEL_FLAG in mdef:
+                current_value = mdef.pop(VISUAL_MODEL_FLAG)
+                extensions.setdefault(VISUAL_EXTENSION, {})["enabled"] = boolish(current_value)
+    for pdef in providers.values():
+        if not isinstance(pdef, dict):
+            continue
+        models = pdef.get("models") or {}
+        for mdef in models.values():
+            if not isinstance(mdef, dict) or VISUAL_MODEL_FLAG not in mdef:
+                continue
+            value = mdef.pop(VISUAL_MODEL_FLAG)
+            extensions = mdef.setdefault("extensions", {})
+            extensions.setdefault(VISUAL_EXTENSION, {})["enabled"] = boolish(value)
+
+
+def enable_visual_extension(models: dict, model_name: str, mdef: object) -> None:
+    """Mark a model as Visual-enabled using the current flag name."""
+    set_model_extension_enabled(models, model_name, mdef, VISUAL_EXTENSION, True)
 
 
 def mark_global_visual_models(providers: dict, visual_provider_key: str) -> None:
@@ -352,16 +497,15 @@ def mark_global_visual_models(providers: dict, visual_provider_key: str) -> None
             continue
         for model_name, mdef in models.items():
             if mdef is None:
-                models[model_name] = {"visual": True}
+                models[model_name] = {"extensions": {VISUAL_EXTENSION: {"enabled": True}}}
                 marked += 1
             elif isinstance(mdef, dict):
-                if "visual" not in mdef:
-                    mdef["visual"] = True
+                mdef.setdefault("extensions", {}).setdefault(VISUAL_EXTENSION, {})["enabled"] = True
                 marked += 1
     if marked == 0:
         print(
             "Warning: provider.visual was true, but no non-Kimi Anthropic "
-            "models were found. Add visual: true to target model entries manually.",
+            "models were found. Add extensions.visual.enabled to target model entries manually.",
             file=sys.stderr,
         )
 

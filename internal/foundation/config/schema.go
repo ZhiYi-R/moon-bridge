@@ -26,10 +26,19 @@ func RegisterPluginConfigType(name string, factory func() any) {
 	pluginConfigTypes[name] = factory
 }
 
+type SchemaOptions struct {
+	ExtensionSpecs []ExtensionConfigSpec
+	ExtraPlugins   map[string]func() any
+}
+
 // DumpConfigSchema generates and writes JSON Schema files alongside the
 // config file. extraPlugins provides per-plugin config types for typed
 // schema generation; may be nil.
 func DumpConfigSchema(configPath string, extraPlugins map[string]func() any) error {
+	return DumpConfigSchemaWithOptions(configPath, SchemaOptions{ExtraPlugins: extraPlugins})
+}
+
+func DumpConfigSchemaWithOptions(configPath string, opts SchemaOptions) error {
 	configDir := filepath.Dir(configPath)
 
 	// Main config schema — describes the config format, not individual plugins.
@@ -41,16 +50,39 @@ func DumpConfigSchema(configPath string, extraPlugins map[string]func() any) err
 	ensureSchemaRef(configPath, DefaultMainSchemaName)
 
 	// Merge built-in and externally-provided plugin types.
-	allTypes := make(map[string]func() any, len(pluginConfigTypes)+len(extraPlugins))
+	allTypes := make(map[string]func() any, len(pluginConfigTypes)+len(opts.ExtraPlugins)+len(opts.ExtensionSpecs))
 	for k, v := range pluginConfigTypes {
 		allTypes[k] = v
 	}
-	for k, v := range extraPlugins {
+	for k, v := range opts.ExtraPlugins {
 		allTypes[k] = v
+	}
+	for _, spec := range opts.ExtensionSpecs {
+		if spec.Factory != nil {
+			allTypes[spec.Name] = spec.Factory
+		}
 	}
 
 	// Per-plugin schema files — each describes its own config structure.
 	pluginDir := filepath.Join(configDir, DefaultPluginConfigDirName)
+	if len(opts.ExtensionSpecs) > 0 {
+		if err := os.MkdirAll(pluginDir, 0755); err != nil {
+			return fmt.Errorf("create plugin schema dir: %w", err)
+		}
+		for _, spec := range opts.ExtensionSpecs {
+			data, err := generatePluginSchema(spec.Name, allTypes)
+			if err != nil {
+				return fmt.Errorf("generate schema for plugin %s: %w", spec.Name, err)
+			}
+			if data == nil {
+				continue
+			}
+			schemaPath := filepath.Join(pluginDir, spec.Name+".schema.json")
+			if err := writeSchemaIfStale(schemaPath, data); err != nil {
+				return fmt.Errorf("write plugin schema %s: %w", schemaPath, err)
+			}
+		}
+	}
 	entries, err := os.ReadDir(pluginDir)
 	if err != nil {
 		if os.IsNotExist(err) {

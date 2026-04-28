@@ -131,6 +131,7 @@ flowchart LR
 - 使用 `yaml.v3` `KnownFields(true)` 严格解析，防止字段拼写错误。
 - 校验 `mode`、`log`（level/format）、`system_prompt`、多 Provider 必填字段（`provider.providers.*.base_url` / `api_key` / `protocol`）、模型路由和缓存参数。
 - 提供 `ModelFor()` 将客户端模型别名映射为上游真实模型名，并读取 web search 配置控制搜索工具是否自动探测、强制启用、禁用或 server-side injected。
+- 提供统一 `extensions` 插槽和 `ExtensionEnabled()` / `ExtensionConfig()` resolver；具体扩展通过 `ExtensionConfigSpec` 声明自己的字段、scope 和校验逻辑。
 - web search 配置支持三级覆盖：route → model（provider catalog）→ provider → 全局。推荐在 `providers.<key>.models.<name>.web_search` 按模型单独配置。
 - `WebSearchForModel()` 按模型别名解析 web search 配置（route → model → provider → global）；`WebSearchMaxUsesForModel()` / `WebSearchTavilyKeyForModel()` / `WebSearchFirecrawlKeyForModel()` / `WebSearchMaxRoundsForModel()` 同理。
 - 保留 `WebSearchForProvider()` 等 per-provider 方法作为内部回退。
@@ -196,7 +197,7 @@ flowchart TD
   INJECT --> MUTATE["PluginHooks.MutateRequest\n[RequestMutator]"]
   MUTATE --> CACHEPLAN["cache.PlanCache()\n缓存规划"]
   CACHEPLAN --> RESOLVE["resolveProvider()\n选择 Provider"]
-  RESOLVE --> WRAP["maybeWrapInjectedSearch()\n注入 Web Search 编排器"]
+  RESOLVE --> WRAP["maybeWrapInjectedSearch() + maybeWrapVisual()\n按配置包装 Provider"]
   WRAP --> STREAM{stream?}
   STREAM -->|yes| STREAMING["Provider.StreamMessage()\n流事件"]
   STREAMING --> CONVSTREAM["Bridge.ConvertStreamEvents()\nSSE 输出"]
@@ -227,8 +228,8 @@ Moon Bridge 支持多提供商和多模型路由。配置通过 `provider.provid
 - `openai-response`：改写上游模型名，直接代理到上游 `/v1/responses`，并从上游 `usage` 中累计 session 统计。
 - Anthropic protocol：调用 `Bridge.ToAnthropic()` 转换并拿到 cache 计划。
 - 新增 `AppConfig` 字段存储完整配置，用于按模型别名解析 web search 参数。
-- `resolveProvider()` 调用 `maybeWrapProvider()`，根据模型配置动态包装 injected search orchestrator 和 Visual orchestrator。
-- Visual 包装器会先从主请求中取出 Anthropic image block，替换为 `Image #1` 这类可引用文本，再在工具循环中把真实图片转发给 `provider.visual.provider` 指向的现有 Anthropic-compatible Provider。
+- `resolveProvider()` 依次调用 `maybeWrapInjectedSearch()` 和 `maybeWrapVisual()`，根据 provider/model 配置动态包装 injected search orchestrator 和 Visual orchestrator。
+- Visual 包装器会先从主请求中取出 Anthropic image block，替换为 `Image #1` 这类可引用文本，再在工具循环中把真实图片转发给 `extensions.visual.config.provider` 指向的现有 Anthropic-compatible Provider。
 - `resolveRequestOptions()` 按模型别名构建 per-request `bridge.RequestOptions`，包含 `WebSearchMode`、`WebSearchMaxUses`、`FirecrawlAPIKey` 等字段。
 - 非流式：调用 Provider `CreateMessage()` → `Bridge.FromAnthropicWithPlanAndContext()` 转换回 → JSON 响应。
 - 流式：设置 SSE 头后调用 Provider `StreamMessage()` → 收集所有 SSE 事件 → `Bridge.ConvertStreamEventsWithContext()` 批量转换 → 写入 SSE 流。服务端不再生成 synthetic commentary preamble，避免旧等待提示出现在 UI 或被后续 resume 带回上下文；历史中已存在的 `phase: "commentary"` 消息会在请求转换时跳过。
@@ -285,8 +286,8 @@ OpenAI Responses 协议 DTO 定义。包含 `ResponsesRequest`、`Response`、`O
 
 Provider 扩展模块。当前包含：
 
-- `deepseek_v4`：按模型级别配置启用（`models.<name>.deepseek_v4: true`），处理 reasoning_content 剥离、thinking 回放、流式 thinking 跟踪等 DeepSeek 特有行为；推理强度使用标准 `reasoning.effort`，其中 `xhigh` 会写入 DeepSeek `output_config.effort=max`。signature-only thinking 会编码进 Codex 可回放的 `reasoning.summary`；旧历史缺失 reasoning/缓存时，仅在请求侧补空 `thinking` block 兜底，不生成空 summary。
-- `visual`：按模型级别配置启用（`models.<name>.visual: true`），向主模型注入 `visual_brief` / `visual_qa`，并通过 `provider.visual.provider` 指向的现有 Anthropic provider 执行视觉分析。
+- `deepseek_v4`：按 `extensions.deepseek_v4.enabled: true` 启用，处理 reasoning_content 剥离、thinking 回放、流式 thinking 跟踪等 DeepSeek 特有行为；推理强度使用标准 `reasoning.effort`，其中 `xhigh` 会写入 DeepSeek `output_config.effort=max`。signature-only thinking 会编码进 Codex 可回放的 `reasoning.summary`；旧历史缺失 reasoning/缓存时，仅在请求侧补空 `thinking` block 兜底，不生成空 summary。
+- `visual`：按 `extensions.visual.enabled: true` 启用，向主模型注入 `visual_brief` / `visual_qa`，并通过 `extensions.visual.config.provider` 指向的现有 Anthropic provider 执行视觉分析。
 - `websearch` / `websearchinjected`：当 web search 配置为 `injected` 时，向模型注入 `tavily_search` / `firecrawl_fetch` 工具，并在服务端执行搜索循环。
 
 其他 Provider 特有逻辑可直接在此目录下新增子包。
@@ -367,7 +368,7 @@ Anthropic Messages API 要求轮次内 `tool_use` block 不能跨消息分割。
 - `handleOpenAIResponse()` 在 `Bridge.ProviderFor` 返回空时调用 `ProviderKeyForModel()` 二次解析路由 key
 - `app.resolveDefaultClient()` 安全处理无 default provider 场景：defaultKey 为空或 client 不可用时返回 nil，下游 web search probing 和 fallback Provider 包装条件性跳过
 - 启动时 `resolvePerProviderWebSearch()` 分两步解析：先按 provider 解析默认值，再按 route 解析模型级别覆盖，结果存入 `ProviderManager.resolvedWS`
-- 请求时 `maybeWrapProvider()` 按模型别名包装 injected web search / Visual，`resolveRequestOptions()` 按模型别名解析 web search 配置并传递给 `Bridge.ToAnthropic()`
+- 请求时 `maybeWrapInjectedSearch()` / `maybeWrapVisual()` 按模型别名包装 injected web search / Visual，`resolveRequestOptions()` 按模型别名解析 web search 配置并传递给 `Bridge.ToAnthropic()`
 
 ### 会话隔离
 
@@ -462,7 +463,9 @@ provider:
       # ...
       models:
         deepseek-v4-pro:
-          deepseek_v4: true
+          extensions:
+            deepseek_v4:
+              enabled: true
           default_reasoning_level: "high"
           supported_reasoning_levels:
             - effort: "high"

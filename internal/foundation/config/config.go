@@ -48,17 +48,6 @@ type WebSearchConfig struct {
 	SearchMaxRounds int
 }
 
-// VisualConfig holds settings for the Visual extension. The extension injects
-// vision tools into selected Anthropic-routed models and forwards those tool
-// calls through an existing Anthropic provider such as Kimi.
-type VisualConfig struct {
-	Enabled   bool
-	Provider  string
-	Model     string
-	MaxRounds int
-	MaxTokens int
-}
-
 type Config struct {
 	Mode              Mode
 	Addr              string
@@ -78,7 +67,6 @@ type Config struct {
 	TavilyAPIKey      string
 	FirecrawlAPIKey   string
 	SearchMaxRounds   int
-	Visual            VisualConfig
 	DefaultMaxTokens  int
 	// Routes maps a model alias to "provider/upstream_model".
 	Routes         map[string]RouteEntry
@@ -87,6 +75,9 @@ type Config struct {
 	ResponseProxy  ResponseProxyConfig
 	AnthropicProxy AnthropicProxyConfig
 	Plugins        map[string]map[string]any
+	Extensions     map[string]ExtensionSettings
+
+	extensionSpecs extensionSpecIndex
 }
 
 // RouteEntry is a resolved route: alias -> provider key + upstream model name + metadata.
@@ -109,11 +100,8 @@ type RouteEntry struct {
 	SupportsReasoningSummaries bool
 	DefaultReasoningSummary    string
 	// WebSearch holds route-level web search config (overrides model and provider-level).
-	WebSearch WebSearchConfig
-	// DeepSeekV4 enables the DeepSeek V4 thinking extension for this route.
-	DeepSeekV4 bool
-	// Visual enables the Visual extension for this route.
-	Visual bool
+	WebSearch  WebSearchConfig
+	Extensions map[string]ExtensionSettings
 }
 
 // ProviderDef defines a single upstream provider.
@@ -128,6 +116,7 @@ type ProviderDef struct {
 	TavilyAPIKey     string
 	FirecrawlAPIKey  string
 	SearchMaxRounds  int
+	Extensions       map[string]ExtensionSettings
 	// Models is the provider's model catalog: upstream model name -> metadata.
 	Models map[string]ModelMeta
 }
@@ -150,11 +139,8 @@ type ModelMeta struct {
 	SupportsReasoningSummaries bool
 	DefaultReasoningSummary    string
 	// WebSearch holds model-level web search config (overrides provider-level).
-	WebSearch WebSearchConfig
-	// DeepSeekV4 enables the DeepSeek V4 thinking extension for this model.
-	DeepSeekV4 bool
-	// Visual enables the Visual extension for this model.
-	Visual bool
+	WebSearch  WebSearchConfig
+	Extensions map[string]ExtensionSettings
 }
 
 type ResponseProxyConfig struct {
@@ -194,16 +180,21 @@ func (cfg Config) Validate() error {
 	if err := cfg.Cache.Validate(); err != nil {
 		return err
 	}
+	var err error
 	switch cfg.Mode {
 	case ModeTransform:
-		return cfg.validateTransform()
+		err = cfg.validateTransform()
 	case ModeCaptureResponse:
-		return cfg.ResponseProxy.Validate("developer.proxy.response")
+		err = cfg.ResponseProxy.Validate("developer.proxy.response")
 	case ModeCaptureAnthropic:
-		return cfg.AnthropicProxy.Validate("developer.proxy.anthropic")
+		err = cfg.AnthropicProxy.Validate("developer.proxy.anthropic")
 	default:
 		return fmt.Errorf("invalid mode %q", cfg.Mode)
 	}
+	if err != nil {
+		return err
+	}
+	return cfg.validateExtensions()
 }
 
 func (cfg Config) validateTransform() error {
@@ -244,29 +235,6 @@ func (cfg Config) validateTransform() error {
 			if _, ok := cfg.ProviderDefs[route.Provider]; !ok {
 				return fmt.Errorf("routes.%s references unknown provider %q", alias, route.Provider)
 			}
-			if route.DeepSeekV4 {
-				if def, ok := cfg.ProviderDefs[route.Provider]; ok && def.Protocol != "" && def.Protocol != ProtocolAnthropic {
-					return fmt.Errorf("routes.%s: deepseek_v4 requires anthropic protocol (provider %s uses %s)", alias, route.Provider, def.Protocol)
-				}
-			}
-			if route.Visual {
-				if def, ok := cfg.ProviderDefs[route.Provider]; ok && def.Protocol != "" && def.Protocol != ProtocolAnthropic {
-					return fmt.Errorf("routes.%s: visual requires anthropic protocol (provider %s uses %s)", alias, route.Provider, def.Protocol)
-				}
-			}
-		}
-		for key, def := range cfg.ProviderDefs {
-			if def.Protocol == "" || def.Protocol == ProtocolAnthropic {
-				continue
-			}
-			for modelName, meta := range def.Models {
-				if meta.Visual {
-					return fmt.Errorf("providers.%s.models.%s: visual requires anthropic protocol (provider uses %s)", key, modelName, def.Protocol)
-				}
-			}
-		}
-		if err := cfg.validateVisualConfig(); err != nil {
-			return err
 		}
 		return nil
 	}
@@ -284,9 +252,6 @@ func (cfg Config) validateTransform() error {
 		if alias == "" || route.Model == "" {
 			return errors.New("routes cannot contain empty aliases or models")
 		}
-	}
-	if err := cfg.validateVisualConfig(); err != nil {
-		return err
 	}
 	return nil
 }
@@ -317,29 +282,6 @@ func (cfg Config) validateSearchConfig() error {
 				return fmt.Errorf("providers.%s.web_search.search_max_rounds must be > 0 when web_search.support is 'injected'", key)
 			}
 		}
-	}
-	return nil
-}
-
-func (cfg Config) validateVisualConfig() error {
-	if !cfg.Visual.Enabled {
-		return nil
-	}
-	if cfg.Visual.Provider == "" {
-		return errors.New("provider.visual.provider is required when visual.enabled is true")
-	}
-	if cfg.Visual.Model == "" {
-		return errors.New("provider.visual.model is required when visual.enabled is true")
-	}
-	if len(cfg.ProviderDefs) == 0 {
-		return errors.New("provider.visual.provider requires provider.providers")
-	}
-	def, ok := cfg.ProviderDefs[cfg.Visual.Provider]
-	if !ok {
-		return fmt.Errorf("provider.visual.provider references unknown provider %q", cfg.Visual.Provider)
-	}
-	if def.Protocol != "" && def.Protocol != ProtocolAnthropic {
-		return fmt.Errorf("provider.visual.provider %q requires anthropic protocol (uses %s)", cfg.Visual.Provider, def.Protocol)
 	}
 	return nil
 }
@@ -404,8 +346,7 @@ func (cfg Config) RouteFor(model string) RouteEntry {
 				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
 				entry.BaseInstructions = meta.BaseInstructions
 				entry.WebSearch = meta.WebSearch
-				entry.DeepSeekV4 = meta.DeepSeekV4
-				entry.Visual = meta.Visual
+				entry.Extensions = meta.Extensions
 			}
 			return entry
 		}
@@ -614,39 +555,6 @@ func (cfg Config) providerKeyForModel(modelAlias string) string {
 	return ""
 }
 
-// VisualForModel returns whether the Visual extension is enabled for a model
-// alias. The global visual.enabled switch must be true, and the target route
-// or provider-catalog model must opt in with visual: true.
-func (cfg Config) VisualForModel(modelAlias string) bool {
-	if !cfg.Visual.Enabled {
-		return false
-	}
-	if route, ok := cfg.Routes[modelAlias]; ok {
-		if route.Visual {
-			return true
-		}
-		if def, ok := cfg.ProviderDefs[route.Provider]; ok {
-			if meta, ok := def.Models[route.Model]; ok {
-				return meta.Visual
-			}
-		}
-		return false
-	}
-	if provider, upstream := ParseModelRef(modelAlias); provider != "" {
-		if def, ok := cfg.ProviderDefs[provider]; ok {
-			if meta, ok := def.Models[upstream]; ok {
-				return meta.Visual
-			}
-		}
-	}
-	return false
-}
-
-// ResolvedVisualConfig returns the visual extension config.
-func (cfg Config) ResolvedVisualConfig() VisualConfig {
-	return cfg.Visual
-}
-
 func (cfg CacheConfig) Validate() error {
 	switch cfg.Mode {
 	case "", "off", "automatic", "explicit", "hybrid":
@@ -690,29 +598,105 @@ func (cfg Config) PluginConfig(name string) map[string]any {
 	return cfg.Plugins[name]
 }
 
-// DeepSeekV4ForModel returns whether the DeepSeek V4 extension is enabled
-// for a given model alias. Resolution: route -> model catalog.
-func (cfg Config) DeepSeekV4ForModel(modelAlias string) bool {
-	if route, ok := cfg.Routes[modelAlias]; ok {
-		if route.DeepSeekV4 {
-			return true
+func (cfg Config) validateExtensions() error {
+	for _, spec := range cfg.extensionSpecs {
+		if spec.Validate == nil {
+			continue
 		}
-		if def, ok := cfg.ProviderDefs[route.Provider]; ok {
-			if meta, ok := def.Models[route.Model]; ok {
-				return meta.DeepSeekV4
-			}
+		if err := spec.Validate(cfg); err != nil {
+			return err
 		}
-		return false
 	}
-	// Direct provider/model reference.
-	if provider, upstream := ParseModelRef(modelAlias); provider != "" {
-		if def, ok := cfg.ProviderDefs[provider]; ok {
-			if meta, ok := def.Models[upstream]; ok {
-				return meta.DeepSeekV4
+	return nil
+}
+
+// ExtensionEnabled returns whether an extension is enabled for a model alias.
+// Resolution order is route -> provider model -> provider -> global -> spec default.
+func (cfg Config) ExtensionEnabled(name string, modelAlias string) bool {
+	if modelAlias != "" {
+		if route, ok := cfg.Routes[modelAlias]; ok {
+			if setting, ok := route.Extensions[name]; ok && setting.Enabled != nil {
+				return *setting.Enabled
+			}
+			if def, ok := cfg.ProviderDefs[route.Provider]; ok {
+				if meta, ok := def.Models[route.Model]; ok {
+					if setting, ok := meta.Extensions[name]; ok && setting.Enabled != nil {
+						return *setting.Enabled
+					}
+				}
+				if setting, ok := def.Extensions[name]; ok && setting.Enabled != nil {
+					return *setting.Enabled
+				}
+			}
+		} else if provider, upstream := ParseModelRef(modelAlias); provider != "" {
+			if def, ok := cfg.ProviderDefs[provider]; ok {
+				if meta, ok := def.Models[upstream]; ok {
+					if setting, ok := meta.Extensions[name]; ok && setting.Enabled != nil {
+						return *setting.Enabled
+					}
+				}
+				if setting, ok := def.Extensions[name]; ok && setting.Enabled != nil {
+					return *setting.Enabled
+				}
 			}
 		}
+	}
+	if setting, ok := cfg.Extensions[name]; ok && setting.Enabled != nil {
+		return *setting.Enabled
+	}
+	if spec, ok := cfg.extensionSpecs[name]; ok {
+		return spec.DefaultEnabled
 	}
 	return false
+}
+
+// ExtensionRawConfig returns the shallow-merged extension config for a model
+// alias. Merge order is global -> provider -> provider model -> route.
+func (cfg Config) ExtensionRawConfig(name string, modelAlias string) map[string]any {
+	var parts []map[string]any
+	if setting, ok := cfg.Extensions[name]; ok {
+		parts = append(parts, setting.RawConfig)
+	}
+	if modelAlias != "" {
+		if route, ok := cfg.Routes[modelAlias]; ok {
+			if def, ok := cfg.ProviderDefs[route.Provider]; ok {
+				if setting, ok := def.Extensions[name]; ok {
+					parts = append(parts, setting.RawConfig)
+				}
+				if meta, ok := def.Models[route.Model]; ok {
+					if setting, ok := meta.Extensions[name]; ok {
+						parts = append(parts, setting.RawConfig)
+					}
+				}
+			}
+			if setting, ok := route.Extensions[name]; ok {
+				parts = append(parts, setting.RawConfig)
+			}
+		} else if provider, upstream := ParseModelRef(modelAlias); provider != "" {
+			if def, ok := cfg.ProviderDefs[provider]; ok {
+				if setting, ok := def.Extensions[name]; ok {
+					parts = append(parts, setting.RawConfig)
+				}
+				if meta, ok := def.Models[upstream]; ok {
+					if setting, ok := meta.Extensions[name]; ok {
+						parts = append(parts, setting.RawConfig)
+					}
+				}
+			}
+		}
+	}
+	return mergeAnyMaps(parts...)
+}
+
+// ExtensionConfig returns typed extension config for a model alias when the
+// extension registered a factory; otherwise it returns the merged raw map.
+func (cfg Config) ExtensionConfig(name string, modelAlias string) any {
+	raw := cfg.ExtensionRawConfig(name, modelAlias)
+	spec, ok := cfg.extensionSpecs[name]
+	if !ok {
+		return raw
+	}
+	return decodeTypedExtensionConfig(spec, raw)
 }
 
 // ProviderFor returns the provider key that serves the given model alias.

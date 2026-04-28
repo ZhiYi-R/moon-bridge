@@ -41,7 +41,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	printClaudeModel := flags.Bool("print-claude-model", false, "Print configured Claude Code model and exit")
 	printCodexConfig := flags.String("print-codex-config", "", "Print Codex config.toml for the model alias and exit")
 	dumpConfigSchema := flags.Bool("dump-config-schema", false, "Generate config.schema.json alongside config and exit")
-		codexBaseURL := flags.String("codex-base-url", "", "Base URL to write in generated Codex config")
+	codexBaseURL := flags.String("codex-base-url", "", "Base URL to write in generated Codex config")
 	codexHome := flags.String("codex-home", "", "CODEX_HOME directory; when set, writes models_catalog.json there")
 	if err := flags.Parse(args); err != nil {
 		return exitStartupErr
@@ -49,6 +49,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 
 	var cfg config.Config
 	var err error
+	extensions := app.BuiltinExtensions()
 	resolvedConfigPath, err := config.ResolveConfigPath(*configPath)
 	if err != nil {
 		writeStartupError(stderr, "配置文件路径解析失败", "", err,
@@ -64,7 +65,9 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return exitOK
 	}
 
-	cfg, err = config.LoadFromFile(resolvedConfigPath)
+	cfg, err = config.LoadFromFileWithOptions(resolvedConfigPath, config.LoadOptions{
+		ExtensionSpecs: extensions.ConfigSpecs(),
+	})
 	if err != nil {
 		writeStartupError(stderr, "配置文件加载失败", resolvedConfigPath, err,
 			"未传 -config 时默认读取 ${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml。",

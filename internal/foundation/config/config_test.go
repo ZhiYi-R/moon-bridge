@@ -6,8 +6,16 @@ import (
 	"strings"
 	"testing"
 
+	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
+	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/foundation/config"
 )
+
+func builtinExtensionSpecsForTest() []config.ExtensionConfigSpec {
+	specs := append([]config.ExtensionConfigSpec{}, deepseekv4.ConfigSpecs()...)
+	specs = append(specs, visual.ConfigSpecs()...)
+	return specs
+}
 
 func TestLoadFromYAMLParsesTransformConfig(t *testing.T) {
 	cfg, err := config.LoadFromYAML([]byte(`
@@ -160,8 +168,6 @@ plugins:
 		t.Fatalf("inline_only = %#v, want true", pluginCfg["inline_only"])
 	}
 }
-
-
 
 func TestLoadFromFileLoadsSplitPluginOnly(t *testing.T) {
 	dir := t.TempDir()
@@ -320,7 +326,7 @@ provider:
 }
 
 func TestLoadFromYAMLParsesMultiProviderProtocol(t *testing.T) {
-	cfg, err := config.LoadFromYAML([]byte(`
+	cfg, err := config.LoadFromYAMLWithOptions([]byte(`
 mode: Transform
 provider:
   providers:
@@ -329,7 +335,9 @@ provider:
       api_key: deepseek-key
       models:
         deepseek-v4-pro:
-          deepseek_v4: true
+          extensions:
+            deepseek_v4:
+              enabled: true
           default_reasoning_level: high
           supported_reasoning_levels:
             - effort: high
@@ -345,18 +353,18 @@ provider:
   routes:
     moonbridge: "deepseek/deepseek-v4-pro"
     image: "openai/gpt-image-1.5"
-`))
+`), config.LoadOptions{ExtensionSpecs: builtinExtensionSpecsForTest()})
 	if err != nil {
 		t.Fatalf("LoadFromYAML() error = %v", err)
 	}
 	if cfg.ProviderDefs["openai"].Protocol != config.ProtocolOpenAIResponse {
 		t.Fatalf("openai provider = %+v", cfg.ProviderDefs["openai"])
 	}
-	if !cfg.DeepSeekV4ForModel("moonbridge") {
-		t.Fatalf("DeepSeekV4ForModel(moonbridge) = false, want true")
+	if !cfg.ExtensionEnabled(deepseekv4.PluginName, "moonbridge") {
+		t.Fatalf("ExtensionEnabled(deepseek_v4, moonbridge) = false, want true")
 	}
-	if cfg.DeepSeekV4ForModel("image") {
-		t.Fatalf("DeepSeekV4ForModel(image) = true, want false")
+	if cfg.ExtensionEnabled(deepseekv4.PluginName, "image") {
+		t.Fatalf("ExtensionEnabled(deepseek_v4, image) = true, want false")
 	}
 	if cfg.RouteFor("moonbridge").DefaultReasoningLevel != "high" {
 		t.Fatalf("RouteFor(moonbridge).DefaultReasoningLevel = %q", cfg.RouteFor("moonbridge").DefaultReasoningLevel)
@@ -370,7 +378,54 @@ provider:
 }
 
 func TestLoadFromYAMLParsesVisualConfig(t *testing.T) {
-	cfg, err := config.LoadFromYAML([]byte(`
+	cfg, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: Transform
+extensions:
+  visual:
+    config:
+      provider: kimi
+      model: kimi-vision
+      max_rounds: 3
+      max_tokens: 1024
+provider:
+  providers:
+    deepseek:
+      base_url: https://deepseek.example.test
+      api_key: deepseek-key
+      models:
+        deepseek-v4-pro:
+          extensions:
+            visual:
+              enabled: true
+    kimi:
+      base_url: https://kimi.example.test/v1
+      api_key: kimi-key
+  routes:
+    moonbridge: "deepseek/deepseek-v4-pro"
+`), config.LoadOptions{ExtensionSpecs: builtinExtensionSpecsForTest()})
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+	if !cfg.ExtensionEnabled(visual.PluginName, "moonbridge") {
+		t.Fatal("ExtensionEnabled(visual, moonbridge) = false, want true")
+	}
+	if !cfg.ExtensionEnabled(visual.PluginName, "deepseek/deepseek-v4-pro") {
+		t.Fatal("ExtensionEnabled(visual, deepseek/deepseek-v4-pro) = false, want true")
+	}
+	resolved, _ := cfg.ExtensionConfig(visual.PluginName, "moonbridge").(*visual.Config)
+	if resolved == nil {
+		t.Fatal("ExtensionConfig(visual, moonbridge) = nil")
+	}
+	if resolved.Provider != "kimi" || resolved.Model != "kimi-vision" {
+		t.Fatalf("ExtensionConfig(visual, moonbridge) = %+v", resolved)
+	}
+	if resolved.MaxRounds != 3 || resolved.MaxTokens != 1024 {
+		t.Fatalf("ExtensionConfig defaults/overrides = %+v", resolved)
+	}
+}
+
+func TestLoadFromYAMLRejectsLegacyModelVisualFlag(t *testing.T) {
+	_, err := config.LoadFromYAML([]byte(`
 mode: Transform
 provider:
   providers:
@@ -383,30 +438,20 @@ provider:
     kimi:
       base_url: https://kimi.example.test/v1
       api_key: kimi-key
+      models:
+        kimi-vision: {}
   routes:
     moonbridge: "deepseek/deepseek-v4-pro"
   visual:
     enabled: true
     provider: kimi
     model: kimi-vision
-    max_rounds: 3
-    max_tokens: 1024
 `))
-	if err != nil {
-		t.Fatalf("LoadFromYAML() error = %v", err)
+	if err == nil {
+		t.Fatal("LoadFromYAML() error = nil, want unknown field error for legacy visual flag")
 	}
-	if !cfg.VisualForModel("moonbridge") {
-		t.Fatal("VisualForModel(moonbridge) = false, want true")
-	}
-	if !cfg.VisualForModel("deepseek/deepseek-v4-pro") {
-		t.Fatal("VisualForModel(deepseek/deepseek-v4-pro) = false, want true")
-	}
-	resolved := cfg.ResolvedVisualConfig()
-	if resolved.Provider != "kimi" || resolved.Model != "kimi-vision" {
-		t.Fatalf("ResolvedVisualConfig() = %+v", resolved)
-	}
-	if resolved.MaxRounds != 3 || resolved.MaxTokens != 1024 {
-		t.Fatalf("ResolvedVisualConfig defaults/overrides = %+v", resolved)
+	if !strings.Contains(err.Error(), "field visual not found") {
+		t.Fatalf("LoadFromYAML() error = %v, want unknown visual field error", err)
 	}
 }
 
@@ -517,27 +562,36 @@ provider:
       base_url: https://openai.example.test
       api_key: openai-key
       protocol: openai-response
-      deepseek_v4: true
+      models:
+        gpt-image-1.5:
+          extensions:
+            deepseek_v4:
+              enabled: true
+  routes:
+    image: "openai/gpt-image-1.5"
+`,
+		"global deepseek extension on openai-response protocol": `
+mode: Transform
+extensions:
+  deepseek_v4:
+    enabled: true
+provider:
+  providers:
+    openai:
+      base_url: https://openai.example.test
+      api_key: openai-key
+      protocol: openai-response
       models:
         gpt-image-1.5: {}
   routes:
     image: "openai/gpt-image-1.5"
 `,
-		"global deepseek extension removed": `
-mode: Transform
-provider:
-  providers:
-    deepseek:
-      base_url: https://deepseek.example.test
-      api_key: deepseek-key
-      models:
-        deepseek-v4-pro: {}
-  routes:
-    moonbridge: "deepseek/deepseek-v4-pro"
-  deepseek_v4: true
-`,
 		"visual provider missing": `
 mode: Transform
+extensions:
+  visual:
+    config:
+      model: kimi-vision
 provider:
   providers:
     deepseek:
@@ -545,15 +599,19 @@ provider:
       api_key: deepseek-key
       models:
         deepseek-v4-pro:
-          visual: true
+          extensions:
+            visual:
+              enabled: true
   routes:
     moonbridge: "deepseek/deepseek-v4-pro"
-  visual:
-    enabled: true
-    model: kimi-vision
 `,
 		"visual provider on openai-response protocol": `
 mode: Transform
+extensions:
+  visual:
+    config:
+      provider: openai
+      model: gpt-4o
 provider:
   providers:
     deepseek:
@@ -561,21 +619,19 @@ provider:
       api_key: deepseek-key
       models:
         deepseek-v4-pro:
-          visual: true
+          extensions:
+            visual:
+              enabled: true
     openai:
       base_url: https://openai.example.test
       api_key: openai-key
       protocol: openai-response
   routes:
     moonbridge: "deepseek/deepseek-v4-pro"
-  visual:
-    enabled: true
-    provider: openai
-    model: gpt-4o
 `,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := config.LoadFromYAML([]byte(input)); err == nil {
+			if _, err := config.LoadFromYAMLWithOptions([]byte(input), config.LoadOptions{ExtensionSpecs: builtinExtensionSpecsForTest()}); err == nil {
 				t.Fatal("LoadFromYAML() error = nil, want validation error")
 			}
 		})
@@ -848,7 +904,6 @@ developer:
 	}
 }
 
-
 func TestDumpConfigSchemaWritesMainSchemaAndPluginSchemas(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yml")
@@ -942,7 +997,6 @@ func TestDumpConfigSchemaSkipsMissingPluginDir(t *testing.T) {
 		t.Fatalf("main schema not found: %v", err)
 	}
 }
-
 
 // testPluginConfig is a minimal config struct used for schema generation tests.
 type testPluginConfig struct {

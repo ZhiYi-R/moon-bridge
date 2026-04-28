@@ -765,16 +765,16 @@ func (server *Server) maybeWrapProvider(client *anthropic.Client, modelAlias str
 }
 
 func (server *Server) maybeWrapVisual(provider Provider, modelAlias string) Provider {
-	if !server.appConfig.VisualForModel(modelAlias) {
+	visualCfg, ok := visual.ConfigForModel(server.appConfig, modelAlias)
+	if !ok {
 		return provider
 	}
-	cfg := server.appConfig.ResolvedVisualConfig()
-	visualProvider := server.visualProvider(cfg)
-	logger.L().Debug("Wrapping Visual orchestrator", "model", modelAlias, "visual_model", cfg.Model)
-	return visual.WrapProvider(provider, visualProvider, cfg.Model, cfg.MaxRounds, cfg.MaxTokens)
+	visualProvider := server.visualProvider(visualCfg)
+	logger.L().Debug("Wrapping Visual orchestrator", "model", modelAlias, "visual_model", visualCfg.Model)
+	return visual.WrapProvider(provider, visualProvider, visualCfg.Model, visualCfg.MaxRounds, visualCfg.MaxTokens)
 }
 
-func (server *Server) visualProvider(cfg config.VisualConfig) Provider {
+func (server *Server) visualProvider(cfg visual.Config) Provider {
 	if server.providerMgr != nil && cfg.Provider != "" {
 		client, err := server.providerMgr.ClientForKey(cfg.Provider)
 		if err != nil {

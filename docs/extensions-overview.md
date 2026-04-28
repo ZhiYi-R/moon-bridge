@@ -87,7 +87,7 @@ var (
 
 ### 启用方式
 
-在模型配置中设置 `deepseek_v4: true`：
+在模型配置中设置 `extensions.deepseek_v4.enabled: true`：
 
 ```yaml
 provider:
@@ -95,7 +95,9 @@ provider:
     deepseek:
       models:
         deepseek-v4-pro:
-          deepseek_v4: true
+          extensions:
+            deepseek_v4:
+              enabled: true
 ```
 
 或通过 routes 启用：
@@ -103,11 +105,12 @@ provider:
 ```yaml
 provider:
   routes:
-    moonbridge: "deepseek/deepseek-v4-pro"
-    # routes 自动继承模型配置中的 deepseek_v4 设置
+    moonbridge:
+      to: "deepseek/deepseek-v4-pro"
+    # routes 自动继承模型配置中的 deepseek_v4 extension 设置
 ```
 
-插件的 `EnabledForModel` 函数检查模型别名是否在配置中被标记为 `deepseek_v4`。
+插件的 `EnabledForModel` 函数通过 `Config.ExtensionEnabled("deepseek_v4", model)` 检查模型别名是否启用该 extension。
 
 ---
 
@@ -285,17 +288,23 @@ type VisionClient interface {
 ### 配置
 
 ```yaml
-provider:
+extensions:
   visual:
-    enabled: true
-    provider: "visual-backend"
-    model: "kimi-vision-model"
-    max_tokens: 4096
+    config:
+      provider: "visual-backend"
+      model: "kimi-vision-model"
+      max_tokens: 4096
+
+provider:
   providers:
-    my-model:
-      visual: true
+    main:
+      models:
+        my-model:
+          extensions:
+            visual:
+              enabled: true
 ```
 
 ### 与 Provider 的交互
 
-Visual orchestrator 包装上游 Anthropic Provider，与 `web_search_injected` 的包装模式相同。在 server 层通过 `resolveProvider()` → `maybeWrapProvider()` 来组合多个 orchestrator 包装器。
+Visual orchestrator 包装上游 Anthropic Provider，与 `web_search_injected` 的包装模式相同。在 server 层通过 `resolveProvider()` → `maybeWrapVisual()` 来组合视觉 orchestrator 包装器。

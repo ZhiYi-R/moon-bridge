@@ -12,6 +12,20 @@ server:
 
 trace_requests: false
 
+extensions:
+  deepseek_v4:
+    config:
+      # Injects a reminder before user input to reinforce system prompt adherence.
+      reinforce_instructions: true
+      # Custom prompt text (default used if omitted). Set to empty string to disable.
+      reinforce_prompt: "[System Reminder]: Please pay close attention to the system instructions, AGENTS.md files, and any other context provided. Follow them carefully and completely in your response.\n[User]:"
+  visual:
+    config:
+      provider: "kimi"
+      model: "kimi-for-coding"
+      max_rounds: 4
+      max_tokens: 2048
+
 provider:
   providers:
     deepseek:
@@ -27,8 +41,11 @@ provider:
           max_output_tokens: 384000
           display_name: "DeepSeek V4 Pro"
           description: "DeepSeek V4 with selectable high/xhigh reasoning effort."
-          deepseek_v4: true
-          visual: true
+          extensions:
+            deepseek_v4:
+              enabled: true
+            visual:
+              enabled: true
           default_reasoning_level: "high"
           supported_reasoning_levels:
             - effort: "high"
@@ -70,9 +87,12 @@ provider:
   routes:
     # Optional aliases. Provider models are listed directly in the Codex catalog
     # as provider/upstream_model; routes only add friendly fallback names.
-    moonbridge: "deepseek/deepseek-v4-pro"
-    gpt-image: "openai/gpt-image-1.5"
-    gpt-tts: "openai/gpt-4o-mini-tts"
+    moonbridge:
+      to: "deepseek/deepseek-v4-pro"
+    gpt-image:
+      to: "openai/gpt-image-1.5"
+    gpt-tts:
+      to: "openai/gpt-4o-mini-tts"
 
   # web_search:
   #   support: "disabled" # auto / enabled / disabled / injected
@@ -81,25 +101,8 @@ provider:
   #   firecrawl_api_key: "replace-with-firecrawl-api-key"
   #   search_max_rounds: 5
 
-  visual:
-    enabled: true
-    provider: "kimi"
-    model: "kimi-for-coding"
-    max_rounds: 4
-    max_tokens: 2048
-
   default_max_tokens: 65536
   default_model: "moonbridge"
-
-# Plugin-specific configuration can stay inline here, or move to separate files
-# such as ./plugins/deepseek_v4.yml next to config.yml. Split files use the
-# filename as the plugin name and contain only that plugin's settings.
-# plugins:
-#   deepseek_v4:
-#     # Injects a reminder before user input to reinforce system prompt adherence.
-#     reinforce_instructions: true
-#     # Custom prompt text (default used if omitted). Set to empty string to disable.
-#     reinforce_prompt: "[System Reminder]: Please pay close attention to the system instructions, AGENTS.md files, and any other context provided. Follow them carefully and completely in your response.\n[User]:"
 
 cache:
   mode: "explicit"  # off / automatic / explicit / hybrid

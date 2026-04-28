@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"moonbridge/internal/extension/codex"
+	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
@@ -588,8 +589,14 @@ func TestConvertStreamEventsMarksTextOutputCompletedInFinalResponse(t *testing.T
 func TestDeepSeekThinkingIsStatefullyInjectedOnlyForToolCalls(t *testing.T) {
 	bridgeUnderTest := testBridgeWithConfig(config.Config{
 		DefaultMaxTokens: 1024,
-		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
-		ProviderDefs:     map[string]config.ProviderDef{"default": {}},
+		Routes: map[string]config.RouteEntry{"gpt-test": {
+			Provider: "default",
+			Model:    "deepseek-v4-pro",
+			Extensions: map[string]config.ExtensionSettings{
+				deepseekv4.PluginName: extensionEnabled(true),
+			},
+		}},
+		ProviderDefs: map[string]config.ProviderDef{"default": {}},
 		Cache: config.CacheConfig{
 			Mode:          "off",
 			PromptCaching: true,
@@ -679,8 +686,14 @@ func TestDeepSeekThinkingIsStatefullyInjectedOnlyForToolCalls(t *testing.T) {
 func TestDeepSeekSignatureOnlyThinkingIsReinjectedForToolCalls(t *testing.T) {
 	bridgeUnderTest := testBridgeWithConfig(config.Config{
 		DefaultMaxTokens: 1024,
-		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
-		ProviderDefs:     map[string]config.ProviderDef{"default": {}},
+		Routes: map[string]config.RouteEntry{"gpt-test": {
+			Provider: "default",
+			Model:    "deepseek-v4-pro",
+			Extensions: map[string]config.ExtensionSettings{
+				deepseekv4.PluginName: extensionEnabled(true),
+			},
+		}},
+		ProviderDefs: map[string]config.ProviderDef{"default": {}},
 		Cache: config.CacheConfig{
 			Mode:          "off",
 			PromptCaching: true,
@@ -743,8 +756,14 @@ func TestDeepSeekSignatureOnlyThinkingIsReinjectedForToolCalls(t *testing.T) {
 func TestDeepSeekThinkingIsInjectedForToolChainFinalAssistantText(t *testing.T) {
 	bridgeUnderTest := testBridgeWithConfig(config.Config{
 		DefaultMaxTokens: 1024,
-		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "deepseek-v4-pro", DeepSeekV4: true}},
-		ProviderDefs:     map[string]config.ProviderDef{"default": {}},
+		Routes: map[string]config.RouteEntry{"gpt-test": {
+			Provider: "default",
+			Model:    "deepseek-v4-pro",
+			Extensions: map[string]config.ExtensionSettings{
+				deepseekv4.PluginName: extensionEnabled(true),
+			},
+		}},
+		ProviderDefs: map[string]config.ProviderDef{"default": {}},
 		Cache: config.CacheConfig{
 			Mode:          "off",
 			PromptCaching: true,

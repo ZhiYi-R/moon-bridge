@@ -8,10 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
-	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
-	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/extension/pluginhooks"
-	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/protocol/anthropic"
@@ -119,9 +116,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	}
 
 	// Register plugins.
-	plugins := plugin.NewRegistry(logger.L())
-	plugins.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
-	plugins.Register(visual.NewPlugin(cfg.VisualForModel))
+	plugins := BuiltinExtensions().NewRegistry(logger.L(), cfg)
 	if err := plugins.InitAll(&cfg); err != nil {
 		return fmt.Errorf("init plugins: %w", err)
 	}
@@ -463,10 +458,10 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 	}
 }
 
-
 // DumpConfigSchema dumps JSON Schema files alongside the config file,
 // including known plugin config types. Call via --dump-config-schema flag.
 func DumpConfigSchema(configPath string) error {
-	config.RegisterPluginConfigType(deepseekv4.PluginName, func() any { return &deepseekv4.Config{} })
-	return config.DumpConfigSchema(configPath, nil)
+	return config.DumpConfigSchemaWithOptions(configPath, config.SchemaOptions{
+		ExtensionSpecs: BuiltinExtensions().ConfigSpecs(),
+	})
 }

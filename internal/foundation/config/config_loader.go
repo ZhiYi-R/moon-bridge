@@ -12,15 +12,16 @@ import (
 )
 
 type FileConfig struct {
-	Mode          string              `yaml:"mode" json:"mode"`
-	TraceRequests bool                `yaml:"trace_requests" json:"trace_requests,omitempty"`
-	Log           LogFileConfig       `yaml:"log" json:"log,omitempty"`
-	Server        ServerFileConfig    `yaml:"server" json:"server,omitempty"`
-	Provider      ProviderFileConfig  `yaml:"provider" json:"provider,omitempty"`
-	Cache         CacheFileConfig     `yaml:"cache" json:"cache,omitempty"`
-	SystemPrompt  string              `yaml:"system_prompt" json:"system_prompt,omitempty"`
-	Developer     DeveloperFileConfig `yaml:"developer" json:"developer,omitempty"`
-	Plugins       map[string]any      `yaml:"plugins" json:"plugins,omitempty"`
+	Mode          string                         `yaml:"mode" json:"mode"`
+	TraceRequests bool                           `yaml:"trace_requests" json:"trace_requests,omitempty"`
+	Log           LogFileConfig                  `yaml:"log" json:"log,omitempty"`
+	Server        ServerFileConfig               `yaml:"server" json:"server,omitempty"`
+	Provider      ProviderFileConfig             `yaml:"provider" json:"provider,omitempty"`
+	Cache         CacheFileConfig                `yaml:"cache" json:"cache,omitempty"`
+	SystemPrompt  string                         `yaml:"system_prompt" json:"system_prompt,omitempty"`
+	Developer     DeveloperFileConfig            `yaml:"developer" json:"developer,omitempty"`
+	Plugins       map[string]any                 `yaml:"plugins" json:"plugins,omitempty"`
+	Extensions    map[string]ExtensionFileConfig `yaml:"extensions" json:"extensions,omitempty"`
 }
 
 type ServerFileConfig struct {
@@ -34,11 +35,10 @@ type ProviderFileConfig struct {
 	Version          string                           `yaml:"version" json:"version,omitempty"`
 	UserAgent        string                           `yaml:"user_agent" json:"user_agent,omitempty"`
 	WebSearch        WebSearchFileConfig              `yaml:"web_search" json:"web_search,omitempty"`
-	Visual           VisualFileConfig                 `yaml:"visual" json:"visual,omitempty"`
 	DefaultMaxTokens int                              `yaml:"default_max_tokens" json:"default_max_tokens,omitempty"`
 	DefaultModel     string                           `yaml:"default_model" json:"default_model,omitempty"`
 	Providers        map[string]ProviderDefFileConfig `yaml:"providers" json:"providers,omitempty"`
-	Routes           map[string]string                `yaml:"routes" json:"routes,omitempty"`
+	Routes           map[string]RouteFileConfig       `yaml:"routes" json:"routes,omitempty"`
 }
 
 type CacheFileConfig struct {
@@ -69,18 +69,41 @@ type ProviderModelFileConfig struct {
 	SupportsReasoningSummaries *bool                            `yaml:"supports_reasoning_summaries" json:"supports_reasoning_summaries,omitempty"`
 	DefaultReasoningSummary    string                           `yaml:"default_reasoning_summary" json:"default_reasoning_summary,omitempty"`
 	WebSearch                  WebSearchFileConfig              `yaml:"web_search" json:"web_search,omitempty"`
-	DeepSeekV4                 bool                             `yaml:"deepseek_v4" json:"deepseek_v4,omitempty"`
-	Visual                     bool                             `yaml:"visual" json:"visual,omitempty"`
+	Extensions                 map[string]ExtensionFileConfig   `yaml:"extensions" json:"extensions,omitempty"`
 }
 
 type ProviderDefFileConfig struct {
-	BaseURL   string                             `yaml:"base_url" json:"base_url"`
-	APIKey    string                             `yaml:"api_key" json:"api_key"`
-	Version   string                             `yaml:"version" json:"version,omitempty"`
-	UserAgent string                             `yaml:"user_agent" json:"user_agent,omitempty"`
-	Protocol  string                             `yaml:"protocol" json:"protocol,omitempty"`
-	WebSearch WebSearchFileConfig                `yaml:"web_search" json:"web_search,omitempty"`
-	Models    map[string]ProviderModelFileConfig `yaml:"models" json:"models,omitempty"`
+	BaseURL    string                             `yaml:"base_url" json:"base_url"`
+	APIKey     string                             `yaml:"api_key" json:"api_key"`
+	Version    string                             `yaml:"version" json:"version,omitempty"`
+	UserAgent  string                             `yaml:"user_agent" json:"user_agent,omitempty"`
+	Protocol   string                             `yaml:"protocol" json:"protocol,omitempty"`
+	WebSearch  WebSearchFileConfig                `yaml:"web_search" json:"web_search,omitempty"`
+	Extensions map[string]ExtensionFileConfig     `yaml:"extensions" json:"extensions,omitempty"`
+	Models     map[string]ProviderModelFileConfig `yaml:"models" json:"models,omitempty"`
+}
+
+type RouteFileConfig struct {
+	To         string                         `yaml:"to" json:"to,omitempty"`
+	Extensions map[string]ExtensionFileConfig `yaml:"extensions" json:"extensions,omitempty"`
+}
+
+func (cfg *RouteFileConfig) UnmarshalYAML(value *yaml.Node) error {
+	switch value.Kind {
+	case yaml.ScalarNode:
+		cfg.To = value.Value
+		return nil
+	case yaml.MappingNode:
+		type routeFileConfig RouteFileConfig
+		var out routeFileConfig
+		if err := value.Decode(&out); err != nil {
+			return err
+		}
+		*cfg = RouteFileConfig(out)
+		return nil
+	default:
+		return fmt.Errorf("route must be a string or mapping")
+	}
 }
 
 type ModelPricingFileConfig struct {
@@ -102,14 +125,6 @@ type WebSearchFileConfig struct {
 	TavilyAPIKey    string `yaml:"tavily_api_key" json:"tavily_api_key,omitempty"`
 	FirecrawlAPIKey string `yaml:"firecrawl_api_key" json:"firecrawl_api_key,omitempty"`
 	SearchMaxRounds int    `yaml:"search_max_rounds" json:"search_max_rounds,omitempty"`
-}
-
-type VisualFileConfig struct {
-	Enabled   bool   `yaml:"enabled" json:"enabled,omitempty"`
-	Provider  string `yaml:"provider" json:"provider,omitempty"`
-	Model     string `yaml:"model" json:"model,omitempty"`
-	MaxRounds int    `yaml:"max_rounds" json:"max_rounds,omitempty"`
-	MaxTokens int    `yaml:"max_tokens" json:"max_tokens,omitempty"`
 }
 
 type DeveloperFileConfig struct {
@@ -138,6 +153,10 @@ type LogFileConfig struct {
 }
 
 func LoadFromFile(path string) (Config, error) {
+	return LoadFromFileWithOptions(path, LoadOptions{})
+}
+
+func LoadFromFileWithOptions(path string, opts LoadOptions) (Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Config{}, fmt.Errorf("read config %s: %w", path, err)
@@ -149,7 +168,7 @@ func LoadFromFile(path string) (Config, error) {
 	if err := loadPluginConfigFiles(path, &fileConfig); err != nil {
 		return Config{}, err
 	}
-	cfg, err := FromFileConfig(fileConfig)
+	cfg, err := FromFileConfigWithOptions(fileConfig, opts)
 	if err != nil {
 		return Config{}, err
 	}
@@ -160,11 +179,15 @@ func LoadFromFile(path string) (Config, error) {
 // not discover split plugin config files from the plugins/ directory; it only
 // processes the inline plugins: section of the provided YAML content.
 func LoadFromYAML(data []byte) (Config, error) {
+	return LoadFromYAMLWithOptions(data, LoadOptions{})
+}
+
+func LoadFromYAMLWithOptions(data []byte, opts LoadOptions) (Config, error) {
 	fileConfig, err := decodeFileConfig(data)
 	if err != nil {
 		return Config{}, err
 	}
-	return FromFileConfig(fileConfig)
+	return FromFileConfigWithOptions(fileConfig, opts)
 }
 
 func decodeFileConfig(data []byte) (FileConfig, error) {
@@ -274,6 +297,14 @@ func isYAMLFile(name string) bool {
 }
 
 func FromFileConfig(fileConfig FileConfig) (Config, error) {
+	return FromFileConfigWithOptions(fileConfig, LoadOptions{})
+}
+
+func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config, error) {
+	specs, err := newExtensionSpecIndex(opts.ExtensionSpecs)
+	if err != nil {
+		return Config{}, err
+	}
 	mode, err := parseMode(fileConfig.Mode)
 	if err != nil {
 		return Config{}, err
@@ -282,8 +313,18 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	providerDefs := fromProviderDefFileConfig(fileConfig.Provider.Providers)
-	routes := buildRoutes(fileConfig.Provider.Routes, providerDefs)
+	topExtensions, err := decodeExtensionSettings("config", ExtensionScopeGlobal, fileConfig.Extensions, specs)
+	if err != nil {
+		return Config{}, err
+	}
+	providerDefs, err := fromProviderDefFileConfig(fileConfig.Provider.Providers, specs)
+	if err != nil {
+		return Config{}, err
+	}
+	routes, err := buildRoutes(fileConfig.Provider.Routes, providerDefs, specs)
+	if err != nil {
+		return Config{}, err
+	}
 
 	legacyBaseURL := strings.TrimRight(strings.TrimSpace(fileConfig.Provider.BaseURL), "/")
 	legacyAPIKey := strings.TrimSpace(fileConfig.Provider.APIKey)
@@ -308,7 +349,6 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		TavilyAPIKey:      strings.TrimSpace(fileConfig.Provider.WebSearch.TavilyAPIKey),
 		FirecrawlAPIKey:   strings.TrimSpace(fileConfig.Provider.WebSearch.FirecrawlAPIKey),
 		SearchMaxRounds:   intOrDefault(fileConfig.Provider.WebSearch.SearchMaxRounds, 5),
-		Visual:            fromVisualFileConfig(fileConfig.Provider.Visual),
 		DefaultMaxTokens:  intOrDefault(fileConfig.Provider.DefaultMaxTokens, 1024),
 		Routes:            routes,
 		ProviderDefs:      providerDefs,
@@ -316,6 +356,8 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		ResponseProxy:     FromResponseProxyFileConfig(fileConfig.Developer.Proxy.Response),
 		AnthropicProxy:    FromAnthropicProxyFileConfig(fileConfig.Developer.Proxy.Anthropic),
 		Plugins:           pluginsFromFileConfig(fileConfig.Plugins),
+		Extensions:        topExtensions,
+		extensionSpecs:    specs,
 	}
 
 	// In multi-provider mode, derive ProviderBaseURL/ProviderAPIKey from the
@@ -379,22 +421,27 @@ func FromAnthropicProxyFileConfig(fileConfig ProxyFileConfig) AnthropicProxyConf
 	}
 }
 
-// buildRoutes parses the "provider/model" route strings and merges model metadata
+// buildRoutes parses the "provider/model" route specs and merges model metadata
 // from provider definitions.
-func buildRoutes(rawRoutes map[string]string, providerDefs map[string]ProviderDef) map[string]RouteEntry {
+func buildRoutes(rawRoutes map[string]RouteFileConfig, providerDefs map[string]ProviderDef, specs extensionSpecIndex) (map[string]RouteEntry, error) {
 	if len(rawRoutes) == 0 {
-		return nil
+		return nil, nil
 	}
 	routes := make(map[string]RouteEntry, len(rawRoutes))
-	for alias, spec := range rawRoutes {
+	for alias, routeCfg := range rawRoutes {
 		trimmedAlias := strings.TrimSpace(alias)
 		if trimmedAlias == "" {
 			continue
 		}
-		providerKey, modelName := parseRouteSpec(spec)
+		providerKey, modelName := parseRouteSpec(routeCfg.To)
+		routeExtensions, err := decodeExtensionSettings("provider.routes."+trimmedAlias, ExtensionScopeRoute, routeCfg.Extensions, specs)
+		if err != nil {
+			return nil, err
+		}
 		entry := RouteEntry{
-			Provider: providerKey,
-			Model:    modelName,
+			Provider:   providerKey,
+			Model:      modelName,
+			Extensions: routeExtensions,
 		}
 		// Merge metadata from provider's model catalog if available.
 		if def, ok := providerDefs[providerKey]; ok {
@@ -412,13 +459,11 @@ func buildRoutes(rawRoutes map[string]string, providerDefs map[string]ProviderDe
 				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
 				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
 				entry.WebSearch = meta.WebSearch
-				entry.DeepSeekV4 = meta.DeepSeekV4
-				entry.Visual = meta.Visual
 			}
 		}
 		routes[trimmedAlias] = entry
 	}
-	return routes
+	return routes, nil
 }
 
 // parseRouteSpec splits "provider/model" into (provider, model).
@@ -433,9 +478,9 @@ func parseRouteSpec(spec string) (string, string) {
 	return strings.TrimSpace(spec[:slash]), strings.TrimSpace(spec[slash+1:])
 }
 
-func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[string]ProviderDef {
+func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig, specs extensionSpecIndex) (map[string]ProviderDef, error) {
 	if len(fileConfig) == 0 {
-		return nil
+		return nil, nil
 	}
 	defs := make(map[string]ProviderDef, len(fileConfig))
 	for key, def := range fileConfig {
@@ -444,8 +489,17 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 			continue
 		}
 		wsSupport, _ := parseWebSearchSupport(def.WebSearch.Support)
+		providerExtensions, err := decodeExtensionSettings("provider.providers."+trimmedKey, ExtensionScopeProvider, def.Extensions, specs)
+		if err != nil {
+			return nil, err
+		}
 		models := make(map[string]ModelMeta, len(def.Models))
 		for name, m := range def.Models {
+			trimmedName := strings.TrimSpace(name)
+			modelExtensions, err := decodeExtensionSettings("provider.providers."+trimmedKey+".models."+trimmedName, ExtensionScopeModel, m.Extensions, specs)
+			if err != nil {
+				return nil, err
+			}
 			meta := ModelMeta{
 				ContextWindow:              m.ContextWindow,
 				MaxOutputTokens:            m.MaxOutputTokens,
@@ -458,6 +512,7 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 				DefaultReasoningLevel:      strings.TrimSpace(m.DefaultReasoningLevel),
 				SupportsReasoningSummaries: boolOrDefault(m.SupportsReasoningSummaries, false),
 				DefaultReasoningSummary:    strings.TrimSpace(m.DefaultReasoningSummary),
+				Extensions:                 modelExtensions,
 			}
 			// Parse model-level web_search config.
 			if m.WebSearch.Support != "" {
@@ -470,15 +525,13 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 					SearchMaxRounds: m.WebSearch.SearchMaxRounds,
 				}
 			}
-			meta.DeepSeekV4 = m.DeepSeekV4
-			meta.Visual = m.Visual
 			for _, preset := range m.SupportedReasoningLevels {
 				meta.SupportedReasoningLevels = append(meta.SupportedReasoningLevels, ReasoningLevelPreset{
 					Effort:      strings.TrimSpace(preset.Effort),
 					Description: strings.TrimSpace(preset.Description),
 				})
 			}
-			models[strings.TrimSpace(name)] = meta
+			models[trimmedName] = meta
 		}
 		pd := ProviderDef{
 			BaseURL:          strings.TrimRight(strings.TrimSpace(def.BaseURL), "/"),
@@ -491,11 +544,12 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 			TavilyAPIKey:     strings.TrimSpace(def.WebSearch.TavilyAPIKey),
 			FirecrawlAPIKey:  strings.TrimSpace(def.WebSearch.FirecrawlAPIKey),
 			SearchMaxRounds:  def.WebSearch.SearchMaxRounds,
+			Extensions:       providerExtensions,
 			Models:           models,
 		}
 		defs[trimmedKey] = pd
 	}
-	return defs
+	return defs, nil
 }
 
 func fromCacheFileConfig(fileConfig CacheFileConfig) CacheConfig {
@@ -511,16 +565,6 @@ func fromCacheFileConfig(fileConfig CacheFileConfig) CacheConfig {
 		ExpectedReuse:            intOrDefault(fileConfig.ExpectedReuse, 2),
 		MinimumValueScore:        intOrDefault(fileConfig.MinimumValueScore, 2048),
 		MinBreakpointTokens:      intOrDefault(fileConfig.MinBreakpointTokens, 1024),
-	}
-}
-
-func fromVisualFileConfig(fileConfig VisualFileConfig) VisualConfig {
-	return VisualConfig{
-		Enabled:   fileConfig.Enabled,
-		Provider:  strings.TrimSpace(fileConfig.Provider),
-		Model:     strings.TrimSpace(fileConfig.Model),
-		MaxRounds: intOrDefault(fileConfig.MaxRounds, 4),
-		MaxTokens: intOrDefault(fileConfig.MaxTokens, 2048),
 	}
 }
 
