@@ -817,6 +817,7 @@ func InjectWebSearchTool(tools []openai.Tool) []openai.Tool {
 	}
 	return append(tools, openai.Tool{Type: "web_search"})
 }
+
 // startSessionPruning runs a background goroutine that periodically
 // cleans up expired sessions so they don't leak memory over time.
 func (server *Server) startSessionPruning() {
