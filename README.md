@@ -9,6 +9,8 @@
 Moon Bridge 是一个协议转换和模型路由代理。它对外暴露一个 **OpenAI Responses** 端点（`/v1/responses`），背后可以接任意兼容 **Anthropic Messages** 协议的上游 Provider，也可以直通上游 OpenAI Responses Provider。客户端指定不同的模型别名时，它自动把请求路由到对应的上游 Provider，并在不同协议之间自动转换。
 只需要一个 `config.yml` 和一条 `go run` 命令就能跑起来。
 
+> 🍳 **新手先看这里** → [CookBook.md](CookBook.md)：一份按目标找做法的菜谱，5 分钟跑通第一个对话。
+
 ---
 
 - [快速开始](#快速开始)
@@ -575,57 +577,33 @@ extensions:
 
 ## 与 Codex CLI 一起使用
 
-项目提供了一个自动化脚本 `scripts/start_codex_with_moonbridge.sh`：
+一键启动脚本 `scripts/start_codex_with_moonbridge.sh`：
 
 ```bash
-# 一条命令启动 Moon Bridge + 启动 Codex CLI
-./scripts/start_codex_with_moonbridge.sh
+cd /path/to/your/project
+./scripts/start_codex_with_moonbridge.sh --project-directory "$PWD"
 ```
 
-该脚本会自动：
-
-1. 构建 Moon Bridge 二进制
-2. 从 `config.yml` 中解析模型配置
-3. 生成 Codex 使用的 `config.toml`（含模型目录）
-4. 启动 Moon Bridge 服务
-5. 设置 `CODEX_HOME` 和 `MOONBRIDGE_CLIENT_API_KEY` 环境变量
-6. 启动 Codex CLI
-7. Codex 退出后自动停止 Moon Bridge
-
-也可以分步操作：
+也可以分步操作——先启动 Moon Bridge，再用 `start_codex.sh` 连接：
 
 ```bash
-# 手动启动服务
-go run ./cmd/moonbridge &
+# 终端 1：启动服务
+./scripts/start_moonbridge.sh
 
-# 生成 Codex 配置并启动 Codex
-CODEX_HOME="$PWD/FakeHome/Codex"
-go run ./cmd/moonbridge \
-  --print-codex-config "$(go run ./cmd/moonbridge --print-codex-model)" \
-  --codex-base-url "http://127.0.0.1:38440/v1" \
-  --codex-home "$CODEX_HOME"
-
-CODEX_HOME="$CODEX_HOME" MOONBRIDGE_CLIENT_API_KEY="local-dev" codex --cd "$PWD"
+# 终端 2：生成 Codex 配置并启动
+./scripts/start_codex.sh --project-directory "$PWD"
 ```
 
+两个脚本的 `--codex-home` 参数可选，默认使用 `$CODEX_HOME` 或 `$HOME/.codex`。
 生成的 Codex `config.toml` 包含模型提供商信息和预配置的 MCP server（如 deepwiki）。
-
----
 
 ## 与 Claude Code 一起使用
 
-使用 `scripts/start_claude_code_with_moonbridge.sh`：
+> 面向开发者调试透明代理（CaptureAnthropic）场景，脚本在 `scripts/dev/` 下。
 
 ```bash
-# CaptureAnthropic 模式下启动 Moon Bridge + Claude Code
-./scripts/start_claude_code_with_moonbridge.sh
+./scripts/dev/start_claude_code_with_moonbridge.sh
 ```
-
-该脚本会自动构建 Moon Bridge（若未构建）、启动服务、配置 Claude Code 使用 Moon Bridge 作为代理、启动 Claude Code，并在 Claude Code 退出后停止 Moon Bridge。
-
-或在 CaptureAnthropic 模式下单独启动 Moon Bridge 后，用 `scripts/start_claude_code.sh` 连接到已有服务。
-
----
 
 ## Docker 部署
 
