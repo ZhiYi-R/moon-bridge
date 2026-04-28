@@ -52,3 +52,7 @@ docker-compose.yml
 # npm
 node_modules/
 build/
+.wrangler/
+
+# Wrangler dev vars
+.dev.vars

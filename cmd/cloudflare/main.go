@@ -37,6 +37,12 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.AuthToken == "" && !isDevEnv() {
+		slog.Error("Worker 生产环境必须配置认证：请在 server.auth_token 中设置 Bearer token，" +
+			"或通过 wrangler secret put MOONBRIDGE_CONFIG 注入包含 auth_token 的配置")
+		os.Exit(1)
+	}
+
 	// Build provider infrastructure.
 	providerDefs := buildProviderDefs(cfg)
 	modelRoutes := buildModelRoutes(cfg)
@@ -153,4 +159,10 @@ func resolveDefaultClient(pm *provider.ProviderManager) *anthropic.Client {
 		return nil
 	}
 	return client
+}
+
+// isDevEnv returns true when running in local dev mode (wrangler dev).
+// Production Workers do not include this variable.
+func isDevEnv() bool {
+	return os.Getenv("WORKER_ENV") == "development"
 }
