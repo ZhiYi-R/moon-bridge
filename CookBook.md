@@ -25,7 +25,7 @@
 **食材：**
 
 - **Go 1.26+** — `go version` 确认。没有的话去 [go.dev](https://go.dev/dl/) 下载。
-- **API Key** — 推荐 DeepSeek，[platform.deepseek.com](https://platform.deepseek.com) 注册送 ¥500 额度。
+- **API Key** — 推荐 DeepSeek，在 [platform.deepseek.com](https://platform.deepseek.com) 注册后创建 API Key。
 - **一个终端**
 
 **验证：**
