@@ -39,6 +39,13 @@ type PluginContext struct {
 	Logger    *slog.Logger  // logger prefixed with the plugin name
 }
 
+// ConfigTypeProvider is an optional interface plugins may implement to
+// declare their config structure for schema generation and runtime decoding.
+// ConfigType returns a pointer to a zero-valued config struct (e.g. &Config{}).
+type ConfigTypeProvider interface {
+	ConfigType() any
+}
+
 // BasePlugin provides no-op defaults for the Plugin interface.
 type BasePlugin struct{}
 

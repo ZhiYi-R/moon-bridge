@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	_ "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/foundation/config"
 )
 
@@ -786,7 +785,9 @@ func TestDumpConfigSchemaWritesMainSchemaAndPluginSchemas(t *testing.T) {
 		t.Fatalf("WriteFile(config) error = %v", err)
 	}
 
-	if err := config.DumpConfigSchema(configPath); err != nil {
+	if err := config.DumpConfigSchema(configPath, map[string]func() any{
+		"deepseek_v4": func() any { return testDeepSeekV4Config() },
+	}); err != nil {
 		t.Fatalf("DumpConfigSchema() error = %v", err)
 	}
 
@@ -814,8 +815,9 @@ func TestDumpConfigSchemaWritesMainSchemaAndPluginSchemas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read plugin schema: %v", err)
 	}
-	if !strings.Contains(string(pluginData), "reinforce_instructions") {
-		t.Fatal("plugin schema missing reinforce_instructions field")
+	pluginStr := string(pluginData)
+	if !strings.Contains(pluginStr, "reinforce_instructions") {
+		t.Fatalf("plugin schema missing reinforce_instructions field; content (first 500 chars): %s", pluginStr[:min(500, len(pluginStr))])
 	}
 }
 
@@ -827,14 +829,17 @@ func TestDumpConfigSchemaSkipsUpToDateSchema(t *testing.T) {
 	}
 
 	// First dump.
-	if err := config.DumpConfigSchema(configPath); err != nil {
+	pluginTypes := map[string]func() any{
+		"deepseek_v4": func() any { return testDeepSeekV4Config() },
+	}
+	if err := config.DumpConfigSchema(configPath, pluginTypes); err != nil {
 		t.Fatalf("first DumpConfigSchema() error = %v", err)
 	}
 	schemaPath := filepath.Join(dir, "config.schema.json")
 	fi1, _ := os.Stat(schemaPath)
 
 	// Second dump should not modify the file (version matches).
-	if err := config.DumpConfigSchema(configPath); err != nil {
+	if err := config.DumpConfigSchema(configPath, nil); err != nil {
 		t.Fatalf("second DumpConfigSchema() error = %v", err)
 	}
 	fi2, _ := os.Stat(schemaPath)
@@ -851,11 +856,22 @@ func TestDumpConfigSchemaSkipsMissingPluginDir(t *testing.T) {
 	}
 
 	// No plugins/ dir at all; should not error.
-	if err := config.DumpConfigSchema(configPath); err != nil {
+	if err := config.DumpConfigSchema(configPath, nil); err != nil {
 		t.Fatalf("DumpConfigSchema() error = %v", err)
 	}
 	schemaPath := filepath.Join(dir, "config.schema.json")
 	if _, err := os.Stat(schemaPath); err != nil {
 		t.Fatalf("main schema not found: %v", err)
 	}
+}
+
+
+// testPluginConfig is a minimal config struct used for schema generation tests.
+type testPluginConfig struct {
+	ReinforceInstructions *bool   `json:"reinforce_instructions,omitempty"`
+	ReinforcePrompt       *string `json:"reinforce_prompt,omitempty"`
+}
+
+func testDeepSeekV4Config() *testPluginConfig {
+	return &testPluginConfig{}
 }

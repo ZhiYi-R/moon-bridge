@@ -56,7 +56,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 		return exitStartupErr
 	}
 	if *dumpConfigSchema {
-		if err := config.DumpConfigSchema(resolvedConfigPath); err != nil {
+		if err := app.DumpConfigSchema(resolvedConfigPath); err != nil {
 			writeStartupError(stderr, "Schema dump 失败", resolvedConfigPath, err)
 			return exitStartupErr
 		}

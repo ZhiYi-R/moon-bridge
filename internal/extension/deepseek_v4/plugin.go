@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
 )
@@ -28,10 +27,6 @@ type Config struct {
 	ReinforcePrompt       *string `json:"reinforce_prompt,omitempty" yaml:"reinforce_prompt"`
 }
 
-func init() {
-	config.RegisterPluginConfigType(PluginName, func() any { return &Config{} })
-}
-
 type EnabledFunc func(modelAlias string) bool
 
 // DSPlugin implements the new plugin.Plugin interface plus relevant capabilities.
@@ -48,6 +43,7 @@ func NewPlugin(isEnabled EnabledFunc) *DSPlugin {
 }
 
 func (p *DSPlugin) Name() string                      { return PluginName }
+func (p *DSPlugin) ConfigType() any                       { return &Config{} }
 func (p *DSPlugin) EnabledForModel(model string) bool { return p.isEnabled(model) }
 func (p *DSPlugin) Init(ctx plugin.PluginContext) error {
 	p.logger = ctx.Logger

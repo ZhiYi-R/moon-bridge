@@ -41,6 +41,9 @@ func NewRegistry(logger *slog.Logger) *Registry {
 // Register adds a plugin and detects its capabilities.
 func (r *Registry) Register(p Plugin) {
 	r.plugins = append(r.plugins, p)
+	if ctp, ok := p.(ConfigTypeProvider); ok {
+		config.RegisterPluginConfigType(p.Name(), ctp.ConfigType)
+	}
 	if v, ok := p.(InputPreprocessor); ok {
 		r.inputPreprocessors = append(r.inputPreprocessors, v)
 	}

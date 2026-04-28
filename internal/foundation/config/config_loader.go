@@ -142,10 +142,6 @@ func LoadFromFile(path string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	// Best-effort schema dump alongside the config file.
-	if err := DumpConfigSchema(path); err != nil {
-		// TODO: route to shared logger when available
-	}
 	return cfg, nil
 }
 

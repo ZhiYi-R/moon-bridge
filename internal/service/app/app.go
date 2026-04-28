@@ -455,3 +455,11 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 		return err
 	}
 }
+
+
+// DumpConfigSchema dumps JSON Schema files alongside the config file,
+// including known plugin config types. Call via --dump-config-schema flag.
+func DumpConfigSchema(configPath string) error {
+	config.RegisterPluginConfigType(deepseekv4.PluginName, func() any { return &deepseekv4.Config{} })
+	return config.DumpConfigSchema(configPath, nil)
+}
