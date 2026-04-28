@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"moonbridge/internal/extension/codex"
+	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/extension/websearchinjected"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/logger"
@@ -706,18 +707,18 @@ func (server *Server) resolveProvider(modelAlias string, providerKey string) Pro
 	if server.providerMgr != nil {
 		// First, try routing by model alias.
 		if _, client, err := server.providerMgr.ClientFor(modelAlias); err == nil && client != nil {
-			return server.maybeWrapInjectedSearch(client, modelAlias, providerKey)
+			return server.maybeWrapProvider(client, modelAlias)
 		}
 		// Fallback: try providerKey directly.
 		if providerKey != "" {
 			if client, err := server.providerMgr.ClientForKey(providerKey); err == nil && client != nil {
-				return server.maybeWrapInjectedSearch(client, modelAlias, providerKey)
+				return server.maybeWrapProvider(client, modelAlias)
 			}
 		}
 		// Last resort: try any available provider.
 		for _, k := range server.providerMgr.ProviderKeys() {
 			if c, err := server.providerMgr.ClientForKey(k); err == nil && c != nil {
-				return server.maybeWrapInjectedSearch(c, modelAlias, k)
+				return server.maybeWrapProvider(c, modelAlias)
 			}
 		}
 	}
@@ -727,11 +728,12 @@ func (server *Server) resolveProvider(modelAlias string, providerKey string) Pro
 	return nil
 }
 
-// maybeWrapInjectedSearch wraps a client with the injected search orchestrator
-// if the resolved web search mode for this model/provider is "injected".
-func (server *Server) maybeWrapInjectedSearch(client *anthropic.Client, modelAlias string, providerKey string) Provider {
+// maybeWrapProvider wraps a client with enabled server-side extension
+// orchestrators for the requested model.
+func (server *Server) maybeWrapProvider(client *anthropic.Client, modelAlias string) Provider {
+	var wrapped Provider = &anthropicClientWrapper{client: client}
 	if server.providerMgr == nil {
-		return &anthropicClientWrapper{client: client}
+		return server.maybeWrapVisual(wrapped, modelAlias)
 	}
 	resolved := server.providerMgr.ResolvedWebSearchForModel(modelAlias)
 	if resolved == "injected" {
@@ -739,9 +741,31 @@ func (server *Server) maybeWrapInjectedSearch(client *anthropic.Client, modelAli
 		firecrawlKey := server.appConfig.WebSearchFirecrawlKeyForModel(modelAlias)
 		maxRounds := server.appConfig.WebSearchMaxRoundsForModel(modelAlias)
 		logger.L().Debug("包装注入式搜索编排器", "model", modelAlias)
-		return websearchinjected.WrapProvider(client, tavilyKey, firecrawlKey, maxRounds)
+		wrapped = websearchinjected.WrapProvider(client, tavilyKey, firecrawlKey, maxRounds)
 	}
-	return &anthropicClientWrapper{client: client}
+	return server.maybeWrapVisual(wrapped, modelAlias)
+}
+
+func (server *Server) maybeWrapVisual(provider Provider, modelAlias string) Provider {
+	if !server.appConfig.VisualForModel(modelAlias) {
+		return provider
+	}
+	cfg := server.appConfig.ResolvedVisualConfig()
+	visualProvider := server.visualProvider(cfg)
+	logger.L().Debug("Wrapping Visual orchestrator", "model", modelAlias, "visual_model", cfg.Model)
+	return visual.WrapProvider(provider, visualProvider, cfg.Model, cfg.MaxRounds, cfg.MaxTokens)
+}
+
+func (server *Server) visualProvider(cfg config.VisualConfig) Provider {
+	if server.providerMgr != nil && cfg.Provider != "" {
+		client, err := server.providerMgr.ClientForKey(cfg.Provider)
+		if err != nil {
+			logger.L().Warn("Visual provider unavailable", "provider", cfg.Provider, "error", err)
+			return nil
+		}
+		return &anthropicClientWrapper{client: client}
+	}
+	return nil
 }
 
 // resolveRequestOptions builds per-request bridge options based on the provider's

@@ -33,6 +33,7 @@ type ProviderFileConfig struct {
 	Version          string                           `yaml:"version" json:"version,omitempty"`
 	UserAgent        string                           `yaml:"user_agent" json:"user_agent,omitempty"`
 	WebSearch        WebSearchFileConfig              `yaml:"web_search" json:"web_search,omitempty"`
+	Visual           VisualFileConfig                 `yaml:"visual" json:"visual,omitempty"`
 	DefaultMaxTokens int                              `yaml:"default_max_tokens" json:"default_max_tokens,omitempty"`
 	DefaultModel     string                           `yaml:"default_model" json:"default_model,omitempty"`
 	Providers        map[string]ProviderDefFileConfig `yaml:"providers" json:"providers,omitempty"`
@@ -68,6 +69,7 @@ type ProviderModelFileConfig struct {
 	DefaultReasoningSummary    string                           `yaml:"default_reasoning_summary" json:"default_reasoning_summary,omitempty"`
 	WebSearch                  WebSearchFileConfig              `yaml:"web_search" json:"web_search,omitempty"`
 	DeepSeekV4                 bool                             `yaml:"deepseek_v4" json:"deepseek_v4,omitempty"`
+	Visual                     bool                             `yaml:"visual" json:"visual,omitempty"`
 }
 
 type ProviderDefFileConfig struct {
@@ -99,6 +101,14 @@ type WebSearchFileConfig struct {
 	TavilyAPIKey    string `yaml:"tavily_api_key" json:"tavily_api_key,omitempty"`
 	FirecrawlAPIKey string `yaml:"firecrawl_api_key" json:"firecrawl_api_key,omitempty"`
 	SearchMaxRounds int    `yaml:"search_max_rounds" json:"search_max_rounds,omitempty"`
+}
+
+type VisualFileConfig struct {
+	Enabled   bool   `yaml:"enabled" json:"enabled,omitempty"`
+	Provider  string `yaml:"provider" json:"provider,omitempty"`
+	Model     string `yaml:"model" json:"model,omitempty"`
+	MaxRounds int    `yaml:"max_rounds" json:"max_rounds,omitempty"`
+	MaxTokens int    `yaml:"max_tokens" json:"max_tokens,omitempty"`
 }
 
 type DeveloperFileConfig struct {
@@ -296,6 +306,7 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 		TavilyAPIKey:      strings.TrimSpace(fileConfig.Provider.WebSearch.TavilyAPIKey),
 		FirecrawlAPIKey:   strings.TrimSpace(fileConfig.Provider.WebSearch.FirecrawlAPIKey),
 		SearchMaxRounds:   intOrDefault(fileConfig.Provider.WebSearch.SearchMaxRounds, 5),
+		Visual:            fromVisualFileConfig(fileConfig.Provider.Visual),
 		DefaultMaxTokens:  intOrDefault(fileConfig.Provider.DefaultMaxTokens, 1024),
 		Routes:            routes,
 		ProviderDefs:      providerDefs,
@@ -400,6 +411,7 @@ func buildRoutes(rawRoutes map[string]string, providerDefs map[string]ProviderDe
 				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
 				entry.WebSearch = meta.WebSearch
 				entry.DeepSeekV4 = meta.DeepSeekV4
+				entry.Visual = meta.Visual
 			}
 		}
 		routes[trimmedAlias] = entry
@@ -457,6 +469,7 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig) map[
 				}
 			}
 			meta.DeepSeekV4 = m.DeepSeekV4
+			meta.Visual = m.Visual
 			for _, preset := range m.SupportedReasoningLevels {
 				meta.SupportedReasoningLevels = append(meta.SupportedReasoningLevels, ReasoningLevelPreset{
 					Effort:      strings.TrimSpace(preset.Effort),
@@ -496,6 +509,16 @@ func fromCacheFileConfig(fileConfig CacheFileConfig) CacheConfig {
 		ExpectedReuse:            intOrDefault(fileConfig.ExpectedReuse, 2),
 		MinimumValueScore:        intOrDefault(fileConfig.MinimumValueScore, 2048),
 		MinBreakpointTokens:      intOrDefault(fileConfig.MinBreakpointTokens, 1024),
+	}
+}
+
+func fromVisualFileConfig(fileConfig VisualFileConfig) VisualConfig {
+	return VisualConfig{
+		Enabled:   fileConfig.Enabled,
+		Provider:  strings.TrimSpace(fileConfig.Provider),
+		Model:     strings.TrimSpace(fileConfig.Model),
+		MaxRounds: intOrDefault(fileConfig.MaxRounds, 4),
+		MaxTokens: intOrDefault(fileConfig.MaxTokens, 2048),
 	}
 }
 

@@ -35,12 +35,20 @@ type ContentBlock struct {
 	Text         string          `json:"text,omitempty"`
 	Thinking     string          `json:"thinking,omitempty"`
 	Signature    string          `json:"signature,omitempty"`
+	Source       *ImageSource    `json:"source,omitempty"`
 	ID           string          `json:"id,omitempty"`
 	Name         string          `json:"name,omitempty"`
 	Input        json.RawMessage `json:"input,omitempty"`
 	ToolUseID    string          `json:"tool_use_id,omitempty"`
 	Content      any             `json:"content,omitempty"`
 	CacheControl *CacheControl   `json:"cache_control,omitempty"`
+}
+
+type ImageSource struct {
+	Type      string `json:"type"`
+	URL       string `json:"url,omitempty"`
+	MediaType string `json:"media_type,omitempty"`
+	Data      string `json:"data,omitempty"`
 }
 
 func (block ContentBlock) MarshalJSON() ([]byte, error) {

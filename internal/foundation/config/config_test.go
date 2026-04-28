@@ -369,6 +369,47 @@ provider:
 	}
 }
 
+func TestLoadFromYAMLParsesVisualConfig(t *testing.T) {
+	cfg, err := config.LoadFromYAML([]byte(`
+mode: Transform
+provider:
+  providers:
+    deepseek:
+      base_url: https://deepseek.example.test
+      api_key: deepseek-key
+      models:
+        deepseek-v4-pro:
+          visual: true
+    kimi:
+      base_url: https://kimi.example.test/v1
+      api_key: kimi-key
+  routes:
+    moonbridge: "deepseek/deepseek-v4-pro"
+  visual:
+    enabled: true
+    provider: kimi
+    model: kimi-vision
+    max_rounds: 3
+    max_tokens: 1024
+`))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+	if !cfg.VisualForModel("moonbridge") {
+		t.Fatal("VisualForModel(moonbridge) = false, want true")
+	}
+	if !cfg.VisualForModel("deepseek/deepseek-v4-pro") {
+		t.Fatal("VisualForModel(deepseek/deepseek-v4-pro) = false, want true")
+	}
+	resolved := cfg.ResolvedVisualConfig()
+	if resolved.Provider != "kimi" || resolved.Model != "kimi-vision" {
+		t.Fatalf("ResolvedVisualConfig() = %+v", resolved)
+	}
+	if resolved.MaxRounds != 3 || resolved.MaxTokens != 1024 {
+		t.Fatalf("ResolvedVisualConfig defaults/overrides = %+v", resolved)
+	}
+}
+
 func TestLoadFromYAMLAllowsProviderModelCatalogWithoutRoutes(t *testing.T) {
 	cfg, err := config.LoadFromYAML([]byte(`
 mode: Transform
@@ -494,6 +535,43 @@ provider:
   routes:
     moonbridge: "deepseek/deepseek-v4-pro"
   deepseek_v4: true
+`,
+		"visual provider missing": `
+mode: Transform
+provider:
+  providers:
+    deepseek:
+      base_url: https://deepseek.example.test
+      api_key: deepseek-key
+      models:
+        deepseek-v4-pro:
+          visual: true
+  routes:
+    moonbridge: "deepseek/deepseek-v4-pro"
+  visual:
+    enabled: true
+    model: kimi-vision
+`,
+		"visual provider on openai-response protocol": `
+mode: Transform
+provider:
+  providers:
+    deepseek:
+      base_url: https://deepseek.example.test
+      api_key: deepseek-key
+      models:
+        deepseek-v4-pro:
+          visual: true
+    openai:
+      base_url: https://openai.example.test
+      api_key: openai-key
+      protocol: openai-response
+  routes:
+    moonbridge: "deepseek/deepseek-v4-pro"
+  visual:
+    enabled: true
+    provider: openai
+    model: gpt-4o
 `,
 	} {
 		t.Run(name, func(t *testing.T) {

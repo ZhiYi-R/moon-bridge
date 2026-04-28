@@ -247,18 +247,20 @@ func contentBlocksFromRaw(raw json.RawMessage) []anthropic.ContentBlock {
 		}
 		return []anthropic.ContentBlock{{Type: "text", Text: text}}
 	}
-	var parts []struct {
-		Type string `json:"type"`
-		Text string `json:"text"`
-	}
+	var parts []openAIContentPart
 	if err := json.Unmarshal(raw, &parts); err == nil && len(parts) > 0 {
 		blocks := make([]anthropic.ContentBlock, 0, len(parts))
 		for _, part := range parts {
-			if part.Type == "input_text" || part.Type == "text" || part.Type == "output_text" {
+			switch part.Type {
+			case "input_text", "text", "output_text":
 				if part.Text == "" {
 					continue
 				}
 				blocks = append(blocks, anthropic.ContentBlock{Type: "text", Text: part.Text})
+			case "input_image", "image", "image_url":
+				if source := imageSourceFromContentPart(part); source != nil {
+					blocks = append(blocks, anthropic.ContentBlock{Type: "image", Source: source})
+				}
 			}
 		}
 		return blocks
@@ -267,6 +269,67 @@ func contentBlocksFromRaw(raw json.RawMessage) []anthropic.ContentBlock {
 		return nil
 	}
 	return []anthropic.ContentBlock{{Type: "text", Text: trimmed}}
+}
+
+type openAIContentPart struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text"`
+	ImageURL json.RawMessage `json:"image_url"`
+}
+
+func imageSourceFromContentPart(part openAIContentPart) *anthropic.ImageSource {
+	url := imageURLString(part.ImageURL)
+	if url == "" {
+		return nil
+	}
+	return imageSourceFromURL(url)
+}
+
+func imageURLString(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var url string
+	if err := json.Unmarshal(raw, &url); err == nil {
+		return strings.TrimSpace(url)
+	}
+	var object struct {
+		URL string `json:"url"`
+	}
+	if err := json.Unmarshal(raw, &object); err == nil {
+		return strings.TrimSpace(object.URL)
+	}
+	return ""
+}
+
+func imageSourceFromURL(url string) *anthropic.ImageSource {
+	url = strings.TrimSpace(url)
+	if url == "" {
+		return nil
+	}
+	lower := strings.ToLower(url)
+	if strings.HasPrefix(lower, "data:") {
+		return imageSourceFromDataURL(url)
+	}
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		return &anthropic.ImageSource{Type: "url", URL: url}
+	}
+	return nil
+}
+
+func imageSourceFromDataURL(value string) *anthropic.ImageSource {
+	header, data, ok := strings.Cut(value, ",")
+	if !ok || strings.TrimSpace(data) == "" {
+		return nil
+	}
+	mediaType := strings.TrimPrefix(header, "data:")
+	if semicolon := strings.IndexByte(mediaType, ';'); semicolon >= 0 {
+		mediaType = mediaType[:semicolon]
+	}
+	if mediaType == "" {
+		mediaType = "image/png"
+	}
+	return &anthropic.ImageSource{Type: "base64", MediaType: mediaType, Data: data}
 }
 
 func parseStopSequences(raw json.RawMessage) []string {

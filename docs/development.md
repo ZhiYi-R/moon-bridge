@@ -24,6 +24,15 @@ cp config.example.yml "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml"
 仓库根目录的 `config.yml` 已在 `.gitignore` 中，不会提交到仓库。也可通过 `--config` 参数指定其他路径。
 注：`MOONBRIDGE_CONFIG` 不再被读取，请使用 `--config` 标志。
 
+旧配置结构调整后使用迁移脚本一次性更新：
+
+```bash
+python scripts/migrate_config.py --dry-run config.yml
+python scripts/migrate_config.py config.yml
+```
+
+具体迁移规则见 [config-migration.md](config-migration.md)。
+
 ### 文件结构
 
 ```
@@ -51,6 +60,7 @@ cp config.example.yml "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml"
 ├── docs/                    # 文档
 ├── scripts/
 │   ├── start_codex_with_moonbridge.sh     # Transform / CaptureResponse 模式
+│   ├── migrate_config.py                   # 配置迁移
 │   └── start_claude_code_with_moonbridge.sh  # CaptureAnthropic 模式
 ├── go.mod
 └── config.example.yml
@@ -107,6 +117,8 @@ go test ./internal/service/e2e/ -v -count=1
 - Cache planner：验证各种配置组合（off / automatic / explicit / hybrid）下的断点注入与注册表状态管理。
 - DTO：验证 `input_tokens_details.cached_tokens` 在值为 `0` 时仍被序列化。
 - DeepSeek V4：验证 reasoning_content 剥离、请求级 thinking state、`high/xhigh` 到 DeepSeek `high/max` 的映射、采样参数清理、流式 delta 收集等逻辑。
+- Visual：验证 `input_image` 转 Anthropic image block、主模型侧图片占位替换、`visual_brief` / `visual_qa` 工具循环、`Image #1` 引用解析和 Kimi provider 转发。
+- 配置迁移：验证 `scripts/migrate_config.py` 覆盖 Provider/routes、DeepSeek V4 和 Visual 旧格式。
 
 ## Debug
 
@@ -137,8 +149,9 @@ scripts/replay_anthropic_cache.py trace/Transform/20260426T110909Z-79bfa6d6 --st
 
 1. 更新 `internal/foundation/config/config.go` 中的 FileConfig 和 FromFileConfig。
 2. 更新 `config.example.yml`。
-3. 更新启动脚本（如适用）。
-4. 更新本目录下的相应文档。
+3. 更新 `scripts/migrate_config.py`，把旧结构一次性迁移到当前结构，不在运行时保留旧字段。
+4. 更新启动脚本（如适用）。
+5. 更新本目录下的相应文档。
 
 ## 变更日志
 

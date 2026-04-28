@@ -7,6 +7,7 @@ import (
 	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/extension/pluginhooks"
+	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
@@ -33,6 +34,7 @@ func testBridge() *bridge.Bridge {
 func testBridgeWithConfig(cfg config.Config) *bridge.Bridge {
 	plugins := plugin.NewRegistry(nil)
 	plugins.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
+	plugins.Register(visual.NewPlugin(cfg.VisualForModel))
 	return bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(plugins))
 }
 
@@ -103,6 +105,58 @@ func TestToAnthropicConvertsTextToolsToolChoiceAndCache(t *testing.T) {
 	}
 	if converted.Tools[0].CacheControl == nil || converted.System[0].CacheControl == nil {
 		t.Fatalf("cache controls not injected: tools=%+v system=%+v", converted.Tools, converted.System)
+	}
+}
+
+func TestToAnthropicInjectsVisualToolsForOptInModel(t *testing.T) {
+	cfg := config.Config{
+		DefaultMaxTokens: 1024,
+		Visual:           config.VisualConfig{Enabled: true, Provider: "kimi", Model: "kimi-vision"},
+		Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test", Visual: true}},
+		Cache:            config.CacheConfig{Mode: "off"},
+	}
+	converted, _, err := testBridgeWithConfig(cfg).ToAnthropic(openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`"describe this screenshot"`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	var names []string
+	for _, tool := range converted.Tools {
+		names = append(names, tool.Name)
+	}
+	if len(names) != 2 || names[0] != visual.ToolVisualBrief || names[1] != visual.ToolVisualQA {
+		t.Fatalf("visual tools = %v, want [%s %s]", names, visual.ToolVisualBrief, visual.ToolVisualQA)
+	}
+}
+
+func TestToAnthropicConvertsInputImageDataURL(t *testing.T) {
+	converted, _, err := testBridge().ToAnthropic(openai.ResponsesRequest{
+		Model: "gpt-test",
+		Input: json.RawMessage(`[
+			{"role":"user","content":[
+				{"type":"input_text","text":"what is in this image?"},
+				{"type":"input_image","image_url":"data:image/png;base64,abc123"}
+			]}
+		]`),
+	}, nil)
+	if err != nil {
+		t.Fatalf("ToAnthropic() error = %v", err)
+	}
+	blocks := converted.Messages[0].Content
+	if len(blocks) != 2 {
+		t.Fatalf("content blocks = %+v", blocks)
+	}
+	if blocks[0].Type != "text" || blocks[0].Text != "what is in this image?" {
+		t.Fatalf("text block = %+v", blocks[0])
+	}
+	source := blocks[1].Source
+	if blocks[1].Type != "image" || source == nil {
+		t.Fatalf("image block = %+v", blocks[1])
+	}
+	if source.Type != "base64" || source.MediaType != "image/png" || source.Data != "abc123" {
+		t.Fatalf("image source = %+v", source)
 	}
 }
 

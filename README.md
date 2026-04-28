@@ -90,6 +90,15 @@ provider:
 
 `protocol` 默认为 `anthropic`。设置为 `openai-response` 时，本轮请求不会进入 Anthropic 转换层，而是保留 OpenAI Responses 格式，只把模型别名改写为上游真实模型名。
 
+旧配置可用迁移脚本更新到当前 Provider/routes/Visual 结构：
+
+```bash
+python scripts/migrate_config.py --dry-run config.yml
+python scripts/migrate_config.py config.yml
+```
+
+迁移细节见 [docs/config-migration.md](docs/config-migration.md)。
+
 ### 模型定价
 
 `provider.providers.<key>.models.<upstream>.pricing` 是可选的 per-model 价格配置，单位是元（¥）/ M tokens。当某个模型配置了价格后，Moon Bridge 会按 session 累加费用，并在每次请求和服务退出时输出费用统计。价格定义在 Provider 的模型目录中，通过 `routes` 关联到别名后自动生效。
@@ -164,6 +173,43 @@ provider:
     support: "auto"
     max_uses: 8
 ```
+
+### Visual 扩展
+
+Visual 是给 Anthropic-routed 主模型注入视觉能力的转发层扩展。主模型仍走原本 Provider，Visual 工具调用会通过 `provider.visual.provider` 指定的现有 Anthropic-compatible Provider 执行，例如 Kimi；Moon Bridge 不引入单独的 Kimi 客户端或自定义桥接。
+
+启用方式分两层：`provider.visual.enabled` 打开全局 Visual，`provider.providers.<main>.models.<upstream>.visual: true` 让具体主模型暴露两个工具：
+
+- `visual_brief`：第一轮图片简介，返回画面概览、重要细节、OCR、疑点和后续追问建议。
+- `visual_qa`：后续澄清问题，主模型可带上 `prior_visual_context` 或继续引用同一张图。
+
+配置示例：
+
+```yaml
+provider:
+  providers:
+    deepseek:
+      # ...
+      models:
+        deepseek-v4-pro:
+          deepseek_v4: true
+          visual: true
+    kimi:
+      base_url: "https://api.moonshot.cn/anthropic"
+      api_key: "replace-with-kimi-api-key"
+      version: "2023-06-01"
+      models:
+        kimi-for-coding: {}
+
+  visual:
+    enabled: true
+    provider: "kimi"
+    model: "kimi-for-coding"
+    max_rounds: 4
+    max_tokens: 2048
+```
+
+Codex / OpenAI Responses 的 `input_image` 会先转成 Anthropic image block。进入主模型前，Visual 包装器会把图片从主请求中拿出并替换成 `Image #1` 这类可引用提示，防止纯文本主模型或上游把 `Image #1` 当 URL 传给 Kimi。工具参数里可以用 `image_refs: ["Image #1"]`；如果本轮有附件且工具没有显式传图，Visual 会自动使用可用附件。
 
 ### DeepSeek V4 扩展
 

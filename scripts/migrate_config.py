@@ -56,6 +56,29 @@ New format (model-level):
           deepseek-v4-pro:
             deepseek_v4: true
 
+Old Visual extension formats (migrated):
+  provider:
+    visual: true
+
+  provider:
+    providers:
+      deepseek:
+        visual: true
+
+New Visual extension format:
+  provider:
+    visual:
+      enabled: true
+      provider: kimi
+      model: kimi-for-coding
+      max_rounds: 4
+      max_tokens: 2048
+    providers:
+      deepseek:
+        models:
+          deepseek-v4-pro:
+            visual: true
+
 Usage:
   python3 scripts/migrate_config.py                     # reads config.yml, writes config.yml
   python3 scripts/migrate_config.py old.yml             # reads old.yml, writes old.yml
@@ -78,6 +101,8 @@ def needs_migration(provider_block: dict) -> bool:
     if "deepseek_v4" in provider_block:
         return True
     if needs_provider_level_deepseek_v4_migration(provider_block):
+        return True
+    if needs_visual_migration(provider_block):
         return True
     return needs_model_migration(provider_block)
 
@@ -108,6 +133,26 @@ def needs_provider_level_deepseek_v4_migration(provider_block: dict) -> bool:
     return False
 
 
+def needs_visual_migration(provider_block: dict) -> bool:
+    """Return True if Visual still uses an obsolete scalar/provider-level shape."""
+    visual = provider_block.get("visual")
+    if visual is not None and not isinstance(visual, dict):
+        return True
+
+    providers = provider_block.get("providers")
+    if not providers:
+        return False
+    for pdef in providers.values():
+        if isinstance(pdef, dict) and "visual" in pdef:
+            return True
+    if has_model_level_visual(providers):
+        if visual is None:
+            return True
+        if isinstance(visual, dict) and boolish(visual.get("enabled")):
+            return not str(visual.get("provider", "")).strip() or not str(visual.get("model", "")).strip()
+    return False
+
+
 def migrate(data: dict) -> dict:
     """Transform the config dict in-place from old to new format."""
     provider_block = data.get("provider")
@@ -121,6 +166,7 @@ def migrate(data: dict) -> dict:
     migrate_models = needs_model_migration(provider_block)
     providers = provider_block.get("providers") or {}
     migrate_deepseek_v4(provider_block, providers)
+    migrate_visual(provider_block, providers)
     if not migrate_models:
         return data
 
@@ -227,6 +273,171 @@ def migrate_deepseek_v4(provider_block: dict, providers: dict) -> None:
                 if "deepseek_v4" not in mdef:
                     mdef["deepseek_v4"] = True
             # else: scalar value, skip (unusual)
+
+
+def migrate_visual(provider_block: dict, providers: dict) -> None:
+    """Migrate Visual enablement to provider.visual config + model-level flags."""
+    visual = provider_block.get("visual")
+    global_visual_enabled = False
+    if visual is not None and not isinstance(visual, dict):
+        enabled = boolish(visual)
+        global_visual_enabled = enabled
+        provider_block["visual"] = {"enabled": enabled}
+
+    enabled_provider_keys: set[str] = set()
+    for key, pdef in providers.items():
+        if not isinstance(pdef, dict):
+            continue
+        if "visual" in pdef:
+            enabled = boolish(pdef.pop("visual"))
+            if enabled:
+                enabled_provider_keys.add(key)
+
+    for key in enabled_provider_keys:
+        pdef = providers.get(key)
+        if not isinstance(pdef, dict):
+            continue
+        models = pdef.get("models")
+        if not models:
+            print(
+                f"Warning: visual enabled for provider {key!r}, but it has "
+                f"no models defined. Add visual: true to model entries manually.",
+                file=sys.stderr,
+            )
+            continue
+        for model_name, mdef in models.items():
+            if mdef is None:
+                models[model_name] = {"visual": True}
+            elif isinstance(mdef, dict):
+                if "visual" not in mdef:
+                    mdef["visual"] = True
+            # else: scalar value, skip (unusual)
+
+    visual_enabled = bool(enabled_provider_keys) or has_model_level_visual(providers)
+    visual = provider_block.get("visual")
+    if visual_enabled and visual is None:
+        visual = {"enabled": True}
+        provider_block["visual"] = visual
+
+    if isinstance(visual, dict) and boolish(visual.get("enabled")):
+        fill_visual_provider_model(visual, providers)
+        visual.setdefault("max_rounds", 4)
+        visual.setdefault("max_tokens", 2048)
+        if global_visual_enabled:
+            mark_global_visual_models(providers, str(visual.get("provider", "")).strip())
+
+
+def has_model_level_visual(providers: dict) -> bool:
+    """Return True if any provider model already opts in to Visual."""
+    for pdef in providers.values():
+        if not isinstance(pdef, dict):
+            continue
+        models = pdef.get("models") or {}
+        for mdef in models.values():
+            if isinstance(mdef, dict) and boolish(mdef.get("visual")):
+                return True
+    return False
+
+
+def mark_global_visual_models(providers: dict, visual_provider_key: str) -> None:
+    """Migrate old global Visual enablement to all non-Kimi Anthropic models."""
+    marked = 0
+    for key, pdef in providers.items():
+        if not isinstance(pdef, dict) or not provider_uses_anthropic_protocol(pdef):
+            continue
+        if key == visual_provider_key or provider_looks_like_kimi(key, pdef):
+            continue
+        models = pdef.get("models")
+        if not models:
+            continue
+        for model_name, mdef in models.items():
+            if mdef is None:
+                models[model_name] = {"visual": True}
+                marked += 1
+            elif isinstance(mdef, dict):
+                if "visual" not in mdef:
+                    mdef["visual"] = True
+                marked += 1
+    if marked == 0:
+        print(
+            "Warning: provider.visual was true, but no non-Kimi Anthropic "
+            "models were found. Add visual: true to target model entries manually.",
+            file=sys.stderr,
+        )
+
+
+def fill_visual_provider_model(visual: dict, providers: dict) -> None:
+    """Fill provider.visual.provider/model when a Kimi provider can be inferred."""
+    provider = str(visual.get("provider", "")).strip()
+    model = str(visual.get("model", "")).strip()
+    inferred_provider, inferred_model = infer_visual_provider_model(providers, provider)
+
+    if not provider and inferred_provider:
+        visual["provider"] = inferred_provider
+        provider = inferred_provider
+    if not model and inferred_model:
+        visual["model"] = inferred_model
+        model = inferred_model
+
+    missing: list[str] = []
+    if not provider:
+        missing.append("provider")
+    if not model:
+        missing.append("model")
+    if missing:
+        print(
+            "Warning: Visual was enabled, but provider.visual."
+            + " and provider.visual.".join(missing)
+            + " could not be inferred. Fill these fields manually.",
+            file=sys.stderr,
+        )
+
+
+def infer_visual_provider_model(providers: dict, preferred_provider: str = "") -> tuple[str, str]:
+    """Infer the Kimi provider key and model name for Visual forwarding."""
+    if preferred_provider:
+        pdef = providers.get(preferred_provider)
+        if isinstance(pdef, dict) and provider_uses_anthropic_protocol(pdef):
+            return preferred_provider, infer_visual_model_name(pdef)
+
+    candidates: list[tuple[str, dict]] = []
+    for key, pdef in providers.items():
+        if not isinstance(pdef, dict) or not provider_uses_anthropic_protocol(pdef):
+            continue
+        if provider_looks_like_kimi(key, pdef):
+            candidates.append((key, pdef))
+
+    if not candidates:
+        return "", ""
+    for key, pdef in candidates:
+        if key.strip().lower() == "kimi":
+            return key, infer_visual_model_name(pdef)
+    key, pdef = candidates[0]
+    return key, infer_visual_model_name(pdef)
+
+
+def infer_visual_model_name(pdef: dict) -> str:
+    models = pdef.get("models") or {}
+    if not models:
+        return ""
+    if "kimi-for-coding" in models:
+        return "kimi-for-coding"
+    for name in models:
+        if "kimi" in str(name).lower() or "vision" in str(name).lower():
+            return str(name)
+    if len(models) == 1:
+        return str(next(iter(models)))
+    return str(next(iter(models)))
+
+
+def provider_looks_like_kimi(provider_key: str, pdef: dict) -> bool:
+    values = [provider_key, str(pdef.get("base_url", ""))]
+    models = pdef.get("models") or {}
+    for model_key, model_def in models.items():
+        values.append(str(model_key))
+        if isinstance(model_def, dict):
+            values.append(str(model_def.get("name", "")))
+    return any("kimi" in value.lower() or "moonshot" in value.lower() for value in values)
 
 
 def deepseek_provider_candidates(providers: dict) -> list[str]:

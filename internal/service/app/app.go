@@ -11,6 +11,7 @@ import (
 	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/extension/pluginhooks"
+	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/protocol/anthropic"
@@ -120,6 +121,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	// Register plugins.
 	plugins := plugin.NewRegistry(logger.L())
 	plugins.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
+	plugins.Register(visual.NewPlugin(cfg.VisualForModel))
 	if err := plugins.InitAll(&cfg); err != nil {
 		return fmt.Errorf("init plugins: %w", err)
 	}

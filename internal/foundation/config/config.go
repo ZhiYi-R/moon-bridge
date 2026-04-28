@@ -47,6 +47,17 @@ type WebSearchConfig struct {
 	SearchMaxRounds int
 }
 
+// VisualConfig holds settings for the Visual extension. The extension injects
+// vision tools into selected Anthropic-routed models and forwards those tool
+// calls through an existing Anthropic provider such as Kimi.
+type VisualConfig struct {
+	Enabled   bool
+	Provider  string
+	Model     string
+	MaxRounds int
+	MaxTokens int
+}
+
 type Config struct {
 	Mode              Mode
 	Addr              string
@@ -65,6 +76,7 @@ type Config struct {
 	TavilyAPIKey      string
 	FirecrawlAPIKey   string
 	SearchMaxRounds   int
+	Visual            VisualConfig
 	DefaultMaxTokens  int
 	// Routes maps a model alias to "provider/upstream_model".
 	Routes         map[string]RouteEntry
@@ -98,6 +110,8 @@ type RouteEntry struct {
 	WebSearch WebSearchConfig
 	// DeepSeekV4 enables the DeepSeek V4 thinking extension for this route.
 	DeepSeekV4 bool
+	// Visual enables the Visual extension for this route.
+	Visual bool
 }
 
 // ProviderDef defines a single upstream provider.
@@ -137,6 +151,8 @@ type ModelMeta struct {
 	WebSearch WebSearchConfig
 	// DeepSeekV4 enables the DeepSeek V4 thinking extension for this model.
 	DeepSeekV4 bool
+	// Visual enables the Visual extension for this model.
+	Visual bool
 }
 
 type ResponseProxyConfig struct {
@@ -231,6 +247,24 @@ func (cfg Config) validateTransform() error {
 					return fmt.Errorf("routes.%s: deepseek_v4 requires anthropic protocol (provider %s uses %s)", alias, route.Provider, def.Protocol)
 				}
 			}
+			if route.Visual {
+				if def, ok := cfg.ProviderDefs[route.Provider]; ok && def.Protocol != "" && def.Protocol != ProtocolAnthropic {
+					return fmt.Errorf("routes.%s: visual requires anthropic protocol (provider %s uses %s)", alias, route.Provider, def.Protocol)
+				}
+			}
+		}
+		for key, def := range cfg.ProviderDefs {
+			if def.Protocol == "" || def.Protocol == ProtocolAnthropic {
+				continue
+			}
+			for modelName, meta := range def.Models {
+				if meta.Visual {
+					return fmt.Errorf("providers.%s.models.%s: visual requires anthropic protocol (provider uses %s)", key, modelName, def.Protocol)
+				}
+			}
+		}
+		if err := cfg.validateVisualConfig(); err != nil {
+			return err
 		}
 		return nil
 	}
@@ -248,6 +282,9 @@ func (cfg Config) validateTransform() error {
 		if alias == "" || route.Model == "" {
 			return errors.New("routes cannot contain empty aliases or models")
 		}
+	}
+	if err := cfg.validateVisualConfig(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -278,6 +315,29 @@ func (cfg Config) validateSearchConfig() error {
 				return fmt.Errorf("providers.%s.web_search.search_max_rounds must be > 0 when web_search.support is 'injected'", key)
 			}
 		}
+	}
+	return nil
+}
+
+func (cfg Config) validateVisualConfig() error {
+	if !cfg.Visual.Enabled {
+		return nil
+	}
+	if cfg.Visual.Provider == "" {
+		return errors.New("provider.visual.provider is required when visual.enabled is true")
+	}
+	if cfg.Visual.Model == "" {
+		return errors.New("provider.visual.model is required when visual.enabled is true")
+	}
+	if len(cfg.ProviderDefs) == 0 {
+		return errors.New("provider.visual.provider requires provider.providers")
+	}
+	def, ok := cfg.ProviderDefs[cfg.Visual.Provider]
+	if !ok {
+		return fmt.Errorf("provider.visual.provider references unknown provider %q", cfg.Visual.Provider)
+	}
+	if def.Protocol != "" && def.Protocol != ProtocolAnthropic {
+		return fmt.Errorf("provider.visual.provider %q requires anthropic protocol (uses %s)", cfg.Visual.Provider, def.Protocol)
 	}
 	return nil
 }
@@ -340,6 +400,10 @@ func (cfg Config) RouteFor(model string) RouteEntry {
 				entry.SupportedReasoningLevels = meta.SupportedReasoningLevels
 				entry.SupportsReasoningSummaries = meta.SupportsReasoningSummaries
 				entry.DefaultReasoningSummary = meta.DefaultReasoningSummary
+				entry.BaseInstructions = meta.BaseInstructions
+				entry.WebSearch = meta.WebSearch
+				entry.DeepSeekV4 = meta.DeepSeekV4
+				entry.Visual = meta.Visual
 			}
 			return entry
 		}
@@ -546,6 +610,39 @@ func (cfg Config) providerKeyForModel(modelAlias string) string {
 		return p
 	}
 	return ""
+}
+
+// VisualForModel returns whether the Visual extension is enabled for a model
+// alias. The global visual.enabled switch must be true, and the target route
+// or provider-catalog model must opt in with visual: true.
+func (cfg Config) VisualForModel(modelAlias string) bool {
+	if !cfg.Visual.Enabled {
+		return false
+	}
+	if route, ok := cfg.Routes[modelAlias]; ok {
+		if route.Visual {
+			return true
+		}
+		if def, ok := cfg.ProviderDefs[route.Provider]; ok {
+			if meta, ok := def.Models[route.Model]; ok {
+				return meta.Visual
+			}
+		}
+		return false
+	}
+	if provider, upstream := ParseModelRef(modelAlias); provider != "" {
+		if def, ok := cfg.ProviderDefs[provider]; ok {
+			if meta, ok := def.Models[upstream]; ok {
+				return meta.Visual
+			}
+		}
+	}
+	return false
+}
+
+// ResolvedVisualConfig returns the visual extension config.
+func (cfg Config) ResolvedVisualConfig() VisualConfig {
+	return cfg.Visual
 }
 
 func (cfg CacheConfig) Validate() error {

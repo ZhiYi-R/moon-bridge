@@ -28,6 +28,7 @@ provider:
           display_name: "DeepSeek V4 Pro"
           description: "DeepSeek V4 with selectable high/xhigh reasoning effort."
           deepseek_v4: true
+          visual: true
           default_reasoning_level: "high"
           supported_reasoning_levels:
             - effort: "high"
@@ -43,6 +44,13 @@ provider:
             output_price: 8
             cache_write_price: 1
             cache_read_price: 0.2
+    kimi:
+      base_url: "https://api.moonshot.cn/anthropic"
+      api_key: "replace-with-kimi-api-key"
+      version: "2023-06-01"
+      user_agent: "moonbridge/1.0"
+      models:
+        kimi-for-coding: {}
     openai:
       base_url: "https://api.openai.com"
       api_key: "replace-with-openai-api-key"
@@ -72,6 +80,14 @@ provider:
   #   tavily_api_key: "replace-with-tavily-api-key"
   #   firecrawl_api_key: "replace-with-firecrawl-api-key"
   #   search_max_rounds: 5
+
+  visual:
+    enabled: true
+    provider: "kimi"
+    model: "kimi-for-coding"
+    max_rounds: 4
+    max_tokens: 2048
+
   default_max_tokens: 65536
   default_model: "moonbridge"
 
