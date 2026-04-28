@@ -6,13 +6,19 @@ if ($MyInvocation.InvocationName -eq ".") {
     return
 }
 
+param(
+    [Parameter(Mandatory = $true)]
+    [string]$ProjectDirectory,
+
+    [Parameter(Mandatory = $false)]
+    [string]$CodexHome = $(if ($env:CODEX_HOME) { $env:CODEX_HOME } else { Join-Path $HOME ".codex" })
+)
+
 $RootDir = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ConfigFile = if ($env:MOONBRIDGE_CONFIG) { $env:MOONBRIDGE_CONFIG } else { Join-Path $RootDir "config.yml" }
-$CodexHomeDir = Join-Path $RootDir "FakeHome\Codex"
+$CodexHomeDir = $CodexHome
 $ServerBin = Join-Path $RootDir ".cache\start-codex\moonbridge.exe"
 $LogFile = Join-Path $RootDir "logs\moonbridge-codex.log"
-$GlobalCodexConfig = if ($env:MOONBRIDGE_CODEX_CONFIG) { $env:MOONBRIDGE_CODEX_CONFIG } else { Join-Path $HOME ".codex\config.toml" }
-$PromptText = if ($args.Count -gt 0) { $args[0] } else { "" }
 $CodexProcess = $null
 $CodexWatcherProcess = $null
 
@@ -221,52 +227,6 @@ function Ensure-PortFree {
     }
 }
 
-function Append-CodexStatusLine {
-    param([Parameter(Mandatory = $true)][string]$TargetConfig)
-
-    if (-not (Test-Path -LiteralPath $GlobalCodexConfig -PathType Leaf)) {
-        Write-Log "No global Codex config found at $GlobalCodexConfig; status_line not copied"
-        return
-    }
-
-    $lines = Get-Content -LiteralPath $GlobalCodexConfig
-    $inTui = $false
-    $capturing = $false
-    $statusLines = [System.Collections.Generic.List[string]]::new()
-
-    foreach ($line in $lines) {
-        if ($line -match '^\s*\[') {
-            $inTui = ($line.Trim() -eq "[tui]")
-            $capturing = $false
-        }
-
-        if ($inTui -and -not $capturing -and $line -match '^\s*status_line\s*=') {
-            $capturing = $true
-            $statusLines.Add($line)
-            if ($line -match '\]') {
-                $capturing = $false
-            }
-            continue
-        }
-
-        if ($inTui -and $capturing) {
-            $statusLines.Add($line)
-            if ($line -match '\]') {
-                $capturing = $false
-            }
-        }
-    }
-
-    if ($statusLines.Count -eq 0) {
-        Write-Log "No [tui].status_line found in $GlobalCodexConfig; status_line not copied"
-        return
-    }
-
-    Add-Content -LiteralPath $TargetConfig -Value ""
-    Add-Content -LiteralPath $TargetConfig -Value "[tui]"
-    Add-Content -LiteralPath $TargetConfig -Value $statusLines
-    Write-Log "Copied Codex status_line from $GlobalCodexConfig"
-}
 
 function Get-CodexLaunchCommand {
     $command = Get-Command codex -ErrorAction Stop
@@ -410,7 +370,7 @@ function Add-LauncherLog {
     } catch {
     }
 }
-Write-Host 'Starting Codex with CODEX_HOME=$CodexHomeDir'
+Write-Host "Starting Codex with CODEX_HOME=$CodexHomeDir"
 Write-Host 'Workspace: $RootDir'
 Write-Host 'Mode: $Mode'
 Write-Host 'Model: $ModelAlias'
@@ -518,17 +478,12 @@ if ($codexConfigResult.ExitCode -ne 0) {
     exit $codexConfigResult.ExitCode
 }
 Set-Content -LiteralPath (Join-Path $CodexHomeDir "config.toml") -Value $codexConfigResult.Stdout -NoNewline
-Append-CodexStatusLine -TargetConfig (Join-Path $CodexHomeDir "config.toml")
 
 $codexArgs = @(
     "--sandbox", "workspace-write",
     "--ask-for-approval", "on-request",
-    "--cd", $RootDir
+    "--cd", $ProjectDirectory
 )
-if (-not [string]::IsNullOrWhiteSpace($PromptText)) {
-    $codexArgs += $PromptText
-}
-
 Write-Log "Starting Codex in a new PowerShell window"
 $CodexProcess = Start-CodexTerminal -Arguments $codexArgs -HostName $ParsedAddr.Host -Port $ParsedAddr.Port
 $CodexWatcherProcess = Start-CodexCleanupWatcher -Process $CodexProcess

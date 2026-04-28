@@ -1,101 +1,142 @@
-# Moon Bridge 架构
+# 系统架构
 
-Moon Bridge 是一个 Go 中间层服务，提供 OpenAI Responses API 兼容接口。Transform 模式下，它会按模型别名路由请求：Anthropic 协议 Provider 走 OpenAI Responses ↔ Anthropic Messages 转换，OpenAI 协议 Provider 走 Responses 直通代理。
+## 项目概述
 
-## 架构总览
+Moon Bridge 是一个 Go 语言编写的 HTTP 代理/转换服务器。它接收来自 Codex CLI 的 OpenAI Responses API 请求（`/v1/responses`），将其转换为 Anthropic Messages API 请求，转发给上游 LLM 提供商，再将上游响应转换回 OpenAI Responses 格式。
+
+## 四层架构
 
 ```mermaid
-flowchart LR
-    client["客户端 (Codex/CLI)"]
-    mb["Moon Bridge\n127.0.0.1:38440"]
-    transform["Transform\n协议转换"]
-    capture_r["CaptureResponse\n透传代理"]
-    capture_a["CaptureAnthropic\n透传代理"]
-    router["ProviderManager\n模型路由"]
-    anthropic_up["Anthropic Messages\nAPI Provider"]
-    openai_up["OpenAI Responses\nAPI Provider"]
-    anthropic_up2["Anthropic Messages\nProvider"]
-
-    client -- POST /responses --> mb
-    mb -- SSE/JSON --> client
-    mb --> transform
-    mb --> capture_r
-    mb --> capture_a
-    transform --> router
-    router --> anthropic_up
-    router --> openai_up
-    capture_r --> openai_up
-    capture_a --> anthropic_up2
+block-beta
+  columns 2
+  block:service["Service 层"]
+    columns 2
+    server["server\n路由/处理/日志/统计"] proxy["proxy\n直通代理"]
+    provider["provider\n多提供商路由"] stats["stats\n用量统计"]
+    trace["trace\n请求跟踪"] session["session\n会话"]
+  end
+  block:protocol["Protocol 层"]
+    columns 2
+    bridge["bridge\n协议转换核心"] anthropic["anthropic\n客户端/类型"]
+    cache["cache\n缓存规划"] space1[" "]
+  end
+  block:foundation["Foundation 层"]
+    columns 2
+    config["config\n配置加载/校验"] logger["logger\n日志"]
+    openai["openai\n共享 DTO"] modelref["modelref\n模型引用解析"]
+    session_t["session\n会话类型"] space2[" "]
+  end
+  block:extension["Extension 层"]
+    columns 2
+    plugin["plugin\nPlugin 接口+注册表"] pluginhooks["pluginhooks\n适配器"]
+    codex["codex\nCodex 兼容性"] space3[" "]
+    ext_row1["deepseek_v4 / websearch"] ext_row2["websearchinjected / visual"]
+  end
+end
 ```
 
-## 运行模式
+### Foundation 层
 
-Moon Bridge 支持三种运行模式，由 `config.yml` 中的 `mode` 字段控制：
+基础组件层，提供低级别能力：
 
-### Transform（默认）
+- **`internal/foundation/config`**：YAML 配置加载、结构校验、多模式支持。`FileConfig` 是 YAML 映射结构，`Config` 是运行时使用的扁平化/合并后结构。
+- **`internal/foundation/logger`**：基于 `slog` 的带缓冲日志系统，支持 `LogConsumer` 插件拦截日志条目。
+- **`internal/foundation/openai`**：共享的 OpenAI Responses API DTO（`ResponsesRequest`、`Response`、`OutputItem`、`Usage`、`StreamEvent` 等），供 bridge、codex、server 等多个包引用，避免循环依赖。
+- **`internal/foundation/modelref`**：统一的模型引用解析器，支持 `provider/model` 和 `model(provider)` 两种格式。
+- **`internal/foundation/session`**：会话管理，携带 `ExtensionData` 用于插件的跨请求状态保持。
 
-协议转换和模型路由模式。接收 OpenAI Responses 请求后，先按 `provider.providers.<key>.models` 解析模型别名和 Provider：
+### Protocol 层
 
-- `protocol: "anthropic"`：转为 Anthropic Messages 请求发送至上游，再将响应转换回 OpenAI Responses 格式。
-- `protocol: "openai"`：保留 OpenAI Responses 格式，直接透传到上游 Responses 端点，并把请求里的模型别名改写为上游真实模型名。
+核心协议转换层：
 
-数据流：
+- **`internal/protocol/bridge`**：协议转换核心。`Bridge` 结构体负责：
+  - `ToAnthropic()`: 将 OpenAI `ResponsesRequest` 转换为 Anthropic `MessageRequest`
+  - `FromAnthropic()`: 将 Anthropic `MessageResponse` 转换为 OpenAI `Response`
+  - `ConvertStreamEvents()`: 将 Anthropic 流事件序列转换为 OpenAI 流事件序列
+  - 工具转换、输入转换、缓存规划、错误映射
+  - 通过 `PluginHooks` 结构体与 Extension 系统集成
+- **`internal/protocol/anthropic`**：Anthropic Messages API 类型定义（`MessageRequest`、`MessageResponse`、`ContentBlock` 等）和 HTTP 客户端（`Client`），支持 SSE 流式读取、Web Search 探测。
+- **`internal/protocol/cache`**：缓存规划引擎。`Planner` 根据配置和请求上下文决定如何注入 Anthropic 缓存控制标记，`MemoryRegistry` 跟踪缓存状态。
+
+### Service 层
+
+应用服务层，组装各组件并对外提供服务：
+
+- **`internal/service/server`**：HTTP 服务器。处理 `/v1/responses`（POST）和 `/v1/models`（GET）。负责请求路由（判断模型走 Anthropic 转换还是 OpenAI 直通）、会话管理、流式 SSE 输出、用量统计、请求跟踪。
+- **`internal/service/provider`**：多提供商管理。`ProviderManager` 维护多个 `anthropic.Client` 实例，按模型别名路由到对应提供商，支持协议自动发现和 Web Search 模式探测。
+- **`internal/service/proxy`**：Capture 模式下的直通代理。`AnthropicServer` / `ResponseServer` 简单转发 HTTP 请求/响应（可选跟踪）。
+- **`internal/service/stats`**：会话用量统计。累计 token 和费用、支持按模型细分、缓存命中率计算、格式化输出。
+- **`internal/service/trace`**：请求跟踪。将每次请求的 HTTP 请求/响应、转换后的 Anthropic 请求/响应、流事件序列写入磁盘。
+
+### Extension 层
+
+可插拔扩展层：
+
+- **`internal/extension/plugin`**：Plugin 接口定义和注册表（详见 [Extension 系统](extension-system.md)）。
+- **`internal/extension/pluginhooks`**：`PluginHooksFromRegistry()` 将 `plugin.Registry` 适配为 `bridge.PluginHooks` 函数集，避免 bridge 直接依赖 plugin 包。
+- **`internal/extension/codex`**：Codex CLI 兼容性工具包。包含模型目录 DTO 生成、工具编解码（custom tool / apply_patch / exec / local_shell 的输入输出转换）、流适配器、默认指令模板。
+- **`internal/extension/deepseek_v4`**：DeepSeek V4 扩展（详见 [Extension 一览](extensions-overview.md)）。
+- **`internal/extension/websearch`**：Web Search 核心模块。Tavily 搜索客户端、Firecrawl 抓取客户端、搜索编排器（`Orchestrator`）、工具定义生成。
+- **`internal/extension/websearchinjected`**："注入式" Web Search 模式扩展，将 `tavily_search` 和 `firecrawl_fetch` 作为 function-type tool 注入到 Anthropic 请求中。
+
+## 三种运行模式
+
+### Transform（默认模式）
+
+完整的协议转换模式：
 
 ```mermaid
 flowchart LR
-    req["OpenAI Responses Request"]
-    bridge_in["Bridge.ToAnthropic()\n协议转换 + cache planner"]
-    router["ProviderManager\n路由 + protocol 判断"]
-    anthropic_client["anthropic.Client\nHTTP POST /v1/messages"]
-    openai_proxy["OpenAI passthrough\nPOST /v1/responses"]
-    bridge_out["Bridge.FromAnthropic() /\nConvertStreamEvents()\n协议转换回"]
-    resp["OpenAI Responses Response\nJSON / SSE"]
+  A["Codex CLI\n(OpenAI Responses)"] --> B["Moon Bridge\n协议转换"]
+  B --> C["LLM Provider\n(Anthropic Messages)"]
+```
 
-    req --> router
-    router --> bridge_in --> anthropic_client --> bridge_out --> resp
-    router --> openai_proxy --> resp
+处理流程：
+
+1. Codex CLI 发送 OpenAI Responses 格式的 POST 请求到 `/v1/responses`
+2. Server 解析 `ResponsesRequest`
+3. 如果模型的 protocol 是 `openai-response`，直接直通到上游 OpenAI Responses 端点
+4. 否则：
+   - `Bridge.ToAnthropic()` 转换请求
+   - 通过 `ProviderManager` 路由到对应提供商
+   - 上游返回后，`Bridge.FromAnthropic()`/`ConvertStreamEvents()` 转换响应
+5. 记录用量统计、写入跟踪
+
+### CaptureAnthropic
+
+纯代理模式，不进行任何协议转换，直接转发 Anthropic Messages API 请求：
+
+```mermaid
+flowchart LR
+  A["Client"] --> B["Moon Bridge\n透明代理"]
+  B --> C["Anthropic Provider"]
 ```
 
 ### CaptureResponse
 
-透明代理模式。请求按 OpenAI Responses 协议原样转发至上游 OpenAI-compatible Provider，不做协议转换。用于抓取 Codex 原生 Responses 请求作为协议对齐基准。
+纯代理模式，转发 OpenAI Responses API 请求：
 
-### CaptureAnthropic
-
-透明代理模式。请求按 Anthropic Messages 协议原样转发至上游 Provider。用于抓取 Claude Code 或其他 Anthropic 客户端的真实请求。
-
-## 模块分层
-
-### cmd/moonbridge
-
-项目唯一入口。解析命令行标志（`-config`, `-addr`, `-mode` 等），通过 `app.RunServer` 启动对应模式的服务。
-
-```bash
-# Transform 模式（默认）
-./moonbridge
-
-# CaptureResponse 模式
-./moonbridge -mode CaptureResponse
-
-# 打印配置的监听地址（供脚本使用）
-./moonbridge -print-addr
-
-# 打印 Codex 兼容的 config.toml
-./moonbridge -print-codex-config moonbridge -codex-base-url http://127.0.0.1:38440
+```mermaid
+flowchart LR
+  A["Client"] --> B["Moon Bridge\n透明代理"]
+  B --> C["OpenAI Responses Provider"]
 ```
 
-### internal/config
+## 请求生命周期数据流
+
+### internal/foundation/config
 
 集中管理 YAML 配置。
 
 - 使用 `yaml.v3` `KnownFields(true)` 严格解析，防止字段拼写错误。
 - 校验 `mode`、`log`（level/format）、`system_prompt`、多 Provider 必填字段（`provider.providers.*.base_url` / `api_key` / `protocol`）、模型路由和缓存参数。
 - 提供 `ModelFor()` 将客户端模型别名映射为上游真实模型名，并读取 web search 配置控制搜索工具是否自动探测、强制启用、禁用或 server-side injected。
+- 提供统一 `extensions` 插槽和 `ExtensionEnabled()` / `ExtensionConfig()` resolver；具体扩展通过 `ExtensionConfigSpec` 声明自己的字段、scope 和校验逻辑。
 - web search 配置支持三级覆盖：route → model（provider catalog）→ provider → 全局。推荐在 `providers.<key>.models.<name>.web_search` 按模型单独配置。
 - `WebSearchForModel()` 按模型别名解析 web search 配置（route → model → provider → global）；`WebSearchMaxUsesForModel()` / `WebSearchTavilyKeyForModel()` / `WebSearchFirecrawlKeyForModel()` / `WebSearchMaxRoundsForModel()` 同理。
 - 保留 `WebSearchForProvider()` 等 per-provider 方法作为内部回退。
 
-### internal/app
+### internal/service/app
 
 应用组装层。根据 mode 创建 ProviderManager、Bridge、trace tracer、HTTP handler、session 统计器，启动 HTTP server。
 
@@ -108,7 +149,9 @@ Transform 模式下，`resolvePerProviderWebSearch()` 分两步解析 web search
 
 解析结果通过 `ProviderManager.SetResolvedWebSearch()` 存储；`ResolvedWebSearchForModel()` 查询时优先检查 `model:<alias>` key，未找到时回退到 provider key。`injected` 模式由 server 层在请求时按模型动态包装。
 
-### internal/provider
+Visual 扩展同样在 Transform 模式装配：`visual.Plugin` 只负责给启用的模型注入 `visual_brief` / `visual_qa` 工具，真实视觉调用由 server 层用现有 Anthropic provider client 包装执行，不引入独立 Kimi 桥接。
+
+### internal/service/provider
 
 多 Provider 路由层。
 
@@ -120,31 +163,93 @@ Transform 模式下，`resolvePerProviderWebSearch()` 分两步解析 web search
 - `ResolvedWebSearchForModel()` 优先查找 `model:<alias>` key，未找到时回退到 provider key。
 - 新增 `FirstUpstreamModelForKey()` 返回某个 provider key 下第一个路由到该 provider 的上游模型名，用于 auto 模式探测。
 
-### internal/server
+### internal/extension/codex
 
-HTTP 服务器层。提供 `/v1/responses` 和 `/responses` 两个 POST 端点，以及 `/v1/models` 和 `/models` 两个 GET 端点。
+Codex 客户端兼容逻辑集中层，将原先散落在 `internal/protocol/bridge`、`internal/service/server` 和 `cmd/moonbridge` 的 Codex 专属代码抽取到独立包中。
+
+目录结构：
+
+```text
+internal/extension/codex/
+├── catalog.go          # ModelInfo / BuildModelInfoFromRoute / BuildModelInfosFromConfig / GenerateConfigToml / WriteModelsCatalog
+├── tool_context.go     # ConversionContext / CustomToolSpec / FunctionToolSpec / CustomToolKind
+├── customtool.go       # apply_patch / exec grammar 代理与 raw input 重建
+├── tools.go            # LocalShellSchema / NamespacedToolName / ToolCodec / OutputItem helpers
+└── catalog_test.go     # 单元测试
+```
+
+```mermaid
+flowchart TD
+  START(["POST /v1/responses"])
+  START --> PARSE["Server: 解析请求体 JSON"]
+  PARSE --> SESSION["Session: 查找/创建"]
+  SESSION --> PROTO{protocol?}
+  PROTO -->|openai-response| PASSTHROUGH["直接直通上游"]
+  PROTO -->|anthropic| CTX["Bridge.ConversionContext()\n构建工具上下文"]
+  CTX --> TOANTH["Bridge.ToAnthropic()"]
+  TOANTH --> PREPRO["PluginHooks.PreprocessInput\n[InputPreprocessor]"]
+  PREPRO --> CONVIN["convertInput()\nmessages + system"]
+  CONVIN --> REWRITE["PluginHooks.RewriteMessages\n[MessageRewriter]"]
+  REWRITE --> CODEXIN["codex.ConvertInputItem\nCodex 类型"]
+  CODEXIN --> CONVTOOL["convertTools()\ntools"]
+  CONVTOOL --> CODEXTOOL["codex.ConvertCodexTool\nCodex 类型"]
+  CODEXTOOL --> INJECT["PluginHooks.InjectTools\n[ToolInjector]"]
+  INJECT --> MUTATE["PluginHooks.MutateRequest\n[RequestMutator]"]
+  MUTATE --> CACHEPLAN["cache.PlanCache()\n缓存规划"]
+  CACHEPLAN --> RESOLVE["resolveProvider()\n选择 Provider"]
+  RESOLVE --> WRAP["maybeWrapInjectedSearch() + maybeWrapVisual()\n按配置包装 Provider"]
+  WRAP --> STREAM{stream?}
+  STREAM -->|yes| STREAMING["Provider.StreamMessage()\n流事件"]
+  STREAMING --> CONVSTREAM["Bridge.ConvertStreamEvents()\nSSE 输出"]
+  CONVSTREAM --> ADAPTER["StreamAdapter +\nPluginHooks (StreamInterceptor)"]
+  ADAPTER --> CLOSE["关闭流"]
+  CLOSE --> OUTPUT(["输出响应"])
+  STREAM -->|no| NONSTREAM["Provider.CreateMessage()\n完整响应"]
+  NONSTREAM --> FROMANTH["Bridge.FromAnthropic()\nOpenAI 格式"]
+  FROMANTH --> JSON["JSON 响应"]
+  JSON --> OUTPUT
+```
+
+## 模型路由
+
+Moon Bridge 支持多提供商和多模型路由。配置通过 `provider.providers` 定义提供商及其模型目录，`provider.routes` 定义路由别名。
+
+### 模型引用格式
+
+支持两种格式，由 `modelref` 包统一解析：
+
+- `provider/model`（如 `deepseek/deepseek-chat`）
+- `model(provider)`（如 `deepseek-chat(deepseek)`）
+
+### 路由解析优先级
 
 - 解析请求体为 `openai.ResponsesRequest`。
 - 根据模型别名判断 Provider protocol。
-- OpenAI protocol：改写上游模型名，直接代理到上游 `/v1/responses`，并从上游 `usage` 中累计 session 统计。
+- `openai-response`：改写上游模型名，直接代理到上游 `/v1/responses`，并从上游 `usage` 中累计 session 统计。
 - Anthropic protocol：调用 `Bridge.ToAnthropic()` 转换并拿到 cache 计划。
 - 新增 `AppConfig` 字段存储完整配置，用于按模型别名解析 web search 参数。
-- `resolveProvider()` 调用 `maybeWrapInjectedSearch()`，根据该模型的 resolved web search mode 动态包装 injected search orchestrator。
+- `resolveProvider()` 依次调用 `maybeWrapInjectedSearch()` 和 `maybeWrapVisual()`，根据 provider/model 配置动态包装 injected search orchestrator 和 Visual orchestrator。
+- Visual 包装器会先从主请求中取出 Anthropic image block，替换为 `Image #1` 这类可引用文本，再在工具循环中把真实图片转发给 `extensions.visual.config.provider` 指向的现有 Anthropic-compatible Provider。
 - `resolveRequestOptions()` 按模型别名构建 per-request `bridge.RequestOptions`，包含 `WebSearchMode`、`WebSearchMaxUses`、`FirecrawlAPIKey` 等字段。
 - 非流式：调用 Provider `CreateMessage()` → `Bridge.FromAnthropicWithPlanAndContext()` 转换回 → JSON 响应。
 - 流式：设置 SSE 头后调用 Provider `StreamMessage()` → 收集所有 SSE 事件 → `Bridge.ConvertStreamEventsWithContext()` 批量转换 → 写入 SSE 流。服务端不再生成 synthetic commentary preamble，避免旧等待提示出现在 UI 或被后续 resume 带回上下文；历史中已存在的 `phase: "commentary"` 消息会在请求转换时跳过。
-- Anthropic 转换路径的请求/响应经 trace 系统记录；OpenAI protocol 直通路径保留上游响应和 usage 日志，错误场景会写 trace。
+- Anthropic 转换路径和 OpenAI Responses 直通路径的请求/响应都会经 trace 系统记录，成功和错误场景均写入 trace。
 - 成功请求输出可读 Usage 行，模型名使用实际发往上游的模型名，Billing 使用 session 累计费用。
 - `/v1/models` 端点返回 Codex `ModelsResponse` 格式（`{"models": [...]}`）。Provider 下声明的 `models` 是主数据源，会以 `provider/upstream_model` 形式完整写入；`routes` 只作为后置 fallback alias 补充。每个 `ModelInfo` 包含 Codex 反序列化所需的全部字段（`slug`、`shell_type`、`visibility`、`truncation_policy`、`supported_reasoning_levels` 等）。`truncation_policy` 使用非零默认 token limit，避免 Codex unified_exec 工具输出预算被夹成 0 后只返回 `…N tokens truncated…`。
 - 错误处理分两层：
   - Bridge 层返回的 `RequestError` 直接转为 OpenAI 错误格式。
   - Anthropic Provider 错误通过 `ProviderError.OpenAIStatus()` 映射为等价 HTTP 状态码。
 
-### internal/bridge
+1. 直接引用：`provider/model` 或 `model(provider)` 格式
+2. Routes 映射：`routes` 中的别名
+3. 默认模型：`default_model` 配置
 
-协议转换核心模块。
+## 缓存系统
+
+配置位于 `cache` 节，支持以下模式：
 
 - **`ToAnthropic()`**：将 OpenAI Responses Request 转为 Anthropic MessageRequest。处理 input、tools、tool_choice、历史消息合并、namespace 展平、web_search 工具桥接。
+- `input_image` / `image_url` 内容会转换为 Anthropic `image` block。启用 Visual 时，这些图片会在进入主模型前由 Visual orchestrator 接管，主模型只看到 `Image #n` 引用提示。
 - `ToAnthropic()` 新增 `opts ...RequestOptions` 可变参数，接收 per-request 的 web search 配置。
 - 新增 `RequestOptions` 结构体，包含 `WebSearchMode`、`WebSearchMaxUses`、`FirecrawlAPIKey` 等字段，由 server 层按 provider key 构建。
 - `convertTools()` 根据 per-request `RequestOptions.WebSearchMode` 而非全局 config 决定 web search 行为。
@@ -155,7 +260,7 @@ HTTP 服务器层。提供 `/v1/responses` 和 `/responses` 两个 POST 端点�
 - **`convertInput()`**：历史消息转换的关键逻辑：连续 `function_call` / `local_shell_call` 归并为同一个 assistant `tool_use` 消息，连续工具输出归并为随后的 user `tool_result` 消息。
 - **`ErrorResponse()`**：统一错误映射，区分请求校验错误和 Provider 错误。
 
-### internal/cache
+### internal/protocol/cache
 
 Prompt cache 管理和规划。
 
@@ -164,7 +269,7 @@ Prompt cache 管理和规划。
 - **`injectCacheControl()`** 在 `Bridge` 中：按 plan 向 Anthropic 请求的 tools、system 和选中的 message prefix block 注入 `cache_control`。
 - 缓存 TTL 支持 `5m`（ephemeral）和 `1h`。`automatic` 模式发送顶层 `cache_control`，`explicit` 模式发送块级断点，`hybrid` 模式两者兼有。
 
-### internal/anthropic
+### internal/protocol/anthropic
 
 Anthropic Messages API HTTP 客户端。
 
@@ -173,24 +278,25 @@ Anthropic Messages API HTTP 客户端。
 - `sseStream`：逐行解析 SSE 格式，分隔 event 和 data，反序列化为 `StreamEvent`。
 - `ProviderError`：封装上游 HTTP 错误，包含 status code、error type、request ID。
 
-### internal/openai
+### internal/foundation/openai
 
 OpenAI Responses 协议 DTO 定义。包含 `ResponsesRequest`、`Response`、`OutputItem`、`Usage`、`InputTokensDetails`（`cached_tokens` 无 `omitempty`，始终序列化）、以及全部 SSE 事件类型。
 
-### internal/extensions
+### internal/extension
 
 Provider 扩展模块。当前包含：
 
-- `deepseek_v4`：按模型级别配置启用（`models.<name>.deepseek_v4: true`），处理 reasoning_content 剥离、thinking 回放、流式 thinking 跟踪等 DeepSeek 特有行为；推理强度使用标准 `reasoning.effort`，其中 `xhigh` 会写入 DeepSeek `output_config.effort=max`。
+- `deepseek_v4`：按 `extensions.deepseek_v4.enabled: true` 启用，处理 reasoning_content 剥离、thinking 回放、流式 thinking 跟踪等 DeepSeek 特有行为；推理强度使用标准 `reasoning.effort`，其中 `xhigh` 会写入 DeepSeek `output_config.effort=max`。signature-only thinking 会编码进 Codex 可回放的 `reasoning.summary`；旧历史缺失 reasoning/缓存时，仅在请求侧补空 `thinking` block 兜底，不生成空 summary。
+- `visual`：按 `extensions.visual.enabled: true` 启用，向主模型注入 `visual_brief` / `visual_qa`，并通过 `extensions.visual.config.provider` 指向的现有 Anthropic provider 执行视觉分析。
 - `websearch` / `websearchinjected`：当 web search 配置为 `injected` 时，向模型注入 `tavily_search` / `firecrawl_fetch` 工具，并在服务端执行搜索循环。
 
 其他 Provider 特有逻辑可直接在此目录下新增子包。
 
-### internal/session
+### internal/foundation/session
 
 每请求状态容器。当前用于隔离 DeepSeek V4 thinking state，避免并发请求之间互相污染。Session 在 HTTP 请求开始时创建，请求结束后由 GC 回收。
 
-### internal/stats
+### internal/service/stats
 
 session 级 token 和费用统计。
 
@@ -199,16 +305,16 @@ session 级 token 和费用统计。
 - 每请求 INFO 行展示当前请求 usage 和 session 累计 Billing。
 - 服务退出时输出 `Summary：Session Cache Hit Rate(AVG): ... Billing: ... CNY` 以及详细拆解。
 
-### internal/proxy
+### internal/service/proxy
 
 透明代理实现。`ResponseServer` 和 `AnthropicServer` 分别对应两种协议的透明代理。均继承自共同的 `common.go` 中的 `copyHeaders`、`copyStreaming`、`upstreamURL` 等基础工具函数。
 
-### internal/trace
+### internal/service/trace
 
 请求/响应转储系统。
 
 - 目录结构：
-  - Transform 模式：`trace/Transform/{session_id}/Response/{n}.json` 和 `trace/Transform/{session_id}/Anthropic/{n}.json`
+  - Transform 模式：`trace/Transform/{session_id}/{model}/Response/{n}.json` 和 `trace/Transform/{session_id}/{model}/Anthropic/{n}.json`
   - Capture 模式：`trace/Capture/{Response|Anthropic}/{session_id}/{n}.json`
 - 序列化时自动脱敏 `Authorization`、`x-api-key` 等敏感 Header（替换为 `[REDACTED]`）。
 - 文件权限 600，目录权限 700。
@@ -223,7 +329,8 @@ session 级 token 和费用统计。
 - `usage.input_tokens_details.cached_tokens` 即使为 0 也序列化输出，避免 Codex 压缩上下文时解析失败。
 - `local_shell_call` 使用独立 JSON schema 和 output item 类型，不走普通 `function_call` 路径。
 - `web_search_call` 流式中 `input_json_delta` 不产生 `function_call_arguments.delta`，而是并入 `action` 字段；当 Provider 探测不支持 web search 时，不向上游注入搜索工具；`injected` 模式则改为服务端 Tavily/Firecrawl 工具循环。
-- web search 支持按模型独立判断：每个模型根据其 resolved web search mode（`enabled` / `disabled` / `injected` / auto 探测结果）决定是否向上游注入搜索工具或启用服务端 Tavily/Firecrawl 工具循环。配置优先级：route → model（provider catalog）→ provider → global。
+- web search 支持按模型独立判断：每个模型根据其 resolved web search mode（`enabled` / `disabled` / `injected` / auto 探测结果）决定是否向上游注入搜索工具或启用服务端 Tavily/Firecrawl 工具循环。`openai-response` 协议的 Provider 会在 `enabled` 时自动注入 OpenAI Responses 原生 `{"type": "web_search"}` 工具（`injected` 模式因 Tavily/Firecrawl 为 Anthropic 专用，会映射为 `disabled`）。配置优先级：route → model（provider catalog）→ provider → global。
+- Visual 是 Anthropic 协议侧工具循环扩展：主模型必须是 Anthropic-routed 模型，视觉 provider 也必须是 Anthropic-compatible Provider。附件引用必须走 `image_refs` 或省略图片字段，`Image #1` 不会被当作 URL 发给视觉 provider。
 - 空 `text_delta` / 空 `output_text` 不再生成 message 输出或 Anthropic `text` block，避免下一轮工具历史里出现 `{"type":"text"}` 这种缺少 `text` 字段的非法内容。
 
 ### 消息顺序
@@ -249,7 +356,7 @@ Anthropic Messages API 要求轮次内 `tool_use` block 不能跨消息分割。
 
 ### Provider 路由
 
-- **ProviderManager** (`internal/provider/`) 管理多个上游 Provider 客户端
+- **ProviderManager** (`internal/service/provider/`) 管理多个上游 Provider 客户端
 - 配置中通过 `provider.providers` 定义多个 Provider（DeepSeek、OpenAI、Anthropic 等）
 - 模型定义在各 `provider.providers.<key>.models` 下，所属 Provider 由父级 key 隐式决定
 - 每个 Provider 拥有独立的 `http.Client` 和连接池配置
@@ -261,11 +368,11 @@ Anthropic Messages API 要求轮次内 `tool_use` block 不能跨消息分割。
 - `handleOpenAIResponse()` 在 `Bridge.ProviderFor` 返回空时调用 `ProviderKeyForModel()` 二次解析路由 key
 - `app.resolveDefaultClient()` 安全处理无 default provider 场景：defaultKey 为空或 client 不可用时返回 nil，下游 web search probing 和 fallback Provider 包装条件性跳过
 - 启动时 `resolvePerProviderWebSearch()` 分两步解析：先按 provider 解析默认值，再按 route 解析模型级别覆盖，结果存入 `ProviderManager.resolvedWS`
-- 请求时 `maybeWrapInjectedSearch()` 和 `resolveRequestOptions()` 按模型别名解析 web search 配置，传递给 `Bridge.ToAnthropic()`
+- 请求时 `maybeWrapInjectedSearch()` / `maybeWrapVisual()` 按模型别名包装 injected web search / Visual，`resolveRequestOptions()` 按模型别名解析 web search 配置并传递给 `Bridge.ToAnthropic()`
 
 ### 会话隔离
 
-- **Session** (`internal/session/`) 为每请求创建独立状态容器
+- **Session** (`internal/foundation/session/`) 为每请求创建独立状态容器
 - DeepSeek V4 thinking 缓存从全局 `Bridge` 移至 Session 内
 - 并发请求的 thinking 状态互不干扰
 - Session 在请求创建时分配，请求完成后由 GC 回收
@@ -282,24 +389,33 @@ flowchart LR
     mb["Moon Bridge\n127.0.0.1:38440"]
 
     subgraph Transform["Transform 内部"]
-        server["Server\nprotocol 判断"]
-        bridge["Bridge\nAnthropic 协议转换"]
-        session["Session\n(每请求)"]
-        pm["ProviderManager\n路由"]
-        oai_proxy["OpenAI passthrough"]
-        ds["DeepSeek Provider"]
-        oai["OpenAI Provider"]
-        ant["Anthropic Provider"]
+        direction TB
+        subgraph Entry["请求处理"]
+            server["Server\nprotocol 判断"]
+            pm["ProviderManager\n路由"]
+        end
+        subgraph Convert["协议转换"]
+            bridge["Bridge\nAnthropic 协议转换"]
+            session["Session\n(每请求)"]
+        end
+        subgraph PassThrough["OpenAI 直通"]
+            oai_proxy["OpenAI Responses passthrough"]
+        end
+        subgraph Upstream["上游提供商"]
+            ds["DeepSeek Provider"]
+            ant["Anthropic Provider"]
+            oai["OpenAI Provider"]
+        end
     end
 
     client -- POST /responses --> mb
     mb --> server
     server --> pm
-    pm -- protocol=anthropic --> bridge
+    pm -->|protocol=anthropic| bridge
     bridge --> session
     bridge -- model=moonbridge --> ds
     bridge -- model=claude --> ant
-    pm -- protocol=openai --> oai_proxy
+    pm -->|protocol=openai-response| oai_proxy
     oai_proxy -- model=gpt-image --> oai
     ds --> bridge
     ant --> bridge
@@ -309,20 +425,20 @@ flowchart LR
     server --> client
 ```
 
-### OpenAI 协议直通
+### OpenAI Responses 直通
 
 定义 Provider 时可指定 `protocol` 字段：
 
 - `"anthropic"`（默认）：请求经 Bridge 协议转换后以 Anthropic Messages 格式发送到上游
-- `"openai"`：请求**不经过 Bridge 转换**，以原始 OpenAI Responses 格式直接透传代理到上游
+- `"openai-response"`：请求**不经过 Bridge 转换**，以原始 OpenAI Responses 格式直接透传代理到上游
 
-OpenAI 协议 Provider 会创建一个与上游的直连 HTTP 代理，支持流式（SSE）和非流式响应。适用于：
+`openai-response` Provider 会创建一个与上游的直连 HTTP 代理，支持流式（SSE）和非流式响应。适用于：
 - 直接对接 OpenAI API（图像生成、TTS、嵌入等不需要 Anthropic 转换的请求）
-- 对接其他 OpenAI-compatible 提供商
+- 对接其他 OpenAI Responses Provider
 
 ### 费用统计
 
-每请求日志（非流式/流式，包括 OpenAI protocol passthrough 在响应包含 usage 时）都会输出一行可读 Usage：
+每请求日志（非流式/流式，包括 `openai-response` 直通在响应包含 usage 时）都会输出一行可读 Usage：
 
 ```text
 {UpstreamModel} Usage: {input_m} M Input, {output_m} M Output, Session Cache Hit Rate: {rate}%, Billing: {total} CNY
@@ -347,7 +463,9 @@ provider:
       # ...
       models:
         deepseek-v4-pro:
-          deepseek_v4: true
+          extensions:
+            deepseek_v4:
+              enabled: true
           default_reasoning_level: "high"
           supported_reasoning_levels:
             - effort: "high"
@@ -362,3 +480,12 @@ provider:
             cache_write_price: 0
             cache_read_price: 0.2   # ¥0.2 / M tokens
 ```
+
+| 模式 | 说明 |
+|------|------|
+| `off` | 禁用缓存 |
+| `automatic` | 仅自动缓存（Anthropic 自动检测前缀） |
+| `explicit` | 仅显式缓存控制标记 |
+| `hybrid` | 同时使用两种策略 |
+
+`MemoryRegistry` 跟踪每个缓存键的状态（冷/预热中/已预热/过期），支持跨请求缓存复用。

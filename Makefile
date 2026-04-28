@@ -20,7 +20,7 @@ cover-check:
 	done; \
 	echo ""; \
 	echo "--- Enforced packages ---"; \
-	for pkg in internal/plugin; do \
+	for pkg in internal/extension/plugin; do \
 		pct=$$(CGO_ENABLED=0 go test -cover ./$$pkg/ 2>&1 | grep -oP '[0-9]+\.[0-9]+(?=%)'); \
 		echo "$$pkg: $${pct}%"; \
 		if [ $$(echo "$${pct} < $(COVERAGE_THRESHOLD)" | bc -l) -eq 1 ]; then \

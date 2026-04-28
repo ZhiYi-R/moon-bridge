@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./config.schema.json
 mode: "Transform" # Transform / CaptureAnthropic / CaptureResponse
 
 log:
@@ -10,6 +11,20 @@ server:
   addr: "127.0.0.1:38440"
 
 trace_requests: false
+
+extensions:
+  deepseek_v4:
+    config:
+      # Injects a reminder before user input to reinforce system prompt adherence.
+      reinforce_instructions: true
+      # Custom prompt text (default used if omitted). Set to empty string to disable.
+      reinforce_prompt: "[System Reminder]: Please pay close attention to the system instructions, AGENTS.md files, and any other context provided. Follow them carefully and completely in your response.\n[User]:"
+  visual:
+    config:
+      provider: "kimi"
+      model: "kimi-for-coding"
+      max_rounds: 4
+      max_tokens: 2048
 
 provider:
   providers:
@@ -26,7 +41,11 @@ provider:
           max_output_tokens: 384000
           display_name: "DeepSeek V4 Pro"
           description: "DeepSeek V4 with selectable high/xhigh reasoning effort."
-          deepseek_v4: true
+          extensions:
+            deepseek_v4:
+              enabled: true
+            visual:
+              enabled: true
           default_reasoning_level: "high"
           supported_reasoning_levels:
             - effort: "high"
@@ -42,10 +61,17 @@ provider:
             output_price: 8
             cache_write_price: 1
             cache_read_price: 0.2
+    kimi:
+      base_url: "https://api.moonshot.cn/anthropic"
+      api_key: "replace-with-kimi-api-key"
+      version: "2023-06-01"
+      user_agent: "moonbridge/1.0"
+      models:
+        kimi-for-coding: {}
     openai:
       base_url: "https://api.openai.com"
       api_key: "replace-with-openai-api-key"
-      protocol: "openai"
+      protocol: "openai-response"
       user_agent: "moonbridge/1.0"
       models:
         gpt-image-1.5: {}
@@ -61,9 +87,12 @@ provider:
   routes:
     # Optional aliases. Provider models are listed directly in the Codex catalog
     # as provider/upstream_model; routes only add friendly fallback names.
-    moonbridge: "deepseek/deepseek-v4-pro"
-    gpt-image: "openai/gpt-image-1.5"
-    gpt-tts: "openai/gpt-4o-mini-tts"
+    moonbridge:
+      to: "deepseek/deepseek-v4-pro"
+    gpt-image:
+      to: "openai/gpt-image-1.5"
+    gpt-tts:
+      to: "openai/gpt-4o-mini-tts"
 
   # web_search:
   #   support: "disabled" # auto / enabled / disabled / injected
@@ -71,6 +100,7 @@ provider:
   #   tavily_api_key: "replace-with-tavily-api-key"
   #   firecrawl_api_key: "replace-with-firecrawl-api-key"
   #   search_max_rounds: 5
+
   default_max_tokens: 65536
   default_model: "moonbridge"
 
@@ -93,7 +123,7 @@ developer:
       model: "gpt-5.4"
       provider:
         base_url: "https://api.openai.com"
-        api_key: "replace-with-real-openai-compatible-api-key"
+        api_key: "replace-with-real-openai-responses-api-key"
     anthropic:
       model: ""
       provider:

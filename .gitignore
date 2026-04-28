@@ -22,6 +22,7 @@ CLAUDE.md
 .continue/
 .gemini
 .gemini/
+.idea/
 .aider*
 .roo
 .roo/
@@ -40,3 +41,10 @@ config.yaml
 /logs/
 .env
 docker-compose.yml
+
+# config schema dumps
+*.schema.json
+# user plugin configs
+/plugins/*.yml
+/plugins/*.yaml
+!/plugins/*.example.*
