@@ -19,13 +19,14 @@ import (
 	"moonbridge/internal/service/stats"
 
 	"github.com/syumai/workers"
+	"github.com/syumai/workers/cloudflare"
 )
 
 func main() {
 	// Config is injected as a single Wrangler secret containing the full
 	// config.yml content. Set with:
 	//   wrangler secret put MOONBRIDGE_CONFIG < config.yml
-	rawConfig := os.Getenv("MOONBRIDGE_CONFIG")
+	rawConfig := cloudflare.Getenv("MOONBRIDGE_CONFIG")
 	if rawConfig == "" {
 		slog.Error("MOONBRIDGE_CONFIG environment variable is not set")
 		os.Exit(1)
@@ -164,5 +165,5 @@ func resolveDefaultClient(pm *provider.ProviderManager) *anthropic.Client {
 // isDevEnv returns true when running in local dev mode (wrangler dev).
 // Production Workers do not include this variable.
 func isDevEnv() bool {
-	return os.Getenv("WORKER_ENV") == "development"
+	return cloudflare.Getenv("WORKER_ENV") == "development"
 }
