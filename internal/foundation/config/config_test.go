@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	_ "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/foundation/config"
 )
 

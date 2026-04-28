@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"moonbridge/internal/extension/plugin"
+	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
 )
@@ -20,15 +21,25 @@ const (
 const PluginName = "deepseek_v4"
 
 // EnabledFunc determines if the plugin is active for a model.
+
+// Config is the configuration structure for the deepseek_v4 plugin.
+type Config struct {
+	ReinforceInstructions *bool   `json:"reinforce_instructions,omitempty" yaml:"reinforce_instructions"`
+	ReinforcePrompt       *string `json:"reinforce_prompt,omitempty" yaml:"reinforce_prompt"`
+}
+
+func init() {
+	config.RegisterPluginConfigType(PluginName, func() any { return &Config{} })
+}
+
 type EnabledFunc func(modelAlias string) bool
 
 // DSPlugin implements the new plugin.Plugin interface plus relevant capabilities.
 type DSPlugin struct {
 	plugin.BasePlugin
-	isEnabled          EnabledFunc
-	logger             *slog.Logger
-	reinforceEnabled   bool
-	reinforcePrompt    string
+	isEnabled EnabledFunc
+	logger    *slog.Logger
+	cfg       *Config
 }
 
 // NewPlugin creates a DeepSeek V4 plugin.
@@ -40,17 +51,7 @@ func (p *DSPlugin) Name() string                      { return PluginName }
 func (p *DSPlugin) EnabledForModel(model string) bool { return p.isEnabled(model) }
 func (p *DSPlugin) Init(ctx plugin.PluginContext) error {
 	p.logger = ctx.Logger
-	// Read reinforcement config.
-	if cfg, ok := ctx.Config["reinforce_instructions"]; ok {
-		if enabled, ok := cfg.(bool); ok {
-			p.reinforceEnabled = enabled
-		}
-	}
-	if prompt, ok := ctx.Config["reinforce_prompt"].(string); ok && prompt != "" {
-		p.reinforcePrompt = prompt
-	} else {
-		p.reinforcePrompt = DefaultReinforcePrompt
-	}
+	p.cfg = plugin.Config[Config](ctx)
 	return nil
 }
 
@@ -73,8 +74,12 @@ func (p *DSPlugin) MutateRequest(ctx *plugin.RequestContext, req *anthropic.Mess
 // --- MessageRewriter ---
 
 func (p *DSPlugin) RewriteMessages(ctx *plugin.RequestContext, messages []anthropic.Message) []anthropic.Message {
-	if !p.reinforceEnabled || p.reinforcePrompt == "" {
+	if p.cfg == nil || p.cfg.ReinforceInstructions == nil || !*p.cfg.ReinforceInstructions {
 		return messages
+	}
+	prompt := DefaultReinforcePrompt
+	if p.cfg.ReinforcePrompt != nil && *p.cfg.ReinforcePrompt != "" {
+		prompt = *p.cfg.ReinforcePrompt
 	}
 	// Inject a reinforcement message before the last real user message.
 	// Skip tool_result messages (they have Role="user" but are tool responses).
@@ -84,7 +89,7 @@ func (p *DSPlugin) RewriteMessages(ctx *plugin.RequestContext, messages []anthro
 				Role: "user",
 				Content: []anthropic.ContentBlock{{
 					Type: "text",
-					Text: p.reinforcePrompt,
+					Text: prompt,
 				}},
 			}
 			// Insert before position i.

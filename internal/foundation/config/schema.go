@@ -14,6 +14,22 @@ const SchemaVersion = 1
 
 const DefaultMainSchemaName = "config.schema.json"
 
+// pluginConfigTypes is a registry of known plugin config types, keyed by
+// plugin name. Plugins register their config structs via init() to enable
+// field-level JSON Schema generation.
+var pluginConfigTypes = map[string]func() any{}
+
+// RegisterPluginConfigType registers a factory that returns a pointer to a
+// zero-valued plugin config struct (e.g. &DeepSeekV4Config{}). The registered
+// type is reflected at schema-dump time to produce a typed JSON Schema for
+// that plugin.
+//
+// Called from plugin package init() functions. Not safe for concurrent use
+// after startup.
+func RegisterPluginConfigType(name string, factory func() any) {
+	pluginConfigTypes[name] = factory
+}
+
 // DumpConfigSchema generates and writes JSON Schema files alongside the
 // config file. It skips writing if an existing schema file already has the
 // current or newer version.
@@ -68,36 +84,29 @@ func generateMainSchema() []byte {
 }
 
 // generatePluginSchema returns a JSON Schema for a named plugin config file.
-// Known plugins get a typed schema; unknown plugins get a generic open-object schema.
+// If the plugin has been registered via RegisterPluginConfigType, the schema
+// reflects its config struct. Otherwise a generic open-object schema is used.
 func generatePluginSchema(name string) ([]byte, error) {
-	r := &jsonschema.Reflector{}
-
-	var schema *jsonschema.Schema
-	switch name {
-	case "deepseek_v4":
-		schema = r.Reflect(&deepSeekV4PluginSchema{})
-	default:
-		schema = r.Reflect(&genericPluginSchema{})
+	factory, ok := pluginConfigTypes[name]
+	if ok {
+		r := &jsonschema.Reflector{}
+		raw := schemaToMap(r.Reflect(factory()))
+		raw["$metadata"] = map[string]any{
+			"schemaVersion": SchemaVersion,
+		}
+		return json.MarshalIndent(raw, "", "  ")
 	}
 
-	raw := schemaToMap(schema)
-	raw["$metadata"] = map[string]any{
-		"schemaVersion": SchemaVersion,
+	// Unknown plugin — generic open-object schema.
+	raw := map[string]any{
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"type":                 "object",
+		"additionalProperties": map[string]any{"type": "object"},
+		"$metadata": map[string]any{
+			"schemaVersion": SchemaVersion,
+		},
 	}
 	return json.MarshalIndent(raw, "", "  ")
-}
-
-// Known plugin config types — one struct per plugin, all fields optional.
-
-type deepSeekV4PluginSchema struct {
-	ReinforceInstructions *bool   `json:"reinforce_instructions,omitempty"`
-	ReinforcePrompt       *string `json:"reinforce_prompt,omitempty"`
-}
-
-// genericPluginSchema is used for any plugin whose config shape is unknown.
-type genericPluginSchema struct {
-	// AdditionalProperties captures arbitrary key-value pairs.
-	AdditionalProperties struct{} `json:"additionalProperties,omitempty"`
 }
 
 func schemaToMap(s *jsonschema.Schema) map[string]any {
@@ -107,8 +116,21 @@ func schemaToMap(s *jsonschema.Schema) map[string]any {
 	return raw
 }
 
+// DecodePluginConfig decodes a raw plugin config map into the registered typed
+// config struct for the named plugin. Returns nil if the plugin name is unknown.
 // writeSchemaIfStale writes data to path only if the existing file has a
 // different or missing schema version.
+func DecodePluginConfig(name string, raw map[string]any) any {
+	factory, ok := pluginConfigTypes[name]
+	if !ok || raw == nil {
+		return nil
+	}
+	typed := factory()
+	data, _ := json.Marshal(raw)
+	json.Unmarshal(data, typed)
+	return typed
+}
+
 func writeSchemaIfStale(path string, data []byte) error {
 	existing, err := os.ReadFile(path)
 	if err == nil {

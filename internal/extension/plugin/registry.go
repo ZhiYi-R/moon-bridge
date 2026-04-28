@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
@@ -88,7 +89,7 @@ func (r *Registry) InitAll(appCfg interface {
 			pluginCfg = appCfg.PluginConfig(p.Name())
 		}
 		ctx := PluginContext{
-			Config: pluginCfg,
+			Config: config.DecodePluginConfig(p.Name(), pluginCfg),
 			Logger: r.logger.With("plugin", p.Name()),
 		}
 		if err := p.Init(ctx); err != nil {
