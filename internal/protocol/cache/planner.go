@@ -151,6 +151,37 @@ func (registry *MemoryRegistry) UpdateFromUsage(key string, usage UsageSignals, 
 	registry.entries[key] = entry
 }
 
+// MarkWarming sets a registry entry to warming state to prevent
+// concurrent streaming requests from treating the cache as cold.
+// ResetWarming clears a warming marker and restores previous warm state if present.
+func (registry *MemoryRegistry) ResetWarming(key string) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	entry, ok := registry.entries[key]
+	if !ok || entry.State != StateWarming {
+		return
+	}
+	delete(registry.entries, key)
+}
+
+func (registry *MemoryRegistry) MarkWarming(key string) {
+	registry.mu.Lock()
+	defer registry.mu.Unlock()
+	now := time.Now()
+	entry := registry.entries[key]
+	entry.LocalKey = key
+	if entry.CreatedAt.IsZero() {
+		entry.CreatedAt = now
+	}
+	entry.State = StateWarming
+	newExpiry := now.Add(5 * time.Minute)
+	if !entry.ExpiresAt.IsZero() && entry.ExpiresAt.After(newExpiry) {
+		newExpiry = entry.ExpiresAt
+	}
+	entry.ExpiresAt = newExpiry
+	registry.entries[key] = entry
+}
+
 func NewPlanner(cfg PlannerConfig) *Planner {
 	return NewPlannerWithRegistry(cfg, nil)
 }
@@ -200,7 +231,7 @@ func (planner *Planner) Plan(input PlanInput) (CacheCreationPlan, error) {
 		WarmPolicy: "none",
 	}
 	if planner.registry != nil {
-		if entry, ok := planner.registry.Get(plan.PrefixKey); ok && entry.State == StateWarm && (entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(time.Now())) {
+		if entry, ok := planner.registry.Get(plan.PrefixKey); ok && (entry.State == StateWarm || entry.State == StateWarming) && (entry.ExpiresAt.IsZero() || entry.ExpiresAt.After(time.Now())) {
 			plan.Reason = "registry_warm"
 			log.Debug("缓存注册表已预热", "prefix_key", plan.PrefixKey)
 		}
@@ -380,7 +411,7 @@ func evenlySpacedMessageBreakpoints(candidates []MessageBreakpointCandidate, lim
 	return selected
 }
 
-func CanonicalHash(value any) (string, error) {
+func canonicalHash(value any) (string, error) {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return "", err

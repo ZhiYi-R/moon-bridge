@@ -1,14 +1,12 @@
-package cache_test
+package cache
 
 import (
 	"testing"
 	"time"
-
-	"moonbridge/internal/protocol/cache"
 )
 
 func TestCanonicalHashIsStableAcrossMapOrder(t *testing.T) {
-	first, err := cache.CanonicalHash(map[string]any{
+	first, err := canonicalHash(map[string]any{
 		"b": 2,
 		"a": map[string]any{"z": true, "c": "ok"},
 	})
@@ -16,7 +14,7 @@ func TestCanonicalHashIsStableAcrossMapOrder(t *testing.T) {
 		t.Fatalf("CanonicalHash(first) error = %v", err)
 	}
 
-	second, err := cache.CanonicalHash(map[string]any{
+	second, err := canonicalHash(map[string]any{
 		"a": map[string]any{"c": "ok", "z": true},
 		"b": 2,
 	})
@@ -30,7 +28,7 @@ func TestCanonicalHashIsStableAcrossMapOrder(t *testing.T) {
 }
 
 func TestPlannerCreatesExplicitBreakpointsInPrefixOrder(t *testing.T) {
-	planner := cache.NewPlanner(cache.PlannerConfig{
+	planner := NewPlanner(PlannerConfig{
 		Mode:                     "explicit",
 		TTL:                      "1h",
 		PromptCaching:            true,
@@ -41,7 +39,7 @@ func TestPlannerCreatesExplicitBreakpointsInPrefixOrder(t *testing.T) {
 		MinimumValueScore:        20,
 	})
 
-	plan, err := planner.Plan(cache.PlanInput{
+	plan, err := planner.Plan(PlanInput{
 		ProviderID:            "anthropic",
 		UpstreamAPIKeyID:      "key-1",
 		Model:                 "claude-test",
@@ -84,7 +82,7 @@ func TestPlannerCreatesExplicitBreakpointsInPrefixOrder(t *testing.T) {
 }
 
 func TestPlannerAutomaticWithExplicitBreakpointsBecomesHybrid(t *testing.T) {
-	planner := cache.NewPlanner(cache.PlannerConfig{
+	planner := NewPlanner(PlannerConfig{
 		Mode:                     "automatic",
 		TTL:                      "5m",
 		PromptCaching:            true,
@@ -94,7 +92,7 @@ func TestPlannerAutomaticWithExplicitBreakpointsBecomesHybrid(t *testing.T) {
 		MinCacheTokens:           1,
 	})
 
-	plan, err := planner.Plan(cache.PlanInput{
+	plan, err := planner.Plan(PlanInput{
 		ProviderID:            "anthropic",
 		Model:                 "claude-test",
 		ToolsHash:             "tools-hash",
@@ -120,7 +118,7 @@ func TestPlannerAutomaticWithExplicitBreakpointsBecomesHybrid(t *testing.T) {
 }
 
 func TestPlannerAutomaticCanDisableTopLevelCache(t *testing.T) {
-	planner := cache.NewPlanner(cache.PlannerConfig{
+	planner := NewPlanner(PlannerConfig{
 		Mode:                     "automatic",
 		TTL:                      "5m",
 		PromptCaching:            true,
@@ -130,7 +128,7 @@ func TestPlannerAutomaticCanDisableTopLevelCache(t *testing.T) {
 		MinCacheTokens:           1,
 	})
 
-	plan, err := planner.Plan(cache.PlanInput{
+	plan, err := planner.Plan(PlanInput{
 		ProviderID:            "anthropic",
 		Model:                 "claude-test",
 		SystemHash:            "system-hash",
@@ -153,7 +151,7 @@ func TestPlannerAutomaticCanDisableTopLevelCache(t *testing.T) {
 }
 
 func TestPlannerUsesRemainingBudgetForMessagePrefixes(t *testing.T) {
-	planner := cache.NewPlanner(cache.PlannerConfig{
+	planner := NewPlanner(PlannerConfig{
 		Mode:                     "explicit",
 		TTL:                      "5m",
 		PromptCaching:            true,
@@ -162,7 +160,7 @@ func TestPlannerUsesRemainingBudgetForMessagePrefixes(t *testing.T) {
 		MinCacheTokens:           1,
 	})
 
-	plan, err := planner.Plan(cache.PlanInput{
+	plan, err := planner.Plan(PlanInput{
 		ProviderID:            "anthropic",
 		Model:                 "claude-test",
 		ToolsHash:             "tools-hash",
@@ -174,7 +172,7 @@ func TestPlannerUsesRemainingBudgetForMessagePrefixes(t *testing.T) {
 		EstimatedTokens:       5000,
 		EstimatedToolTokens:   2000,
 		EstimatedSystemTokens: 1500,
-		MessageBreakpoints: []cache.MessageBreakpointCandidate{
+		MessageBreakpoints: []MessageBreakpointCandidate{
 			{MessageIndex: 1, ContentIndex: 0, BlockPath: "messages[1].content[last]", Role: "user"},
 			{MessageIndex: 3, ContentIndex: 0, BlockPath: "messages[3].content[last]", Role: "user"},
 			{MessageIndex: 5, ContentIndex: 0, BlockPath: "messages[5].content[last]", Role: "user"},
@@ -201,7 +199,7 @@ func TestPlannerUsesRemainingBudgetForMessagePrefixes(t *testing.T) {
 }
 
 func TestPlannerPrefersUserMessageBreakpoints(t *testing.T) {
-	planner := cache.NewPlanner(cache.PlannerConfig{
+	planner := NewPlanner(PlannerConfig{
 		Mode:                     "explicit",
 		TTL:                      "5m",
 		PromptCaching:            true,
@@ -210,13 +208,13 @@ func TestPlannerPrefersUserMessageBreakpoints(t *testing.T) {
 		MinCacheTokens:           1,
 	})
 
-	plan, err := planner.Plan(cache.PlanInput{
+	plan, err := planner.Plan(PlanInput{
 		ProviderID:        "anthropic",
 		Model:             "claude-test",
 		MessagePrefixHash: "messages-hash",
 		MessageCount:      3,
 		EstimatedTokens:   4000,
-		MessageBreakpoints: []cache.MessageBreakpointCandidate{
+		MessageBreakpoints: []MessageBreakpointCandidate{
 			{MessageIndex: 1, ContentIndex: 0, BlockPath: "messages[1].content[last]", Role: "user"},
 			{MessageIndex: 2, ContentIndex: 0, BlockPath: "messages[2].content[last]", Role: "assistant"},
 		},
@@ -234,14 +232,14 @@ func TestPlannerPrefersUserMessageBreakpoints(t *testing.T) {
 }
 
 func TestPlannerSkipsShortPrefixes(t *testing.T) {
-	planner := cache.NewPlanner(cache.PlannerConfig{
+	planner := NewPlanner(PlannerConfig{
 		Mode:           "automatic",
 		TTL:            "5m",
 		PromptCaching:  true,
 		MinCacheTokens: 100,
 	})
 
-	plan, err := planner.Plan(cache.PlanInput{
+	plan, err := planner.Plan(PlanInput{
 		ProviderID:      "anthropic",
 		Model:           "claude-test",
 		EstimatedTokens: 20,
@@ -255,33 +253,33 @@ func TestPlannerSkipsShortPrefixes(t *testing.T) {
 }
 
 func TestRegistryUpdatesFromUsageSignals(t *testing.T) {
-	registry := cache.NewMemoryRegistry()
+	registry := NewMemoryRegistry()
 
-	registry.UpdateFromUsage("key", cache.UsageSignals{CacheCreationInputTokens: 1200}, 1200)
+	registry.UpdateFromUsage("key", UsageSignals{CacheCreationInputTokens: 1200}, 1200)
 	entry, ok := registry.Get("key")
-	if !ok || entry.State != cache.StateWarm {
+	if !ok || entry.State != StateWarm {
 		t.Fatalf("entry after creation = %+v, ok=%v", entry, ok)
 	}
 
-	registry.UpdateFromUsage("key", cache.UsageSignals{CacheReadInputTokens: 900}, 100)
+	registry.UpdateFromUsage("key", UsageSignals{CacheReadInputTokens: 900}, 100)
 	entry, ok = registry.Get("key")
 	if !ok || entry.CacheReadInputTokens != 900 {
 		t.Fatalf("entry after read = %+v, ok=%v", entry, ok)
 	}
 
-	registry.UpdateFromUsage("short", cache.UsageSignals{}, 5)
+	registry.UpdateFromUsage("short", UsageSignals{}, 5)
 	entry, ok = registry.Get("short")
-	if !ok || entry.State != cache.StateNotCacheable {
+	if !ok || entry.State != StateNotCacheable {
 		t.Fatalf("short entry = %+v, ok=%v", entry, ok)
 	}
 }
 
 func TestRegistryTTLPassthrough(t *testing.T) {
-	registry := cache.NewMemoryRegistry()
+	registry := NewMemoryRegistry()
 
-	registry.UpdateFromUsage("key-1h", cache.UsageSignals{CacheCreationInputTokens: 500}, 500, time.Hour)
+	registry.UpdateFromUsage("key-1h", UsageSignals{CacheCreationInputTokens: 500}, 500, time.Hour)
 	entry, ok := registry.Get("key-1h")
-	if !ok || entry.State != cache.StateWarm {
+	if !ok || entry.State != StateWarm {
 		t.Fatalf("entry = %+v, ok=%v", entry, ok)
 	}
 	// ExpiresAt should be ~1h from now, not 5m
@@ -291,7 +289,7 @@ func TestRegistryTTLPassthrough(t *testing.T) {
 }
 
 func TestBreakpointSkipsLowTokenScope(t *testing.T) {
-	planner := cache.NewPlanner(cache.PlannerConfig{
+	planner := NewPlanner(PlannerConfig{
 		Mode:                     "explicit",
 		TTL:                      "5m",
 		PromptCaching:            true,
@@ -300,7 +298,7 @@ func TestBreakpointSkipsLowTokenScope(t *testing.T) {
 		MinCacheTokens:           1,
 	})
 
-	plan, err := planner.Plan(cache.PlanInput{
+	plan, err := planner.Plan(PlanInput{
 		ProviderID:            "anthropic",
 		Model:                 "claude-test",
 		ToolsHash:             "tools-hash",
@@ -312,7 +310,7 @@ func TestBreakpointSkipsLowTokenScope(t *testing.T) {
 		EstimatedTokens:       3000,
 		EstimatedToolTokens:   50, // below 1024 minimum
 		EstimatedSystemTokens: 50, // below 1024 minimum (combined also < 1024)
-		MessageBreakpoints: []cache.MessageBreakpointCandidate{
+		MessageBreakpoints: []MessageBreakpointCandidate{
 			{MessageIndex: 0, ContentIndex: 0, BlockPath: "messages[0].content[last]", Role: "user"},
 		},
 	})

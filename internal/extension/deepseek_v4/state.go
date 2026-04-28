@@ -136,14 +136,15 @@ func PrependRequiredThinkingForToolUse(messages *[]anthropic.Message) bool {
 func PrependThinkingBlockForToolUse(messages *[]anthropic.Message, block anthropic.ContentBlock) bool {
 	block = normalizeThinkingBlock(block)
 	lastIndex := len(*messages) - 1
-	if lastIndex >= 0 && (*messages)[lastIndex].Role == "assistant" {
-		if HasThinkingBlock((*messages)[lastIndex].Content) {
-			return false
-		}
-		(*messages)[lastIndex].Content = append([]anthropic.ContentBlock{block}, (*messages)[lastIndex].Content...)
-		return true
+	if lastIndex < 0 || (*messages)[lastIndex].Role != "assistant" {
+		// Don't append a bare assistant message; that would break
+		// the user/assistant role alternation expected by providers.
+		return false
 	}
-	*messages = append(*messages, anthropic.Message{Role: "assistant", Content: []anthropic.ContentBlock{block}})
+	if HasThinkingBlock((*messages)[lastIndex].Content) {
+		return false
+	}
+	(*messages)[lastIndex].Content = append([]anthropic.ContentBlock{block}, (*messages)[lastIndex].Content...)
 	return true
 }
 

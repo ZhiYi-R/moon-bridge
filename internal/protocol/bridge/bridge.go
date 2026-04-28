@@ -303,3 +303,19 @@ func (bridge *Bridge) hookContext(model string, extData map[string]any, reasonin
 		},
 	}
 }
+
+// MarkCacheAttempt marks the cache registry as warming for the given plan,
+// preventing concurrent streaming requests from treating the prefix as cold.
+func (bridge *Bridge) ResetCacheWarming(plan cache.CacheCreationPlan) {
+	if plan.PrefixKey == "" || bridge.registry == nil {
+		return
+	}
+	bridge.registry.ResetWarming(plan.PrefixKey)
+}
+
+func (bridge *Bridge) MarkCacheAttempt(plan cache.CacheCreationPlan) {
+	if plan.PrefixKey == "" || bridge.registry == nil {
+		return
+	}
+	bridge.registry.MarkWarming(plan.PrefixKey)
+}

@@ -1,6 +1,7 @@
 package deepseekv4
 
 import (
+	"bytes"
 	"encoding/json"
 	"strings"
 
@@ -20,6 +21,10 @@ func StripReasoningContent(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	if !strings.HasPrefix(trimmed, "[") {
+		return raw
+	}
+	// Fast path: skip unmarshal/remarshal when no reasoning_content fields.
+	if !bytes.Contains(raw, []byte("reasoning_content")) {
 		return raw
 	}
 	var items []map[string]any

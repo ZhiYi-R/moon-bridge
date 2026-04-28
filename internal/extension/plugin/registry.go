@@ -331,6 +331,20 @@ func (r *Registry) ConsumeLog(ctx *RequestContext, entries []logger.LogEntry) []
 	return result
 }
 
+// ConsumeGlobalLog dispatches log entries to all registered LogConsumer
+// plugins without model-alias filtering. Use for global log pipelines
+// not tied to a specific request.
+func (r *Registry) ConsumeGlobalLog(entries []logger.LogEntry) []logger.LogEntry {
+	if r == nil || len(r.logConsumers) == 0 {
+		return entries
+	}
+	result := entries
+	for _, p := range r.logConsumers {
+		result = p.ConsumeLog(&RequestContext{}, result)
+	}
+	return result
+}
+
 // HasEnabled reports whether any plugin is enabled for the given model.
 func (r *Registry) HasEnabled(model string) bool {
 	if r == nil {

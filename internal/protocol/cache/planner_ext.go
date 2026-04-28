@@ -123,9 +123,9 @@ func PlanCache(cfg PlanCacheConfig, registry *MemoryRegistry, request openai.Res
 		ttl = "1h"
 	}
 
-	toolsHash, _ := CanonicalHash(converted.Tools)
-	systemHash, _ := CanonicalHash(converted.System)
-	messagesHash, _ := CanonicalHash(converted.Messages)
+	toolsHash, _ := canonicalHash(converted.Tools)
+	systemHash, _ := canonicalHash(converted.System)
+	messagesHash, _ := canonicalHash(converted.Messages)
 	planner := NewPlannerWithRegistry(cfg.toPlannerConfig(ttl), registry)
 	return planner.Plan(PlanInput{
 		ProviderID:            "anthropic",

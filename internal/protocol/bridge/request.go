@@ -47,11 +47,11 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context codex.Conversion
 				seenToolHistory = true
 			}
 			if cx.ToolUse != nil {
+				codex.AppendAssistantBlock(&messages, *cx.ToolUse)
 				if cx.ConsumesReasoning {
 					messages = bridge.applyReasoningBeforeToolUse(modelAlias, messages, pendingReasoningSummary, cx.ToolUse.ID, extData)
 					pendingReasoningSummary = nil
 				}
-				codex.AppendAssistantBlock(&messages, *cx.ToolUse)
 			}
 			continue
 		}
@@ -61,8 +61,6 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context codex.Conversion
 			continue
 		case item.Type == "function_call":
 			seenToolHistory = true
-			messages = bridge.applyReasoningBeforeToolUse(modelAlias, messages, pendingReasoningSummary, firstNonEmpty(item.CallID, item.ID), extData)
-			pendingReasoningSummary = nil
 			toolName := context.AnthropicFunctionToolName(item.Namespace, item.Name)
 			toolInput := codex.ToolInputFromArguments(item.Arguments)
 			codex.AppendAssistantBlock(&messages, anthropic.ContentBlock{
@@ -71,6 +69,8 @@ func (bridge *Bridge) convertInput(raw json.RawMessage, context codex.Conversion
 				Name:  toolName,
 				Input: toolInput,
 			})
+			messages = bridge.applyReasoningBeforeToolUse(modelAlias, messages, pendingReasoningSummary, firstNonEmpty(item.CallID, item.ID), extData)
+			pendingReasoningSummary = nil
 		case strings.HasSuffix(item.Type, "_output") || item.Type == "function_call_output":
 			seenToolHistory = true
 			codex.AppendToolResultBlock(&messages, anthropic.ContentBlock{

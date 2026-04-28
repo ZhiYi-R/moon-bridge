@@ -129,7 +129,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 
 	// Wire plugin LogConsumer into the log buffer.
 	logger.SetConsumeFunc(func(entries []logger.LogEntry) []logger.LogEntry {
-		return plugins.ConsumeLog(&plugin.RequestContext{ModelAlias: "*"}, entries)
+		return plugins.ConsumeGlobalLog(entries)
 	})
 
 	handler := server.New(server.Config{
@@ -431,6 +431,11 @@ func captureAnthropicTraceConfig(enabled bool) mbtrace.Config {
 
 func runHTTPServer(ctx context.Context, addr string, handler http.Handler, errors io.Writer, sessionStats *stats.SessionStats) error {
 	httpServer := &http.Server{Addr: addr, Handler: handler}
+	defer func() {
+		if closer, ok := handler.(io.Closer); ok {
+			_ = closer.Close()
+		}
+	}()
 	errCh := make(chan error, 1)
 	go func() {
 		fmt.Fprintf(errors, "%s 监听于 %s\n", Name, addr)
