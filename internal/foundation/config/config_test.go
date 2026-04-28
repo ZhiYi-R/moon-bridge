@@ -160,6 +160,138 @@ plugins:
 	}
 }
 
+
+
+func TestLoadFromFileLoadsSplitPluginOnly(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yml")
+	pluginDir := filepath.Join(dir, "plugins")
+	if err := os.Mkdir(pluginDir, 0755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "my_plugin.yml"), []byte(`
+key1: value1
+key2: 42
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(plugin) error = %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`
+mode: Transform
+provider:
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        claude-test: {}
+  routes:
+    moonbridge: "main/claude-test"
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	pluginCfg := cfg.PluginConfig("my_plugin")
+	if pluginCfg == nil {
+		t.Fatal("PluginConfig(my_plugin) = nil, want non-nil")
+	}
+	if got, ok := pluginCfg["key1"].(string); !ok || got != "value1" {
+		t.Fatalf("key1 = %#v, want value1", pluginCfg["key1"])
+	}
+}
+
+func TestLoadFromFileDeduplicatesYmlAndYaml(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yml")
+	pluginDir := filepath.Join(dir, "plugins")
+	if err := os.Mkdir(pluginDir, 0755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	// Both .yml and .yaml exist for the same base name.
+	if err := os.WriteFile(filepath.Join(pluginDir, "my_plugin.yml"), []byte(`
+version: from_yml
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(.yml) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "my_plugin.yaml"), []byte(`
+version: from_yaml
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(.yaml) error = %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`
+mode: Transform
+provider:
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        claude-test: {}
+  routes:
+    moonbridge: "main/claude-test"
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	pluginCfg := cfg.PluginConfig("my_plugin")
+	if pluginCfg == nil {
+		t.Fatal("PluginConfig(my_plugin) = nil, want non-nil")
+	}
+	// Exactly one of the two files should have been loaded (no merge).
+	version, ok := pluginCfg["version"].(string)
+	if !ok {
+		t.Fatalf("version missing or wrong type: %#v", pluginCfg["version"])
+	}
+	if version != "from_yml" && version != "from_yaml" {
+		t.Fatalf("version = %q, want either from_yml or from_yaml", version)
+	}
+	// Only one key should exist.
+	if len(pluginCfg) != 1 {
+		t.Fatalf("pluginCfg has %d keys, want exactly 1", len(pluginCfg))
+	}
+}
+
+func TestLoadFromFileSkipsEmptyPluginFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yml")
+	pluginDir := filepath.Join(dir, "plugins")
+	if err := os.Mkdir(pluginDir, 0755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	// Empty plugin file.
+	if err := os.WriteFile(filepath.Join(pluginDir, "empty_plugin.yml"), []byte("   \n\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(empty plugin) error = %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`
+mode: Transform
+provider:
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        claude-test: {}
+  routes:
+    moonbridge: "main/claude-test"
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if got := cfg.PluginConfig("empty_plugin"); got != nil {
+		t.Fatalf("PluginConfig(empty_plugin) = %#v, want nil", got)
+	}
+}
 func TestLoadFromYAMLCanDisableWebSearch(t *testing.T) {
 	cfg, err := config.LoadFromYAML([]byte(`
 mode: Transform
