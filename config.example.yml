@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=./config.schema.json
 mode: "Transform" # Transform / CaptureAnthropic / CaptureResponse
 
 log:

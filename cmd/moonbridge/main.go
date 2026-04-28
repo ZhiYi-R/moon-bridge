@@ -40,7 +40,8 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	printCodexModel := flags.Bool("print-codex-model", false, "Print configured Codex model and exit")
 	printClaudeModel := flags.Bool("print-claude-model", false, "Print configured Claude Code model and exit")
 	printCodexConfig := flags.String("print-codex-config", "", "Print Codex config.toml for the model alias and exit")
-	codexBaseURL := flags.String("codex-base-url", "", "Base URL to write in generated Codex config")
+	dumpConfigSchema := flags.Bool("dump-config-schema", false, "Generate config.schema.json alongside config and exit")
+		codexBaseURL := flags.String("codex-base-url", "", "Base URL to write in generated Codex config")
 	codexHome := flags.String("codex-home", "", "CODEX_HOME directory; when set, writes models_catalog.json there")
 	if err := flags.Parse(args); err != nil {
 		return exitStartupErr
@@ -54,6 +55,15 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			"设置 XDG_CONFIG_HOME，或使用 -config 明确指定配置文件路径。")
 		return exitStartupErr
 	}
+	if *dumpConfigSchema {
+		if err := config.DumpConfigSchema(resolvedConfigPath); err != nil {
+			writeStartupError(stderr, "Schema dump 失败", resolvedConfigPath, err)
+			return exitStartupErr
+		}
+		fmt.Fprintln(stdout, resolvedConfigPath)
+		return exitOK
+	}
+
 	cfg, err = config.LoadFromFile(resolvedConfigPath)
 	if err != nil {
 		writeStartupError(stderr, "配置文件加载失败", resolvedConfigPath, err,

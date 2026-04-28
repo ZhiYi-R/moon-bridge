@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"moonbridge/internal/foundation/config"
@@ -766,5 +767,85 @@ developer:
 `))
 	if err == nil {
 		t.Fatal("LoadFromYAML() error = nil, want unknown proxy addr error")
+	}
+}
+
+
+func TestDumpConfigSchemaWritesMainSchemaAndPluginSchemas(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yml")
+	pluginDir := filepath.Join(dir, "plugins")
+	if err := os.Mkdir(pluginDir, 0755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "deepseek_v4.yml"), []byte("key: val\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(plugin) error = %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte("mode: Transform\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	if err := config.DumpConfigSchema(configPath); err != nil {
+		t.Fatalf("DumpConfigSchema() error = %v", err)
+	}
+
+	// Main schema should exist.
+	mainSchemaPath := filepath.Join(dir, "config.schema.json")
+	if _, err := os.Stat(mainSchemaPath); err != nil {
+		t.Fatalf("main schema not found: %v", err)
+	}
+	mainData, err := os.ReadFile(mainSchemaPath)
+	if err != nil {
+		t.Fatalf("read main schema: %v", err)
+	}
+	if !strings.Contains(string(mainData), "$metadata") {
+		t.Fatal("main schema missing $metadata")
+	}
+
+	// Plugin schema should exist.
+	pluginSchemaPath := filepath.Join(pluginDir, "deepseek_v4.schema.json")
+	if _, err := os.Stat(pluginSchemaPath); err != nil {
+		t.Fatalf("plugin schema not found: %v", err)
+	}
+}
+
+func TestDumpConfigSchemaSkipsUpToDateSchema(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(configPath, []byte("mode: Transform\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	// First dump.
+	if err := config.DumpConfigSchema(configPath); err != nil {
+		t.Fatalf("first DumpConfigSchema() error = %v", err)
+	}
+	schemaPath := filepath.Join(dir, "config.schema.json")
+	fi1, _ := os.Stat(schemaPath)
+
+	// Second dump should not modify the file (version matches).
+	if err := config.DumpConfigSchema(configPath); err != nil {
+		t.Fatalf("second DumpConfigSchema() error = %v", err)
+	}
+	fi2, _ := os.Stat(schemaPath)
+	if !fi1.ModTime().Equal(fi2.ModTime()) {
+		t.Fatal("second dump modified an up-to-date schema file")
+	}
+}
+
+func TestDumpConfigSchemaSkipsMissingPluginDir(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(configPath, []byte("mode: Transform\n"), 0644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	// No plugins/ dir at all; should not error.
+	if err := config.DumpConfigSchema(configPath); err != nil {
+		t.Fatalf("DumpConfigSchema() error = %v", err)
+	}
+	schemaPath := filepath.Join(dir, "config.schema.json")
+	if _, err := os.Stat(schemaPath); err != nil {
+		t.Fatalf("main schema not found: %v", err)
 	}
 }
