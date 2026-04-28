@@ -27,9 +27,6 @@ func RegisterPluginConfigType(name string, factory func() any) {
 }
 
 // DumpConfigSchema generates and writes JSON Schema files alongside the
-// config file. It skips writing if an existing schema file already has the
-// current or newer version.
-// DumpConfigSchema generates and writes JSON Schema files alongside the
 // config file. extraPlugins provides per-plugin config types for typed
 // schema generation; may be nil.
 func DumpConfigSchema(configPath string, extraPlugins map[string]func() any) error {
@@ -99,7 +96,7 @@ func generateMainSchema() []byte {
 
 // generatePluginSchema returns a JSON Schema for a named plugin config file.
 // If the plugin has been registered via RegisterPluginConfigType, the schema
-// reflects its config struct. Otherwise a generic open-object schema is used.
+// reflects its config struct. Returns nil for unknown plugins (caller skips them).
 func generatePluginSchema(name string, allTypes map[string]func() any) ([]byte, error) {
 	factory, ok := allTypes[name]
 	if !ok {
