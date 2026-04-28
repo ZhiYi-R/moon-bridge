@@ -4,11 +4,12 @@
 
 ### 配置文件
 
-项目使用 YAML 配置。参考 `config.example.yml` 创建 `config.yml`：
+项目使用 YAML 配置。未指定 `-config` 时，默认读取 `${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml`。参考 `config.example.yml` 创建配置：
 
 ```bash
-cp config.example.yml config.yml
-# 编辑 config.yml，填入 provider.providers.* 的真实 base_url / api_key，
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge"
+cp config.example.yml "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml"
+# 编辑 XDG 配置文件，填入 provider.providers.* 的真实 base_url / api_key，
 # 并在各 Provider 的 models 中配置模型别名、上游模型名和可选价格。
 ```
 
@@ -18,7 +19,9 @@ cp config.example.yml config.yml
 - `log.format`：日志格式（`text` / `json`）
 - `system_prompt`：全局系统提示词，注入到 Transform 请求的 Anthropic `system` 块
 
-`config.yml` 已在 `.gitignore` 中，不会提交到仓库。也可通过 `--config` 参数指定其他路径
+插件配置可以写在主配置顶层 `plugins:` 下，也可以拆到独立文件，例如 `${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/plugins/deepseek_v4.yml`。文件名就是插件名，文件内容是该插件的配置；同名字段由拆分文件覆盖内联配置。
+
+仓库根目录的 `config.yml` 已在 `.gitignore` 中，不会提交到仓库。也可通过 `--config` 参数指定其他路径。
 注：`MOONBRIDGE_CONFIG` 不再被读取，请使用 `--config` 标志。
 
 ### 文件结构

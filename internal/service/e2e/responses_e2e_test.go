@@ -204,7 +204,7 @@ func loadE2EConfig(t *testing.T) e2eConfig {
 
 	configPath := os.Getenv("MOONBRIDGE_CONFIG")
 	if configPath == "" {
-		configPath = filepath.Join(findProjectRoot(t), config.DefaultConfigPath)
+		configPath = filepath.Join(findProjectRoot(t), config.DefaultConfigFileName)
 	}
 
 	cfg, err := config.LoadFromFile(configPath)

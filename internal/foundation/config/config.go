@@ -7,8 +7,13 @@ import (
 )
 
 const (
-	DefaultConfigPath = "config.yml"
-	DefaultAddr       = "127.0.0.1:38440"
+	DefaultConfigFileName = "config.yml"
+	// DefaultConfigPath is kept for callers that need the config file name.
+	// Use XDGDefaultConfigPath to resolve the CLI's default config location.
+	DefaultConfigPath          = DefaultConfigFileName
+	DefaultPluginConfigDirName = "plugins"
+	AppConfigDirName           = "moonbridge"
+	DefaultAddr                = "127.0.0.1:38440"
 )
 
 const (
@@ -67,7 +72,7 @@ type Config struct {
 	Cache          CacheConfig
 	ResponseProxy  ResponseProxyConfig
 	AnthropicProxy AnthropicProxyConfig
-	Plugins map[string]map[string]any
+	Plugins        map[string]map[string]any
 }
 
 // RouteEntry is a resolved route: alias -> provider key + upstream model name + metadata.
@@ -81,10 +86,10 @@ type RouteEntry struct {
 	CacheWritePrice float64
 	CacheReadPrice  float64
 	// Codex model catalog metadata.
-	DisplayName                string
-	Description                string
+	DisplayName string
+	Description string
 	// BaseInstructions overrides the default model instructions for the catalog.
-	BaseInstructions string
+	BaseInstructions           string
 	DefaultReasoningLevel      string
 	SupportedReasoningLevels   []ReasoningLevelPreset
 	SupportsReasoningSummaries bool
@@ -120,10 +125,10 @@ type ModelMeta struct {
 	CacheWritePrice float64
 	CacheReadPrice  float64
 	// Codex model catalog metadata.
-	DisplayName                string
-	Description                string
+	DisplayName string
+	Description string
 	// BaseInstructions overrides the default model instructions for the catalog.
-	BaseInstructions string
+	BaseInstructions           string
 	DefaultReasoningLevel      string
 	SupportedReasoningLevels   []ReasoningLevelPreset
 	SupportsReasoningSummaries bool
@@ -578,9 +583,6 @@ func boolOrDefault(value *bool, fallback bool) bool {
 	return *value
 }
 
-// DeepSeekV4ForModel returns whether the DeepSeek V4 extension is enabled
-// for a given model alias. Resolution: route -> model catalog.
-
 // PluginConfig returns the configuration for a named plugin.
 func (cfg Config) PluginConfig(name string) map[string]any {
 	if cfg.Plugins == nil {
@@ -588,6 +590,9 @@ func (cfg Config) PluginConfig(name string) map[string]any {
 	}
 	return cfg.Plugins[name]
 }
+
+// DeepSeekV4ForModel returns whether the DeepSeek V4 extension is enabled
+// for a given model alias. Resolution: route -> model catalog.
 func (cfg Config) DeepSeekV4ForModel(modelAlias string) bool {
 	if route, ok := cfg.Routes[modelAlias]; ok {
 		if route.DeepSeekV4 {

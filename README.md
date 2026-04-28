@@ -7,10 +7,11 @@ Moon Bridge 是一个 OpenAI Responses 兼容转发层。你可以像调用 Open
 1. 复制示例配置：
 
 ```bash
-cp config.example.yml config.yml
+mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge"
+cp config.example.yml "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml"
 ```
 
-2. 编辑 `config.yml`，填入 `provider.providers` 下各上游 Provider 的 `base_url` 和 `api_key`，在各 Provider 的 `models` 中声明可用的上游模型，然后在 `provider.routes` 中配置别名到 `"provider/upstream_model"` 的转发表。
+2. 编辑 `${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml`，填入 `provider.providers` 下各上游 Provider 的 `base_url` 和 `api_key`，在各 Provider 的 `models` 中声明可用的上游模型，然后在 `provider.routes` 中配置别名到 `"provider/upstream_model"` 的转发表。
 
 3. 启动服务：
 
@@ -19,6 +20,8 @@ go run ./cmd/moonbridge
 ```
 
 默认监听 `127.0.0.1:38440`。启动后即可通过 `http://localhost:38440/v1/responses` 调用。`GET /v1/models` 可查看所有可用模型。
+
+未传 `-config` 时，Moon Bridge 会按 XDG 读取 `${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml`。仍可用 `-config /path/to/config.yml` 指定任意配置文件。
 
 ## 三种工作模式
 
@@ -37,6 +40,18 @@ go run ./cmd/moonbridge
 透明代理 Anthropic Messages 流量。适合抓包分析 Claude Code 等客户端发给 Anthropic 兼容 Provider 的请求内容。
 
 ## 配置说明
+
+### 配置文件位置
+
+默认主配置文件为 `${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml`。插件配置可以继续写在主配置的顶层 `plugins:` 下，也可以拆到主配置旁边的 `plugins/` 目录中，例如：
+
+```yaml
+# ${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/plugins/deepseek_v4.yml
+reinforce_instructions: true
+reinforce_prompt: "[System Reminder]: ...\n[User]:"
+```
+
+插件文件名（不含 `.yml` / `.yaml`）就是插件名；文件内容是该插件自己的配置。若内联配置和拆分文件同时存在，同名字段以拆分文件为准，未覆盖字段会保留内联值。
 
 ### Provider 与模型路由
 

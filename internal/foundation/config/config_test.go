@@ -1,6 +1,8 @@
 package config_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"moonbridge/internal/foundation/config"
@@ -78,6 +80,69 @@ trace_requests: true
 	route := cfg.RouteFor("gpt-test")
 	if route.Model != "claude-test" || route.ContextWindow != 200000 || route.MaxOutputTokens != 100000 {
 		t.Fatalf("RouteFor(gpt-test) = %+v", route)
+	}
+}
+
+func TestXDGDefaultConfigPathUsesXDGConfigHome(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	t.Setenv("HOME", filepath.Join(t.TempDir(), "home"))
+
+	got, err := config.XDGDefaultConfigPath()
+	if err != nil {
+		t.Fatalf("XDGDefaultConfigPath() error = %v", err)
+	}
+	want := filepath.Join(configHome, "moonbridge", "config.yml")
+	if got != want {
+		t.Fatalf("XDGDefaultConfigPath() = %q, want %q", got, want)
+	}
+}
+
+func TestLoadFromFileMergesSplitPluginConfigFiles(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yml")
+	pluginDir := filepath.Join(dir, "plugins")
+	if err := os.Mkdir(pluginDir, 0755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pluginDir, "deepseek_v4.yml"), []byte(`
+reinforce_instructions: true
+reinforce_prompt: split prompt
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(plugin) error = %v", err)
+	}
+	if err := os.WriteFile(configPath, []byte(`
+mode: Transform
+provider:
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      models:
+        claude-test: {}
+  routes:
+    moonbridge: "main/claude-test"
+plugins:
+  deepseek_v4:
+    reinforce_instructions: false
+    inline_only: true
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	pluginCfg := cfg.PluginConfig("deepseek_v4")
+	if got, ok := pluginCfg["reinforce_instructions"].(bool); !ok || !got {
+		t.Fatalf("reinforce_instructions = %#v, want true", pluginCfg["reinforce_instructions"])
+	}
+	if got, ok := pluginCfg["reinforce_prompt"].(string); !ok || got != "split prompt" {
+		t.Fatalf("reinforce_prompt = %#v, want split prompt", pluginCfg["reinforce_prompt"])
+	}
+	if got, ok := pluginCfg["inline_only"].(bool); !ok || !got {
+		t.Fatalf("inline_only = %#v, want true", pluginCfg["inline_only"])
 	}
 }
 

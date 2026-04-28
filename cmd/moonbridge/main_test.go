@@ -86,3 +86,38 @@ provider:
 		}
 	}
 }
+
+func TestRunUsesXDGDefaultConfigPath(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+	configDir := filepath.Join(configHome, "moonbridge")
+	if err := os.Mkdir(configDir, 0755); err != nil {
+		t.Fatalf("Mkdir() error = %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yml")
+	err := os.WriteFile(configPath, []byte(`
+mode: CaptureResponse
+developer:
+  proxy:
+    response:
+      model: gpt-capture
+      provider:
+        base_url: https://api.openai.example.test
+        api_key: upstream-openai-key
+`), 0644)
+	if err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	code := run([]string{"-print-mode"}, &stdout, &stderr)
+
+	if code != exitOK {
+		t.Fatalf("run() exit code = %d, want %d; stderr = %s", code, exitOK, stderr.String())
+	}
+	if got := strings.TrimSpace(stdout.String()); got != "CaptureResponse" {
+		t.Fatalf("stdout = %q, want CaptureResponse", got)
+	}
+}

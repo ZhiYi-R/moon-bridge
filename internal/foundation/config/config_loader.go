@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -19,7 +20,7 @@ type FileConfig struct {
 	Cache         CacheFileConfig     `yaml:"cache"`
 	SystemPrompt  string              `yaml:"system_prompt"`
 	Developer     DeveloperFileConfig `yaml:"developer"`
-	Plugins map[string]any `yaml:"plugins"`
+	Plugins       map[string]any      `yaml:"plugins"`
 }
 
 type ServerFileConfig struct {
@@ -130,17 +131,118 @@ func LoadFromFile(path string) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("read config %s: %w", path, err)
 	}
-	return LoadFromYAML(data)
+	fileConfig, err := decodeFileConfig(data)
+	if err != nil {
+		return Config{}, err
+	}
+	if err := loadPluginConfigFiles(path, &fileConfig); err != nil {
+		return Config{}, err
+	}
+	return FromFileConfig(fileConfig)
 }
 
 func LoadFromYAML(data []byte) (Config, error) {
+	fileConfig, err := decodeFileConfig(data)
+	if err != nil {
+		return Config{}, err
+	}
+	return FromFileConfig(fileConfig)
+}
+
+func decodeFileConfig(data []byte) (FileConfig, error) {
 	var fileConfig FileConfig
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&fileConfig); err != nil {
-		return Config{}, err
+		return FileConfig{}, err
 	}
-	return FromFileConfig(fileConfig)
+	return fileConfig, nil
+}
+
+func ResolveConfigPath(explicitPath string) (string, error) {
+	if path := strings.TrimSpace(explicitPath); path != "" {
+		return path, nil
+	}
+	return XDGDefaultConfigPath()
+}
+
+func XDGDefaultConfigPath() (string, error) {
+	base := strings.TrimSpace(os.Getenv("XDG_CONFIG_HOME"))
+	if base == "" {
+		home := strings.TrimSpace(os.Getenv("HOME"))
+		if home == "" {
+			return "", errors.New("HOME is not set and XDG_CONFIG_HOME is empty")
+		}
+		base = filepath.Join(home, ".config")
+	}
+	return filepath.Join(base, AppConfigDirName, DefaultConfigFileName), nil
+}
+
+func loadPluginConfigFiles(configPath string, fileConfig *FileConfig) error {
+	pluginDir := filepath.Join(filepath.Dir(configPath), DefaultPluginConfigDirName)
+	entries, err := os.ReadDir(pluginDir)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read plugin config dir %s: %w", pluginDir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !isYAMLFile(entry.Name()) {
+			continue
+		}
+		pluginName := strings.TrimSuffix(strings.TrimSuffix(entry.Name(), ".yaml"), ".yml")
+		if strings.TrimSpace(pluginName) == "" {
+			continue
+		}
+		pluginPath := filepath.Join(pluginDir, entry.Name())
+		raw, err := os.ReadFile(pluginPath)
+		if err != nil {
+			return fmt.Errorf("read plugin config %s: %w", pluginPath, err)
+		}
+		pluginConfig, err := decodePluginConfig(raw)
+		if err != nil {
+			return fmt.Errorf("parse plugin config %s: %w", pluginPath, err)
+		}
+		mergePluginConfig(fileConfig, pluginName, pluginConfig)
+	}
+	return nil
+}
+
+func mergePluginConfig(fileConfig *FileConfig, pluginName string, pluginConfig map[string]any) {
+	if fileConfig.Plugins == nil {
+		fileConfig.Plugins = make(map[string]any)
+	}
+	if existing, ok := fileConfig.Plugins[pluginName].(map[string]any); ok {
+		merged := make(map[string]any, len(existing)+len(pluginConfig))
+		for key, value := range existing {
+			merged[key] = value
+		}
+		for key, value := range pluginConfig {
+			merged[key] = value
+		}
+		fileConfig.Plugins[pluginName] = merged
+		return
+	}
+	fileConfig.Plugins[pluginName] = pluginConfig
+}
+
+func decodePluginConfig(data []byte) (map[string]any, error) {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return map[string]any{}, nil
+	}
+	var pluginConfig map[string]any
+	if err := yaml.Unmarshal(data, &pluginConfig); err != nil {
+		return nil, err
+	}
+	if pluginConfig == nil {
+		return map[string]any{}, nil
+	}
+	return pluginConfig, nil
+}
+
+func isYAMLFile(name string) bool {
+	return strings.HasSuffix(name, ".yml") || strings.HasSuffix(name, ".yaml")
 }
 
 func FromFileConfig(fileConfig FileConfig) (Config, error) {
