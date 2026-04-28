@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"os"
 
-	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
-	"moonbridge/internal/extension/plugin"
+	"moonbridge/internal/service/app"
+
 	"moonbridge/internal/extension/pluginhooks"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/logger"
@@ -32,7 +32,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	cfg, err := config.LoadFromYAML([]byte(rawConfig))
+	cfg, err := config.LoadFromYAMLWithOptions([]byte(rawConfig), config.LoadOptions{
+		ExtensionSpecs: app.BuiltinExtensions().ConfigSpecs(),
+	})
 	if err != nil {
 		slog.Error("parse config", "error", err)
 		os.Exit(1)
@@ -64,19 +66,18 @@ func main() {
 	}
 
 	// Register plugins.
-	reg := plugin.NewRegistry(logger.L())
-	reg.Register(deepseekv4.NewPlugin(cfg.DeepSeekV4ForModel))
-	if err := reg.InitAll(&cfg); err != nil {
+	plugins := app.BuiltinExtensions().NewRegistry(logger.L(), cfg)
+	if err := plugins.InitAll(&cfg); err != nil {
 		slog.Error("init plugins", "error", err)
 		os.Exit(1)
 	}
 
 	logger.SetConsumeFunc(func(entries []logger.LogEntry) []logger.LogEntry {
-		return reg.ConsumeLog(&plugin.RequestContext{ModelAlias: "*"}, entries)
+		return plugins.ConsumeGlobalLog(entries)
 	})
 
 	handler := server.New(server.Config{
-		Bridge:      bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(reg)),
+		Bridge:      bridge.New(cfg, cache.NewMemoryRegistry(), pluginhooks.PluginHooksFromRegistry(plugins)),
 		Provider:    defaultClient,
 		ProviderMgr: providerMgr,
 		Stats:       sessionStats,
