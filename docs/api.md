@@ -1,163 +1,238 @@
-# Moon Bridge API
+# API 接口
 
-Moon Bridge 对外暴露 API 兼容 OpenAI Responses API。Transform 模式下，请求会按模型别名路由：Anthropic 协议 Provider 会经过协议转换后发送为 Anthropic Messages API；`protocol: "openai-response"` 的 Provider 会保留 OpenAI Responses 格式直接透传到上游。
+Moon Bridge 对外暴露两个 HTTP 端点，兼容 OpenAI Responses API 的子集。
 
-## 端点
+## 基础信息
 
-| 路径 | 方法 | 说明 |
-|------|------|------|
-| `/v1/responses` | POST | OpenAI Responses 协议端点 |
-| `/responses` | POST | 兼容 `responses` 路径的别名端点 |
-| `/v1/models` | GET | 返回可用模型列表。Provider 下的 `models` 会以 `provider/upstream_model` 形式完整列出，`routes` 仅作为后置 fallback alias 补充；响应格式为 Codex `ModelsResponse`（`{"models": [...]}`） |
-| `/models` | GET | 同上 |
+| 项目 | 默认值 |
+|------|--------|
+| 监听地址 | `127.0.0.1:38440` |
+| 认证 | 无（内置认证在上游提供商层处理） |
 
-后两个端点行为完全一致；非 GET 请求返回 405。在 **Capture** 模式下，代理会转发所有路径（包含 `/v1/messages`）到上游。
+可通过 `-addr` 覆盖监听地址，通过 `config.yml` 的 `server.addr` 配置。
 
-## 支持的输入字段
+## `POST /v1/responses`
 
-Transform 模式下，以下 OpenAI Responses 请求字段被支持：
+主要端点，Codex CLI 发送对话请求。支持流式和非流式。
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `model` | `string` | 必需。支持 route 别名（如 `moonbridge`）和 `provider/model` 直出格式（如 `deepseek/deepseek-v4-pro`）。会路由到对应 Provider 并映射为上游真实模型名 |
-| `input` | `string` 或 `array` | 消息输入，详见下文 |
-| `instructions` | `string` | 开发者/系统指令，转为 Anthropic system 块的前缀 |
-| `max_output_tokens` | `int` | 默认值由 `provider.default_max_tokens` 控制（最终 fallback 1024）|
-| `temperature` | `float` | 透传 |
-| `top_p` | `float` | 透传 |
-| `stop` | `string \| string[]` | 转为 Anthropic `stop_sequences` |
-| `tools` | `array` | 工具声明，详见下文 |
-| `tool_choice` | `string \| object` | `"auto"` / `"none"` / `"required"` / `{type:"function",name:"..."}` |
-| `stream` | `bool` | 启用 SSE 流式响应 |
-| `metadata` | `object` | 透传至 Anthropic 请求 |
-| `prompt_cache_key` | `string` | 自定义缓存键，与 cache planner 配合使用 |
-| `prompt_cache_retention` | `string` | `"in_memory"`（映射为 `5m` TTL）或 `"24h"`（仅当 `allow_retention_downgrade:true` 时降级为 `1h`）|
-| `parallel_tool_calls` | `bool` | 已解析；Anthropic 转换层当前不单独使用该字段 |
-| `store` / `previous_response_id` | `bool` / `string` | 已解析；当前不提供本地 response store，不会按 previous response 拉取历史 |
+### 请求格式
 
-### input
-
-支持字符串和数组两种格式。
-
-- 字符串：转换为单条 `user` 消息。
-- 数组：每项对应一个 conversation item。支持的类型包括：
-  - `message`（`user` / `assistant` / `system` / `developer` role）
-  - 文本 content part：`input_text` / `text` / `output_text`
-  - `function_call` — 转为 Anthropic `tool_use` block
-  - `function_call_output` / `*_output` — 转为 `tool_result` block
-  - `local_shell_call` — 转为 `tool_use`（name=`local_shell`）
-  - `custom_tool_call` — 转为 `tool_use`，保留原始 `input` 内容
-  - `web_search_call` — **忽略**，不会传给上游
-
-当前 Transform 转换层只从 content part 中提取文本；图片、文件 ID、后台 response store 等能力尚未实现。
-
-### tools
-
-| OpenAI `type` | Anthropic 映射 |
-|---------------|----------------|
-| `function` | Anthropic tool 标准 `input_schema` |
-| `local_shell` | Anthropic tool，`name: "local_shell"` |
-| `custom` | Anthropic tool；Codex `apply_patch` grammar 拆成 add/delete/update/replace/batch 结构化工具，Code Mode `exec` 暴露为 `source` schema，其他 custom freeform 包装为 `input` |
-| `namespace` | 发往 Anthropic 时展平为子工具的 `namespace__tool` 命名；响应回 Codex 时 function 工具拆回 `namespace` + 子工具 `name` |
-| `web_search` / `web_search_preview` | 默认映射为 Anthropic server tool `web_search_20250305`；当 `provider.web_search.support` 为 `injected` 时注入 `tavily_search` / `firecrawl_fetch` function 工具；探测不支持或配置为 `disabled` 时跳过 |
-| `file_search` / `computer_use_preview` / `image_generation` | **忽略** |
-
-## 流式事件
-
-Anthropic Messages SSE 事件流会先收集再转换为 OpenAI Responses 格式的事件流。服务器不再生成 synthetic commentary preamble，因此不会向客户端注入旧等待提示；历史中已存在的 `phase: "commentary"` 消息会在请求转换时跳过，不会继续发送给上游。
-
-### 事件映射
-
-| Anthropic 事件 | OpenAI 事件 |
-|----------------|-------------|
-| `message_start` | `response.created`, `response.in_progress` |
-| `content_block_start` | `response.output_item.added`, `response.content_part.added` |
-| `content_block_delta` (text) | `response.output_text.delta` |
-| `content_block_delta` (input_json) | `response.function_call_arguments.delta` |
-| `content_block_stop` | `response.output_text.done`, `response.content_part.done`, `response.output_item.done` |
-| `message_delta` | 更新状态/usage |
-| `message_stop` | `response.completed` / `response.incomplete` |
-| `error` | `response.failed` |
-
-### 特殊工具流式转换
-
-- **`local_shell_call`**：input_json_delta 转为 local shell action，不产生 `function_call_arguments.delta`。
-- **`web_search_call`**：流式 `input_json_delta` 并入 `action` 字段而非 `function_call_arguments`；空搜索 action 会被过滤。
-- **`custom_tool_call`**：流式 `input_json_delta` 转为 `response.custom_tool_call_input.delta` 事件，最终产出 `custom_tool_call` 输出项。
-- **`apply_patch` 拆分工具**：Anthropic 侧的 `apply_patch_add_file` / `apply_patch_delete_file` / `apply_patch_update_file` / `apply_patch_replace_file` / `apply_patch_batch` 最终都会回映射为 Codex 看到的 `custom_tool_call.name="apply_patch"`。
-
-## 非流式响应
+兼容 OpenAI Responses API 格式。完整定义见 `internal/foundation/openai/types.go`。
 
 ```json
 {
-  "id": "resp_msg_xxxx",
+  "model": "moonbridge",
+  "input": [
+    {"role": "user", "content": [{"type": "input_text", "text": "Hello"}]}
+  ],
+  "instructions": "System prompt here",
+  "max_output_tokens": 65536,
+  "temperature": 0.7,
+  "tools": [
+    {"type": "function", "name": "get_weather", "description": "...", "parameters": {...}},
+    {"type": "web_search_preview"},
+    {"type": "local_shell"},
+    {"type": "custom", "name": "edit", "format": {"definition": "..."}}
+  ],
+  "tool_choice": "auto",
+  "stream": false,
+  "reasoning": {"effort": "high"}
+}
+```
+
+### 支持的字段
+
+| 字段 | 支持情况 | 说明 |
+|------|----------|------|
+| `model` | ✅ 必填 | 模型别名或 `provider/model` 引用 |
+| `input` | ✅ | 消息数组或纯文本字符串 |
+| `instructions` | ✅ | 系统指令，与 system prompt 合并 |
+| `max_output_tokens` | ✅ | 默认 65536 |
+| `temperature` | ✅ | 映射到 Anthropic temperature |
+| `top_p` | ✅ | 映射到 Anthropic top_p |
+| `stop` | ✅ | 停止序列 |
+| `tools` | ✅ | 支持 function / web_search_preview / local_shell / custom |
+| `tool_choice` | ✅ | auto / none / required / {"type":"function","name":"..."} |
+| `stream` | ✅ | true = SSE 流式 |
+| `reasoning` | ✅ | 传递 reasoning.effort 给支持层 |
+
+### 支持的 Tool 类型
+
+#### `function`
+标准函数调用，转换为 Anthropic tool_use。
+
+#### `web_search_preview` / `web_search`
+根据提供商配置转换为：
+- **enabled**：转换为 Anthropic 原生 `web_search_20250305` server tool
+- **injected**：转换为 `tavily_search` + `firecrawl_fetch` function tools，由服务端执行
+- **disabled**：忽略
+
+#### `local_shell`
+Codex 本地 shell 执行，转换为 Anthropic `local_shell` tool。
+
+#### `custom`
+Codex 自定义工具，根据 grammar 类型转换为：
+- **raw**：通用自定义工具
+- **apply_patch**：拆分为 `add_file` / `update_file` / `delete_file` / `replace_file` / `batch` 五个子工具
+- **exec**：转换为 Code Mode exec 代理工具
+
+### 响应格式（非流式）
+
+```json
+{
+  "id": "resp_...",
   "object": "response",
+  "created_at": 1234567890,
   "status": "completed",
   "model": "moonbridge",
-  "output": [ ... ],
-  "output_text": "...",
-  "usage": {
-    "input_tokens": 1000,
-    "output_tokens": 200,
-    "total_tokens": 1200,
-    "input_tokens_details": {
-      "cached_tokens": 500
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_item_0",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{"type": "output_text", "text": "Hello!"}]
+    },
+    {
+      "type": "reasoning",
+      "summary": [{"type": "summary_text", "text": "Thinking..."}]
+    },
+    {
+      "type": "function_call",
+      "id": "fc_tooluse_0",
+      "call_id": "toolu_...",
+      "name": "get_weather",
+      "arguments": "{\"location\": \"Beijing\"}",
+      "status": "completed"
     }
-  },
-  "metadata": {
-    "provider_message_id": "msg_xxxx",
-    "provider_usage": { ... }
+  ],
+  "usage": {
+    "input_tokens": 100,
+    "output_tokens": 50,
+    "input_tokens_details": {"cached_tokens": 30}
   }
 }
 ```
 
-字段说明：
-- `id`：以 `resp_` 前缀包装上游消息 ID。
-- `status`：根据 Anthropic `stop_reason` 映射：`end_turn`/`stop_sequence` → `completed`；`max_tokens` → `incomplete`（reason=`max_output_tokens`）；`model_context_window` → `incomplete`（reason=`max_input_tokens`）。
-- `usage.input_tokens`：Anthropic Transform 响应中会累加 Anthropic 的 `input_tokens` + `cache_creation_input_tokens` + `cache_read_input_tokens`；`openai-response` 直通 Provider 的响应 usage 保持上游原样。
-- `usage.input_tokens_details.cached_tokens`：始终序列化（即使为 0），兼容 Codex 反序列化。
+### 流式响应格式（SSE）
 
-日志里的每请求 `Usage: ... Input` 是单独的可读展示口径，采用 `input_tokens + cache_read_input_tokens`，不把 `cache_creation_input_tokens` 额外计入展示值。`Billing` 始终是当前 session 累计费用。
+SSE 事件格式：
 
-## 输出项类型
+```
+event: response.created
+data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_...","status":"in_progress",...}}
 
-| Output Type | 来源 | 说明 |
-|-------------|------|------|
-| `message` | Anthropic `text` block | 含 `output_text` content |
-| `function_call` | Anthropic `tool_use`（非 local_shell）| id 前缀 `fc_` |
-| `local_shell_call` | Anthropic `tool_use`（name=local_shell）| id 前缀 `lc_` |
-| `custom_tool_call` | Anthropic `tool_use`（在 ConversionContext 中标记为 custom；grammar proxy 会先拼回 raw input）| id 前缀 `ctc_` |
-| `web_search_call` | Anthropic `server_tool_use:web_search` | id 前缀 `ws_` |
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{...}}
 
-## 错误响应
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","output_index":0,"content_index":0,"delta":"Hel"}
 
-遵循 OpenAI 错误格式：
+event: response.output_text.done
+data: {"type":"response.output_text.done","output_index":0,"content_index":0,"text":"Hello!"}
+
+event: response.completed
+data: {"type":"response.completed","response":{...}}
+```
+
+支持的事件类型：
+
+| 事件 | 说明 |
+|------|------|
+| `response.created` | 响应创建 |
+| `response.in_progress` | 响应处理中 |
+| `response.output_item.added` | 新增输出项 |
+| `response.output_item.done` | 输出项完成 |
+| `response.content_part.added` | 新增内容片段 |
+| `response.content_part.done` | 内容片段完成 |
+| `response.output_text.delta` | 文本增量 |
+| `response.output_text.done` | 文本完成 |
+| `response.function_call_arguments.delta` | 函数参数 JSON 增量 |
+| `response.function_call_arguments.done` | 函数参数完成 |
+| `response.custom_tool_call_input.delta` | 自定义工具输入增量 |
+| `response.completed` | 响应完成 |
+| `response.incomplete` | 响应不完整 |
+| `response.failed` | 响应失败 |
+
+### 错误响应
 
 ```json
 {
   "error": {
-    "message": "model is required",
-    "type": "invalid_request_error",
-    "param": "model",
-    "code": "missing_required_parameter"
+    "message": "提供商错误：rate limit exceeded",
+    "type": "server_error",
+    "code": "provider_error"
   }
 }
 ```
 
-Anthropic Provider 错误会被映射为 OpenAI 等价的 HTTP 状态码和错误码：
+错误类型映射：
 
-| Provider 状态码 | OpenAI 状态码 | Error Code |
-|----------------|---------------|------------|
-| 401 | 401 | `invalid_api_key` |
-| 403 | 403 | `permission_denied` |
-| 429 | 429 | `rate_limit_exceeded` |
-| 504 | 504 | `provider_timeout` |
-| 5xx | 502 | `provider_error` |
-| 4xx | 400 | `invalid_request_error` |
+| HTTP 状态码 | 说明 |
+|-------------|------|
+| 400 | 请求参数错误 |
+| 401 | API Key 无效 |
+| 403 | 权限不足 |
+| 429 | 速率限制 |
+| 502 | 上游提供商错误 |
+| 504 | 上游超时 |
 
-## 透明代理 API（Capture 模式）
+## `GET /v1/models`
 
-**CaptureResponse** 和 **CaptureAnthropic** 模式下，所有请求按原协议透传至上游，不进行协议转换。请求/响应会被 trace 系统完整记录（路径下配置）。
-代理会覆盖 `Authorization` / `X-Api-Key` Header，但保留客户端 `User-Agent` 等原始 Header。
+返回模型目录，用于 Codex CLI 的模型发现。
 
-Transform 模式中的 `protocol: "openai-response"` Provider 不是 Capture 模式：它只对匹配该 Provider 的模型别名执行 Responses 直通，并会在请求体中把 `model` 改写为配置的上游模型名。
+### 响应格式
+
+```json
+{
+  "models": [
+    {
+      "slug": "deepseek-v4-pro(deepseek)",
+      "display_name": "DeepSeek V4 Pro(deepseek)",
+      "description": "DeepSeek V4 with selectable high/xhigh reasoning effort.",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [
+        {"effort": "high", "description": "High reasoning effort"},
+        {"effort": "xhigh", "description": "Extra high reasoning effort (maps to DeepSeek max)"}
+      ],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "supports_reasoning_summaries": true,
+      "default_reasoning_summary": "auto",
+      "web_search_tool_type": "text",
+      "apply_patch_tool_type": "freeform",
+      "truncation_policy": {"mode": "tokens", "limit": 10000},
+      "supports_parallel_tool_calls": true,
+      "context_window": 1000000,
+      "max_context_window": 1000000,
+      "effective_context_window_percent": 95,
+      "input_modalities": ["text"]
+    }
+  ]
+}
+```
+
+模型目录的生成逻辑在 `internal/extension/codex/catalog.go` 的 `BuildModelInfosFromConfig()` 中：
+
+1. 优先使用 `provider.providers.<key>.models` 中的模型目录
+2. 追加 `provider.routes` 中的别名作为补充
+3. 为每个模型生成 `base_instructions`（来自 `default_instructions.txt` 模板）
+
+## 命令行工具
+
+Moon Bridge 提供以下命令行开关：
+
+| 开关 | 说明 |
+|------|------|
+| `-config` | 指定配置文件路径（默认 `config.yml`） |
+| `-addr` | 覆盖监听地址 |
+| `-mode` | 覆盖运行模式 |
+| `-print-addr` | 打印监听地址并退出 |
+| `-print-mode` | 打印运行模式并退出 |
+| `-print-default-model` | 打印默认模型别名并退出 |
+| `-print-codex-model` | 打印 Codex 模型别名并退出 |
+| `-print-claude-model` | 打印 Claude model 并退出 |
+| `-print-codex-config` | 生成指定模型的 Codex config.toml 并退出 |
+| `-codex-base-url` | 生成 config.toml 时使用的 Base URL |
+| `-codex-home` | 指定 CODEX_HOME，同时写入 models_catalog.json |

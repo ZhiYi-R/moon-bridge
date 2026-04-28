@@ -1,33 +1,91 @@
 # Moon Bridge
 
-Moon Bridge 是一个 OpenAI Responses 兼容转发层。你可以像调用 OpenAI Responses API 一样使用 `/v1/responses`，Moon Bridge 会按模型别名把请求路由到 Anthropic Messages 兼容 Provider，或在配置为 `protocol: "openai-response"` 时直接透传到 OpenAI Responses Provider。
+<p align="center">
+  <a href="https://www.gnu.org/licenses/gpl-3.0">
+    <img src="https://img.shields.io/badge/License-GPL%20v3-blue.svg" alt="GPL v3 License">
+  </a>
+</p>
+
+Moon Bridge 是一个协议转换和模型路由代理。它对外暴露一个 **OpenAI Responses** 端点（`/v1/responses`），背后可以接任意兼容 **Anthropic Messages** 协议的上游 Provider，也可以直通上游 OpenAI Responses Provider。客户端指定不同的模型别名时，它自动把请求路由到对应的上游 Provider，并在不同协议之间自动转换。
+只需要一个 `config.yml` 和一条 `go run` 命令就能跑起来。
+
+---
+
+- [快速开始](#快速开始)
+- [三种工作模式](#三种工作模式)
+  - [Transform（默认）](#transform默认)
+  - [CaptureResponse](#captureresponse)
+  - [CaptureAnthropic](#captureanthropic)
+- [配置指南](#配置指南)
+  - [多提供商与模型路由](#多提供商与模型路由)
+  - [Web Search 配置](#web-search-配置)
+  - [缓存配置](#缓存配置)
+  - [DeepSeek V4 专有配置](#deepseek-v4-专有配置)
+  - [Plugin 配置](#plugin-配置)
+- [与 Codex CLI 一起使用](#与-codex-cli-一起使用)
+- [与 Claude Code 一起使用](#与-claude-code-一起使用)
+- [Docker 部署](#docker-部署)
+- [命令行选项](#命令行选项)
+- [HTTP API 参考](#http-api-参考)
+  - [POST /v1/responses](#post-v1responses)
+  - [GET /v1/models](#get-v1models)
+  - [错误处理](#错误处理)
+- [用量统计与日志](#用量统计与日志)
+- [请求跟踪](#请求跟踪)
+- [Extension（插件）系统](#extension插件系统)
+- [开源许可](#开源许可)
+
+---
 
 ## 快速开始
 
-1. 复制示例配置：
+### 1. 准备配置
+
+从示例配置开始：
 
 ```bash
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge"
 cp config.example.yml "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml"
 ```
 
-2. 编辑 `${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml`，填入 `provider.providers` 下各上游 Provider 的 `base_url` 和 `api_key`，在各 Provider 的 `models` 中声明可用的上游模型，然后在 `provider.routes` 中配置别名到 `"provider/upstream_model"` 的转发表。
+编辑 `config.yml`，至少填入一个上游 Provider 的 `base_url` 和 `api_key`。
 
-3. 启动服务：
+最小的可工作配置：
+
+```yaml
+mode: "Transform"
+
+server:
+  addr: "127.0.0.1:38440"
+
+provider:
+  providers:
+    my-provider:
+      base_url: "https://api.example.com"
+      api_key: "sk-..."
+      models:
+        my-model:
+          context_window: 128000
+      # 协议：默认 "anthropic"，设为 "openai-response" 可直通 OpenAI Responses API
+      # protocol: "anthropic"
+  routes:
+    moonbridge: "my-provider/my-model"
+  default_model: "moonbridge"
+```
+
+### 2. 启动服务
 
 ```bash
 go run ./cmd/moonbridge
 ```
 
-默认监听 `127.0.0.1:38440`。启动后即可通过 `http://localhost:38440/v1/responses` 调用。`GET /v1/models` 可查看所有可用模型。
+默认监听 `127.0.0.1:38440`。启动后即可向 `http://localhost:38440/v1/responses` 发送 OpenAI Responses 格式的 POST 请求。
 
 未传 `-config` 时，Moon Bridge 会按 XDG 读取 `${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml`。仍可用 `-config /path/to/config.yml` 指定任意配置文件。
 
+---
+
 ## 三种工作模式
-
-在 `config.yml` 中通过 `mode` 选择工作方式：
-
-### `Transform`（默认）
 
 把 OpenAI Responses 请求翻译成 Anthropic Messages 调用。适合想让 Codex CLI 等 OpenAI 客户端跑在 Anthropic 兼容模型上的场景。
 
@@ -262,137 +320,530 @@ startup_timeout_sec = 3600
 tool_timeout_sec = 3600
 ```
 
-也可以让 Moon Bridge 按当前 `config.yml` 生成 Codex 配置片段：
+### 3. 验证
+
+查看可用模型：
 
 ```bash
-go run ./cmd/moonbridge -print-codex-config moonbridge -codex-base-url http://127.0.0.1:38440/v1 -codex-home ~/.codex
+curl http://localhost:38440/v1/models
 ```
 
-设置客户端 API Key（本地 Moon Bridge 不校验，任意占位值即可）：
+发送一条测试请求：
 
 ```bash
-export MOONBRIDGE_CLIENT_API_KEY="local-dev"
+curl http://localhost:38440/v1/responses \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "moonbridge",
+    "input": "你好，请用一句话介绍自己。",
+    "max_output_tokens": 100
+  }'
 ```
-
-然后启动 Moon Bridge，再运行 `codex`。
-
-### 一键启动脚本
-
-当 `config.yml` 的 `mode` 为 `Transform` 或 `CaptureResponse` 时，可以使用脚本自动启动 Moon Bridge 和 Codex：
-
-```bash
-./scripts/start_codex_with_moonbridge.sh
-```
-
-也可以带一个初始任务进入 TUI：
-
-```bash
-./scripts/start_codex_with_moonbridge.sh '请运行测试并汇报结果'
-```
-
-脚本会自动生成隔离的 Codex 配置到 `FakeHome/Codex/config.toml`，不会修改你全局的 `~/.codex`；
-如果全局 `~/.codex/config.toml`（或 `$MOONBRIDGE_CODEX_CONFIG`）中存在 `[tui].status_line`，会逐字复制到隔离配置里。
-因此其中包含的 `"fast-mode"` 等字段也来自全局配置——如需移除，请编辑全局 `~/.codex/config.toml` 的 `status_line` 列表。
-
-## 配合 Claude Code 使用
-
-当 `config.yml` 的 `mode` 为 `CaptureAnthropic` 时，可以使用脚本自动启动 Moon Bridge 和 Claude Code：
-
-```bash
-./scripts/start_claude_code_with_moonbridge.sh
-```
-
-也可以带一个初始任务：
-
-```bash
-./scripts/start_claude_code_with_moonbridge.sh '请读取 README 并总结项目用途'
-```
-
-脚本会自动设置隔离的 Claude Code 配置，不会修改全局的 `~/.claude`。
-
-## 直接调用 API
-
-非流式调用：
-
-```bash
-curl -sS http://localhost:38440/v1/responses \
-  -H 'content-type: application/json' \
-  -d '{"model":"moonbridge","input":"Hello"}'
-```
-
-流式调用：
-
-```bash
-curl -sS http://localhost:38440/v1/responses \
-  -H 'content-type: application/json' \
-  -d '{"model":"moonbridge","input":"Hello","stream":true}'
-```
-
-支持的标准参数包括 `instructions`、`max_output_tokens`、`temperature`、`top_p`、`stop`、`tools`、`tool_choice`、`parallel_tool_calls`、`prompt_cache_key`、`prompt_cache_retention` 等。
-
-## 工具调用支持
-
-Moon Bridge 支持以下工具类型：
-
-- **函数工具**（`type: "function"`）：标准 JSON Schema 参数定义，Anthropic 返回的工具调用会映射为 OpenAI 的 `function_call`。
-- **`local_shell`**：Codex CLI 的本地 shell 工具，自动映射为 Anthropic 兼容格式，shell 执行仍由 Codex 客户端完成。
-- **`web_search`**：Codex 的搜索工具，按当前请求路由到的 provider 的 web search 配置决定是注入 Anthropic `web_search_20250305`、注入 injected 工具还是跳过。搜索次数上限由 `web_search.max_uses` 控制（支持 per-provider 覆盖）。
-- **Custom grammar 工具**：Codex 内置需要 freeform grammar 的工具目前主要是 `apply_patch` 和 Code Mode `exec`。Moon Bridge 把 `apply_patch` 拆成 add/delete/update/replace/batch 一组结构化工具，把 `exec` 暴露成 `source`；Provider 返回后再拼回 Codex 需要的 raw grammar call。
-- **命名空间 / MCP 工具**：支持带命名前缀的工具名称。
-
-## 响应与用量
-
-响应格式与 OpenAI Responses API 一致，包含：
-
-- `output[]`：模型输出的消息或工具调用
-- `usage.input_tokens` / `usage.output_tokens`：输入和输出 token 数
-- `usage.input_tokens_details.cached_tokens`：命中缓存的 token 数
-- `status`：`completed` 或 `incomplete`
-
-当启用 prompt caching 时，Anthropic 侧的缓存创建和命中会归一化到 OpenAI Responses 的 `usage` 字段中；Provider 原始缓存明细会保留在 `metadata.provider_usage` 中，方便排查成本。
-
-如果配置了模型定价，每个成功请求都会输出一行可读 INFO。这里的模型名是实际发往上游的模型名，`Billing` 是当前 session 累计费用，不是单次请求费用：
-
-```
-deepseek-v4-pro Usage: 0.120000 M Input, 0.004500 M Output, Session Cache Hit Rate: 25.00%, Billing: 0.28 CNY
-gpt-image-1.5 Usage: 1.200000 M Input, 0.500000 M Output, Session Cache Hit Rate: 25.00%, Billing: 3.04 CNY
-```
-
-服务终止时会输出 summary 行和详细拆解：
-
-```
-Summary：Session Cache Hit Rate(AVG): 25.0%, Billing: 3.04 CNY
-Session Stats: 42 requests, 12m30s duration
-  Input:  154320 tokens (120000 fresh, 20000 cache creation, 14320 cache read)
-  Output: 8500 tokens
-  Cache Hit Rate: 9.3% (saved 14320 tokens)
-  Total Cost: ¥3.040000
-    moonbridge: ¥3.040000 (42 req, 154320 in, 8500 out)
-```
-
-## 错误处理
-
-常见错误会返回 OpenAI 风格的错误响应：
-
-- 鉴权失败：`401 invalid_api_key`
-- 权限不足或模型不可用：`403 permission_denied`
-- 参数不支持：`400 unsupported_parameter`
-- 上下文超限：`400 context_length_exceeded`
-- 限流：`429 rate_limit_exceeded`
-- 上游错误：`502 provider_error`
-- 上游超时：`504 provider_timeout`
-
-## 日志
-
-使用脚本启动时，Moon Bridge 的日志分别写入：
-
-- Codex 场景：`logs/moonbridge-codex.log`
-- Claude Code 场景：`logs/moonbridge-claude-code.log`
-
-脚本每次启动都会先清空对应日志文件，随后把脚本自身的构建、启动、客户端退出、服务端停止信息和 Moon Bridge 服务日志写入同一个文件。
-
-手动启动时，标准输出即为服务日志。
 
 ---
 
-更多细节请参考 `config.example.yml` 中的注释和 `docs/` 目录下的设计文档。
+## 三种工作模式
+
+通过 `config.yml` 的 `mode` 字段切换。
+
+### Transform（默认）
+
+```
+Codex CLI ──→ Moon Bridge ──→ LLM Provider
+  (OpenAI     协议转换        (Anthropic
+   Responses)                  Messages)
+```
+
+收到 OpenAI Responses 格式的请求后，Moon Bridge 将其翻译为 Anthropic Messages API 请求，发送给上游提供商，再把响应转换回 OpenAI 格式返回。
+
+这是与 Codex CLI 搭配使用的模式。支持非流式（JSON）和流式（SSE）两种响应方式。
+
+### CaptureResponse
+
+```
+Client ──→ Moon Bridge ──→ OpenAI Responses Provider
+             (透明代理)
+```
+
+纯代理模式，不转换协议。Moon Bridge 简单地将请求原样转发到上游 OpenAI Responses 端点，并将响应回传。可用于抓包分析或请求跟踪。
+
+需要配置 `developer.proxy.response`：
+
+```yaml
+developer:
+  proxy:
+    response:
+      model: "gpt-5.5"
+      provider:
+        base_url: "https://api.openai.com"
+        api_key: "sk-..."
+```
+
+### CaptureAnthropic
+
+```
+Client ──→ Moon Bridge ──→ Anthropic Provider
+             (透明代理)
+```
+
+同样为透明代理，但转发的是 Anthropic Messages API 请求（`/v1/messages`）。适用于 Claude Code 等 Anthropic 原生客户端。
+
+需要配置 `developer.proxy.anthropic`：
+
+```yaml
+developer:
+  proxy:
+    anthropic:
+      model: "claude-sonnet-4-6"
+      provider:
+        base_url: "https://api.anthropic.com"
+        api_key: "sk-ant-..."
+        version: "2023-06-01"
+```
+
+---
+
+## 配置指南
+
+完整的配置选项见 `config.example.yml`。
+
+### 多提供商与模型路由
+
+Moon Bridge 支持同时配置多个上游提供商，并按模型别名路由。
+
+```yaml
+provider:
+  providers:
+    deepseek:          # 提供商标识符（自定义）
+      base_url: "https://api.deepseek.com"
+      api_key: "sk-..."
+      protocol: "anthropic"         # anthropic（默认）或 openai-response
+      models:
+        deepseek-v4-pro:
+          context_window: 1000000
+          max_output_tokens: 384000
+          display_name: "DeepSeek V4 Pro"
+          deepseek_v4: true         # 启用 DeepSeek V4 扩展
+          default_reasoning_level: "high"
+          supported_reasoning_levels:
+            - effort: "high"
+              description: "High reasoning effort"
+            - effort: "xhigh"
+              description: "Extra high reasoning effort"
+          supports_reasoning_summaries: true
+          pricing:
+            input_price: 2          # 每百万 token 输入价格（RMB）
+            output_price: 8         # 每百万 token 输出价格（RMB）
+            cache_write_price: 1
+            cache_read_price: 0.2
+    openai:
+      base_url: "https://api.openai.com"
+      api_key: "sk-..."
+      protocol: "openai-response"   # 直通 OpenAI Responses API
+      models:
+        gpt-5.5: {}
+  routes:
+    moonbridge: "deepseek/deepseek-v4-pro"
+    gpt5: "openai/gpt-5.5"
+  default_model: "moonbridge"
+```
+
+**模型别名规则**：
+
+- 客户端请求时使用 `model: "moonbridge"` 或 `model: "deepseek/deepseek-v4-pro"`
+- 支持两种引用格式：`provider/model` 和 `model(provider)`
+- `routes` 是可选的，用于提供友好的简短别名
+- `provider/providers` 中的模型目录会自动出现在 `GET /v1/models` 的返回中
+
+### Web Search 配置
+
+Moon Bridge 支持三种 Web Search 方式：
+
+| 模式 | 说明 |
+|------|------|
+| `enabled` | 使用 Anthropic 原生 `web_search_20250305` server tool（上游必须支持） |
+| `injected` | 注入 `tavily_search` + `firecrawl_fetch` 作为 function tool，由 Moon Bridge 服务端执行搜索 |
+| `disabled` | 禁用 Web Search |
+| `auto` | 启动时自动探测上游是否支持（默认） |
+
+配置优先级：**模型级 > 提供商级 > 全局**。
+
+```yaml
+provider:
+  web_search:
+    support: "auto"          # 全局默认，可选 auto/enabled/disabled/injected
+    max_uses: 8
+    tavily_api_key: "tvly-..."
+    firecrawl_api_key: "fc-..."
+    search_max_rounds: 5
+
+  providers:
+    anthropic:
+      base_url: "https://api.anthropic.com"
+      api_key: "sk-ant-..."
+      web_search:
+        support: "enabled"   # 提供商级覆盖
+      models:
+        claude-sonnet-4-6:
+          web_search:
+            support: "auto"  # 模型级覆盖
+            max_uses: 15
+```
+
+### 缓存配置
+
+Moon Bridge 支持 Anthropic 协议中的 Prompt Caching 特性，通过 `cache` 节配置：
+
+```yaml
+cache:
+  mode: "explicit"          # off / automatic / explicit / hybrid
+  ttl: "5m"                 # 5m 或 1h
+  prompt_caching: true
+  automatic_prompt_cache: false
+  explicit_cache_breakpoints: true
+  min_cache_tokens: 1024
+  min_breakpoint_tokens: 1024
+```
+
+缓存策略：
+
+- **automatic**：由 Anthropic 自动检测重复前缀并缓存
+- **explicit**：由 Moon Bridge 在 system、tools、user messages 等稳定段落的末尾注入 `cache_control` 标记
+- **hybrid**：同时使用两种策略
+- **off**：完全禁用缓存
+
+### DeepSeek V4 专有配置
+
+使用 DeepSeek V4 模型的额外配置：
+
+```yaml
+plugins:
+  deepseek_v4:
+    reinforce_instructions: true
+    reinforce_prompt: "[System Reminder]: ...\n[User]:"
+```
+
+模型标记 `deepseek_v4: true` 后，插件会自动处理：
+
+- 移除输入中的 `reasoning_content` 字段（DeepSeek 不接受该字段）
+- 清空 `temperature` / `top_p` 参数
+- 将 `reasoning.effort` 映射为 `output_config.effort`
+- 缓存和管理 thinking 块（跨对话历史重建）
+- 可选地在用户消息前注入强化指令
+
+### Plugin 配置
+
+在 `plugins` 节下配置各插件的参数：
+
+```yaml
+plugins:
+  deepseek_v4:
+    reinforce_instructions: true
+  web_search_injected:    # 由 enabled/injected 模式自动激活，一般无需显式配置
+```
+
+---
+
+## 与 Codex CLI 一起使用
+
+项目提供了一个自动化脚本 `scripts/start_codex_with_moonbridge.sh`：
+
+```bash
+# 一条命令启动 Moon Bridge + 启动 Codex CLI
+./scripts/start_codex_with_moonbridge.sh
+```
+
+该脚本会自动：
+
+1. 构建 Moon Bridge 二进制
+2. 从 `config.yml` 中解析模型配置
+3. 生成 Codex 使用的 `config.toml`（含模型目录）
+4. 启动 Moon Bridge 服务
+5. 设置 `CODEX_HOME` 和 `MOONBRIDGE_CLIENT_API_KEY` 环境变量
+6. 启动 Codex CLI
+7. Codex 退出后自动停止 Moon Bridge
+
+也可以分步操作：
+
+```bash
+# 手动启动服务
+go run ./cmd/moonbridge &
+
+# 生成 Codex 配置并启动 Codex
+CODEX_HOME="$PWD/FakeHome/Codex"
+go run ./cmd/moonbridge \
+  --print-codex-config "$(go run ./cmd/moonbridge --print-codex-model)" \
+  --codex-base-url "http://127.0.0.1:38440/v1" \
+  --codex-home "$CODEX_HOME"
+
+CODEX_HOME="$CODEX_HOME" MOONBRIDGE_CLIENT_API_KEY="local-dev" codex --cd "$PWD"
+```
+
+生成的 Codex `config.toml` 包含模型提供商信息和预配置的 MCP server（如 deepwiki）。
+
+---
+
+## 与 Claude Code 一起使用
+
+使用 `scripts/start_claude_code_with_moonbridge.sh`：
+
+```bash
+# CaptureAnthropic 模式下启动 Moon Bridge + Claude Code
+./scripts/start_claude_code_with_moonbridge.sh
+```
+
+该脚本会自动构建 Moon Bridge（若未构建）、启动服务、配置 Claude Code 使用 Moon Bridge 作为代理、启动 Claude Code，并在 Claude Code 退出后停止 Moon Bridge。
+
+或在 CaptureAnthropic 模式下单独启动 Moon Bridge 后，用 `scripts/start_claude_code.sh` 连接到已有服务。
+
+---
+
+## Docker 部署
+
+项目提供了 `Dockerfile`（基于 `golang:1.26` 多阶段构建，最终镜像为 `gcr.io/distroless/static-debian12`）：
+
+```bash
+# 构建镜像
+docker build -t moonbridge .
+
+# 运行容器（配置文件挂载到 /config/config.yml）
+docker run -d \
+  --name moonbridge \
+  -p 38440:38440 \
+  -v "$PWD/config.yml:/config/config.yml" \
+  moonbridge
+```
+
+容器默认监听 `0.0.0.0:38440`。
+
+---
+
+## 命令行选项
+
+```
+moonbridge -config config.yml [选项]
+```
+
+| 选项 | 说明 |
+|------|------|
+| `-config 路径` | 配置文件路径（默认 `config.yml`） |
+| `-addr 地址` | 覆盖监听地址 |
+| `-mode 模式` | 覆盖运行模式：`Transform`、`CaptureResponse`、`CaptureAnthropic` |
+| `-print-addr` | 打印监听地址并退出 |
+| `-print-mode` | 打印运行模式并退出 |
+| `-print-default-model` | 打印默认模型别名并退出 |
+| `-print-codex-model` | 打印 Codex 模型别名并退出 |
+| `-print-claude-model` | 打印 Claude Code 模型别名并退出 |
+| `-print-codex-config 别名` | 生成指定模型的 Codex `config.toml` 片段并退出 |
+| `-codex-base-url URL` | 生成 config.toml 时使用的 Base URL |
+| `-codex-home 路径` | 指定 CODEX_HOME，同时写入 `models_catalog.json` |
+
+---
+
+## HTTP API 参考
+
+### POST /v1/responses
+
+兼容 OpenAI Responses API。支持流式和非流式。
+
+**请求**：
+
+```json
+{
+  "model": "moonbridge",
+  "input": [{"role": "user", "content": [{"type": "input_text", "text": "Hello"}]}],
+  "instructions": "You are a helpful assistant.",
+  "max_output_tokens": 65536,
+  "temperature": 0.7,
+  "stream": false,
+  "tools": [
+    {"type": "function", "name": "get_weather", "description": "...", "parameters": {...}},
+    {"type": "web_search_preview"},
+    {"type": "local_shell"}
+  ],
+  "reasoning": {"effort": "high"}
+}
+```
+
+**非流式响应**：
+
+```json
+{
+  "id": "resp_abc123",
+  "object": "response",
+  "created_at": 1714290000,
+  "status": "completed",
+  "model": "moonbridge",
+  "output": [
+    {
+      "type": "message",
+      "id": "msg_item_0",
+      "status": "completed",
+      "role": "assistant",
+      "content": [{"type": "output_text", "text": "Hello! How can I help?"}]
+    }
+  ],
+  "usage": {"input_tokens": 50, "output_tokens": 10, "input_tokens_details": {"cached_tokens": 20}}
+}
+```
+
+**流式响应**（SSE）：
+
+```
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_...","status":"in_progress",...}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{...}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","delta":"Hel"}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","text":"Hello!"}
+
+event: response.completed
+data: {"type":"response.completed","response":{...}}
+```
+
+支持的 tool 类型：
+
+| 类型 | 说明 |
+|------|------|
+| `function` | 标准函数调用，转换为 Anthropic tool_use |
+| `web_search_preview` / `web_search` | 根据配置转换为原生 server tool 或注入式搜索工具 |
+| `local_shell` | Codex 本地 shell 执行 |
+| `custom` | Codex 自定义工具（apply_patch / exec / raw） |
+
+### GET /v1/models
+
+返回可用模型列表，格式兼容 Codex CLI 的模型发现接口。
+
+```json
+{
+  "models": [
+    {
+      "slug": "deepseek-v4-pro(deepseek)",
+      "display_name": "DeepSeek V4 Pro(deepseek)",
+      "default_reasoning_level": "high",
+      "supported_reasoning_levels": [{"effort": "high", "description": "..."}],
+      "shell_type": "unified_exec",
+      "visibility": "list",
+      "supported_in_api": true,
+      "context_window": 1000000,
+      "max_context_window": 1000000
+    }
+  ]
+}
+```
+
+### 错误处理
+
+错误以 OpenAI 风格返回：
+
+```json
+{
+  "error": {
+    "message": "提供商错误：rate limit exceeded",
+    "type": "server_error",
+    "code": "provider_error"
+  }
+}
+```
+
+| HTTP 状态码 | 含义 |
+|-------------|------|
+| 400 | 请求参数错误（unsupported_parameter / 无效 tool 类型等） |
+| 401 | API Key 无效 |
+| 403 | 权限不足或模型不可用 |
+| 429 | 速率限制 |
+| 502 | 上游提供商错误 |
+| 504 | 上游超时 |
+
+---
+
+## 用量统计与日志
+
+Moon Bridge 会在标准错误输出（stderr）实时打印每次请求的用量统计：
+
+```
+模型: moonbridge ➡️ deepseek-v4-pro
+输入: 读取 1024K + 写入 512K + 首次 0
+输出: 256K
+计费: 本请求 0.0040 元, 累计 1.2340 元
+缓存: 命中率 33.33%, 写入率 16.67%, 读写比 2.00
+---
+会话统计: 42 次请求, 耗时 5m30s
+累计费用: ¥1.234000
+```
+
+包含的信息：
+
+- 请求模型和实际调用的上游模型名
+- 输入/输出 token 数量（含缓存读取、缓存写入、首次输入）
+- 单次请求费用和累计费用（需配置 `pricing`）
+- 缓存命中率、写入率、读写比
+- 按模型细分的消费明细
+
+日志级别通过 `log.level` 配置：`debug`、`info`、`warn`、`error`。
+
+---
+
+## 请求跟踪
+
+设置 `trace_requests: true` 后，每次请求的完整数据会写入磁盘：
+
+```
+trace/
+└── Transform/
+    ├── Response/
+    │   ├── 000001.json  # OpenAI 请求/响应
+    │   ├── 000002.json
+    │   └── ...
+    └── Anthropic/
+        ├── 000001.json  # 转换后的 Anthropic 请求/响应
+        ├── 000002.json
+        └── ...
+```
+
+每条记录包含：HTTP 头部、请求体、响应体（或流事件序列）、以及错误信息。流式请求还会记录中间转换后的 SSE 事件序列。
+
+---
+
+## Extension（插件）系统
+
+Moon Bridge 内置了基于能力接口的插件系统。插件通过实现预定义接口来拦截和扩展请求/响应的各个处理阶段。
+
+已内置的插件：
+
+| 插件名 | 用途 |
+|--------|------|
+| `deepseek_v4` | DeepSeek V4 模型适配（thinking 历史重建、参数映射、错误消息转换） |
+| `web_search_injected` | 注入式 Web Search（用 Tavily/Firecrawl 替代原生 server tool） |
+
+插件的能力接口包括：
+
+- `InputPreprocessor` — 预处理原始输入 JSON
+- `RequestMutator` — 修改转换后的 Anthropic 请求
+- `ToolInjector` — 注入额外工具定义
+- `MessageRewriter` — 重写消息列表
+- `ContentFilter` — 过滤响应内容块
+- `ResponsePostProcessor` — 后处理最终 OpenAI 响应
+- `StreamInterceptor` — 拦截流事件
+- `ErrorTransformer` — 改写错误消息
+- `ThinkingPrepender` — 重建 thinking 历史
+- 等
+
+详细文档见 [docs/extension-system.md](docs/extension-system.md)。
+
+---
+
+## 开源许可
+
+Copyright (C) 2026 Moon Bridge Contributors
+
+This program is free software: you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with this program. If not, see <https://www.gnu.org/licenses/>.
