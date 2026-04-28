@@ -4,29 +4,35 @@
 
 Moon Bridge 是一个 Go 语言编写的 HTTP 代理/转换服务器。它接收来自 Codex CLI 的 OpenAI Responses API 请求（`/v1/responses`），将其转换为 Anthropic Messages API 请求，转发给上游 LLM 提供商，再将上游响应转换回 OpenAI Responses 格式。
 
-## 三层架构
+## 四层架构
 
-```
-┌─────────────────────────────────────────────────────┐
-│                   Service 层                        │
-│  server (路由/处理/日志/统计)  │  proxy (直通代理)  │
-│  provider (多提供商路由)       │  stats (用量统计)  │
-│  trace (请求跟踪)              │  session (会话)    │
-├─────────────────────────────────────────────────────┤
-│                  Protocol 层                          │
-│  bridge (协议转换核心)   │  anthropic (客户端/类型)  │
-│  cache (缓存规划)       │                            │
-├─────────────────────────────────────────────────────┤
-│                 Foundation 层                        │
-│  config (配置加载/校验) │  logger (日志)            │
-│  openai (共享 DTO)      │  modelref (模型引用解析)  │
-│  session (会话类型)     │                            │
-├─────────────────────────────────────────────────────┤
-│                 Extension 层                         │
-│  plugin (Plugin 接口+注册表)  │  pluginhooks (适配)  │
-│  codex (Codex 兼容性)         │                     │
-│  deepseek_v4    │  websearch    │  websearchinjected │
-└─────────────────────────────────────────────────────┘
+```mermaid
+block-beta
+  columns 2
+  block:service["Service 层"]
+    columns 2
+    server["server\n路由/处理/日志/统计"] proxy["proxy\n直通代理"]
+    provider["provider\n多提供商路由"] stats["stats\n用量统计"]
+    trace["trace\n请求跟踪"] session["session\n会话"]
+  end
+  block:protocol["Protocol 层"]
+    columns 2
+    bridge["bridge\n协议转换核心"] anthropic["anthropic\n客户端/类型"]
+    cache["cache\n缓存规划"] space1[" "]
+  end
+  block:foundation["Foundation 层"]
+    columns 2
+    config["config\n配置加载/校验"] logger["logger\n日志"]
+    openai["openai\n共享 DTO"] modelref["modelref\n模型引用解析"]
+    session_t["session\n会话类型"] space2[" "]
+  end
+  block:extension["Extension 层"]
+    columns 2
+    plugin["plugin\nPlugin 接口+注册表"] pluginhooks["pluginhooks\n适配器"]
+    codex["codex\nCodex 兼容性"] space3[" "]
+    ext_row1["deepseek_v4 / websearch"] ext_row2["websearchinjected / visual"]
+  end
+end
 ```
 
 ### Foundation 层
@@ -79,10 +85,10 @@ Moon Bridge 是一个 Go 语言编写的 HTTP 代理/转换服务器。它接收
 
 完整的协议转换模式：
 
-```
-Codex CLI  ──→  Moon Bridge  ──→  LLM Provider
- (OpenAI       /v1/responses     (Anthropic
-  Responses)   协议转换           Messages)
+```mermaid
+flowchart LR
+  A["Codex CLI\n(OpenAI Responses)"] --> B["Moon Bridge\n协议转换"]
+  B --> C["LLM Provider\n(Anthropic Messages)"]
 ```
 
 处理流程：
@@ -100,21 +106,25 @@ Codex CLI  ──→  Moon Bridge  ──→  LLM Provider
 
 纯代理模式，不进行任何协议转换，直接转发 Anthropic Messages API 请求：
 
-```
-Client  ──→  Moon Bridge  ──→  Anthropic Provider
-           (透明代理，可选跟踪)
+```mermaid
+flowchart LR
+  A["Client"] --> B["Moon Bridge\n透明代理"]
+  B --> C["Anthropic Provider"]
 ```
 
 ### CaptureResponse
 
 纯代理模式，转发 OpenAI Responses API 请求：
 
-```
-Client  ──→  Moon Bridge  ──→  OpenAI Responses Provider
-           (透明代理，可选跟踪)
+```mermaid
+flowchart LR
+  A["Client"] --> B["Moon Bridge\n透明代理"]
+  B --> C["OpenAI Responses Provider"]
 ```
 
 ## 请求生命周期数据流
+
+### internal/foundation/config
 
 集中管理 YAML 配置。
 
@@ -165,40 +175,38 @@ internal/extension/codex/
 ├── customtool.go       # apply_patch / exec grammar 代理与 raw input 重建
 ├── tools.go            # LocalShellSchema / NamespacedToolName / ToolCodec / OutputItem helpers
 └── catalog_test.go     # 单元测试
-
 ```
-POST /v1/responses
-  │
-  ├─ Server 解析请求体 JSON
-  ├─ Session 查找/创建
-  │
-  ├─ [protocol = openai-response] ──→ 直接直通上游
-  │
-  ├─ Bridge.ConversionContext() ──→ 构建工具上下文
-  ├─ Bridge.ToAnthropic()
-  │   ├─ PluginHooks.PreprocessInput()   [InputPreprocessor]
-  │   ├─ convertInput() → messages + system
-  │   │   ├─ PluginHooks.RewriteMessages() [MessageRewriter]
-  │   │   └─ codex.ConvertInputItem()     [Codex 类型]
-  │   ├─ convertTools() → tools
-  │   │   ├─ codex.ConvertCodexTool()     [Codex 类型]
-  │   │   └─ PluginHooks.InjectTools()    [ToolInjector]
-  │   ├─ PluginHooks.MutateRequest()       [RequestMutator]
-  │   └─ cache.PlanCache() → 缓存规划
-  │
-  ├─ resolveProvider() → 选择 Provider
-  │   └─ maybeWrapInjectedSearch() → 注入 Web Search 编排器
-  │
-  ├─ [streaming]
-  │   ├─ Provider.StreamMessage() → 流事件
-  │   ├─ Bridge.ConvertStreamEvents() → SSE 输出
-  │   │   └─ StreamAdapter + PluginHooks (StreamInterceptor)
-  │   └─ 关闭流
-  │
-  └─ [non-streaming]
-      ├─ Provider.CreateMessage() → 完整响应
-      ├─ Bridge.FromAnthropic() → OpenAI 格式
-      └─ JSON 响应
+
+```mermaid
+flowchart TD
+  START(["POST /v1/responses"])
+  START --> PARSE["Server: 解析请求体 JSON"]
+  PARSE --> SESSION["Session: 查找/创建"]
+  SESSION --> PROTO{protocol?}
+  PROTO -->|openai-response| PASSTHROUGH["直接直通上游"]
+  PROTO -->|anthropic| CTX["Bridge.ConversionContext()\n构建工具上下文"]
+  CTX --> TOANTH["Bridge.ToAnthropic()"]
+  TOANTH --> PREPRO["PluginHooks.PreprocessInput\n[InputPreprocessor]"]
+  PREPRO --> CONVIN["convertInput()\nmessages + system"]
+  CONVIN --> REWRITE["PluginHooks.RewriteMessages\n[MessageRewriter]"]
+  REWRITE --> CODEXIN["codex.ConvertInputItem\nCodex 类型"]
+  CODEXIN --> CONVTOOL["convertTools()\ntools"]
+  CONVTOOL --> CODEXTOOL["codex.ConvertCodexTool\nCodex 类型"]
+  CODEXTOOL --> INJECT["PluginHooks.InjectTools\n[ToolInjector]"]
+  INJECT --> MUTATE["PluginHooks.MutateRequest\n[RequestMutator]"]
+  MUTATE --> CACHEPLAN["cache.PlanCache()\n缓存规划"]
+  CACHEPLAN --> RESOLVE["resolveProvider()\n选择 Provider"]
+  RESOLVE --> WRAP["maybeWrapInjectedSearch()\n注入 Web Search 编排器"]
+  WRAP --> STREAM{stream?}
+  STREAM -->|yes| STREAMING["Provider.StreamMessage()\n流事件"]
+  STREAMING --> CONVSTREAM["Bridge.ConvertStreamEvents()\nSSE 输出"]
+  CONVSTREAM --> ADAPTER["StreamAdapter +\nPluginHooks (StreamInterceptor)"]
+  ADAPTER --> CLOSE["关闭流"]
+  CLOSE --> OUTPUT(["输出响应"])
+  STREAM -->|no| NONSTREAM["Provider.CreateMessage()\n完整响应"]
+  NONSTREAM --> FROMANTH["Bridge.FromAnthropic()\nOpenAI 格式"]
+  FROMANTH --> JSON["JSON 响应"]
+  JSON --> OUTPUT
 ```
 
 ## 模型路由
@@ -380,14 +388,23 @@ flowchart LR
     mb["Moon Bridge\n127.0.0.1:38440"]
 
     subgraph Transform["Transform 内部"]
-        server["Server\nprotocol 判断"]
-        bridge["Bridge\nAnthropic 协议转换"]
-        session["Session\n(每请求)"]
-        pm["ProviderManager\n路由"]
-        oai_proxy["OpenAI Responses passthrough"]
-        ds["DeepSeek Provider"]
-        oai["OpenAI Provider"]
-        ant["Anthropic Provider"]
+        direction TB
+        subgraph Entry["请求处理"]
+            server["Server\nprotocol 判断"]
+            pm["ProviderManager\n路由"]
+        end
+        subgraph Convert["协议转换"]
+            bridge["Bridge\nAnthropic 协议转换"]
+            session["Session\n(每请求)"]
+        end
+        subgraph PassThrough["OpenAI 直通"]
+            oai_proxy["OpenAI Responses passthrough"]
+        end
+        subgraph Upstream["上游提供商"]
+            ds["DeepSeek Provider"]
+            ant["Anthropic Provider"]
+            oai["OpenAI Provider"]
+        end
     end
 
     client -- POST /responses --> mb
@@ -412,7 +429,7 @@ flowchart LR
 定义 Provider 时可指定 `protocol` 字段：
 
 - `"anthropic"`（默认）：请求经 Bridge 协议转换后以 Anthropic Messages 格式发送到上游
-- `"openai"`：请求**不经过 Bridge 转换**，以原始 OpenAI Responses 格式直接透传代理到上游
+- `"openai-response"`：请求**不经过 Bridge 转换**，以原始 OpenAI Responses 格式直接透传代理到上游
 
 `openai-response` Provider 会创建一个与上游的直连 HTTP 代理，支持流式（SSE）和非流式响应。适用于：
 - 直接对接 OpenAI API（图像生成、TTS、嵌入等不需要 Anthropic 转换的请求）

@@ -293,7 +293,7 @@ type HookContext struct {
     ModelAlias  string              // 模型别名（如 "moonbridge"）
     SessionData map[string]any      // 跨请求会话数据，按插件名索引
     Reasoning   map[string]any      // OpenAI reasoning 配置
-    WebSearch   HookWebSearchInfo   // Web Search 配置
+    WebSearch   HookWebSearchInfo   // Web Search 配置（Mode / MaxUses / FirecrawlKey）
 }
 ```
 

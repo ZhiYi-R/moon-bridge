@@ -4,33 +4,48 @@
 
 ### 目录布局
 
-```
-internal/
-├── extension/         # 可插拔扩展（插件 + 工具集）
-│   ├── codex/         # Codex CLI 兼容性（编解码/目录/流适配）
-│   ├── deepseek_v4/   # DeepSeek V4 扩展插件
-│   ├── plugin/        # Plugin 接口定义 + 注册表 + 能力类型
-│   ├── pluginhooks/   # Plugin → bridge.PluginHooks 适配器
-│   ├── websearch/     # Web Search 核心（Tavily/Firecrawl 客户端 + 编排器）
-│   └── websearchinjected/  # 注入式 Web Search 插件
-├── foundation/        # 基础组件（无服务层依赖）
-│   ├── config/        # 配置加载/校验
-│   ├── logger/        # 缓冲日志系统
-│   ├── modelref/      # 模型引用解析
-│   ├── openai/        # 共享 OpenAI DTO
-│   └── session/       # 会话管理
-├── protocol/          # 协议层（依赖 foundation）
-│   ├── anthropic/     # Anthropic API 客户端 + 类型
-│   ├── bridge/        # OpenAI ↔ Anthropic 协议转换核心
-│   └── cache/         # 缓存规划引擎
-└── service/           # 服务层（组装各组件）
-    ├── app/           # 应用入口（RunServer）
-    ├── e2e/           # 端到端测试
-    ├── provider/      # 多提供商管理
-    ├── proxy/         # Capture 模式代理
-    ├── server/        # HTTP 服务器 + 请求处理
-    ├── stats/         # 用量统计
-    └── trace/         # 请求跟踪
+```mermaid
+flowchart LR
+  subgraph internal["internal/"]
+    direction LR
+    subgraph ext_c["extension/\n可插拔扩展"]
+        direction TB
+        ext_c1["codex/\nCodex 兼容性"]
+        ext_c2["deepseek_v4/\nDeepSeek V4 扩展"]
+        ext_c3["plugin/\nPlugin 接口+注册表"]
+        ext_c4["pluginhooks/\n适配器"]
+        ext_c5["websearch/\nWeb Search 核心"]
+        ext_c6["websearchinjected/\n注入式搜索插件"]
+        ext_c7["visual/\n视觉扩展"]
+    end
+
+    subgraph fnd_c["foundation/\n基础组件"]
+        direction TB
+        fnd_c1["config/\n配置加载/校验"]
+        fnd_c2["logger/\n缓冲日志"]
+        fnd_c3["modelref/\n模型引用解析"]
+        fnd_c4["openai/\n共享 DTO"]
+        fnd_c5["session/\n会话管理"]
+    end
+
+    subgraph proto_c["protocol/\n协议层"]
+        direction TB
+        proto_c1["anthropic/\nAnthropic 客户端"]
+        proto_c2["bridge/\n协议转换核心"]
+        proto_c3["cache/\n缓存规划引擎"]
+    end
+
+    subgraph svc_c["service/\n服务层"]
+        direction TB
+        svc_c1["app/\n应用入口"]
+        svc_c2["e2e/\n端到端测试"]
+        svc_c3["provider/\n多提供商管理"]
+        svc_c4["proxy/\n代理模式"]
+        svc_c5["server/\nHTTP 服务器"]
+        svc_c6["stats/\n用量统计"]
+        svc_c7["trace/\n请求跟踪"]
+    end
+  end
 ```
 
 ### 依赖方向

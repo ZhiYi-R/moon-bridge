@@ -207,7 +207,7 @@ provider:
 | `catalog.go` | 模型目录 DTO 生成、Codex config.toml 生成 |
 | `convert.go` | Codex 特有 tool 类型转换（local_shell/custom/namespace） |
 | `input.go` | 输入项类型定义和转换（InputItemConversion） |
-| `output_item.go` / `response.go` | 输出项转换（tool_use → OutputItem） |
+| `response.go` | 输出项转换（tool_use → OutputItem） |
 | `tools.go` | 工具编解码（apply_patch、exec、custom tool 的输入输出代理） |
 | `tool_context.go` | 转换上下文（CustomToolSpec、FunctionToolSpec） |
 | `stream_adapter.go` | 流式适配器（管理流状态中的自定义工具、Web Search） |
@@ -231,3 +231,71 @@ type ConversionContext struct {
     FunctionTools map[string]FunctionToolSpec  // 命名空间函数规格
 }
 ```
+
+---
+
+## visual（视觉扩展）
+
+
+当主模型本身不具备多模态视觉能力时，Moon Bridge 可以将图片分析任务委派给一个专门的视觉 Provider。`visual` 扩展是一个 `ProviderWrapper`，它在主模型的对话中注入 `visual_brief` 和 `visual_qa` 两个工具，在主模型调用这些工具时，自动将图片发往视觉 Provider 分析并返回结果。
+
+**位置**：`internal/extension/visual/`
+
+**文件清单**：
+
+| 文件 | 用途 |
+|------|------|
+| `plugin.go` | Plugin 实现，注入 `visual_brief` / `visual_qa` 工具 |
+| `orchestrator.go` | 视觉编排器，拦截视觉工具调用并委派给视觉 Provider |
+| `client.go` | 视觉客户端接口及 BridgeClient 实现，通过 Anthropic 协议发送图片请求 |
+| `tools.go` | 工具定义和 schema 生成 |
+
+**实现的能力**：
+
+```go
+var (
+    _ plugin.Plugin       = (*Plugin)(nil)
+    _ plugin.ToolInjector = (*Plugin)(nil)
+)
+```
+
+### 工作流程
+
+1. 请求到达 Server，Visual orchestrator 包装上游 Provider
+2. Orchestrator 扫描请求消息中的 Anthropic image block，将其替换为 `Image #1`、`Image #2` 等文本占位符
+3. 主模型处理请求，可选择调用 `visual_brief` / `visual_qa` 工具
+4. Orchestrator 拦截工具调用：
+   - 提取工具参数中的 `image_refs` 和 `image_urls`
+   - 从之前保存的 `availableImages` 中匹配对应图片
+   - 通过 `VisionClient.Analyze()` 发送给视觉 Provider
+   - 视觉 Provider 返回分析结果
+5. 将分析结果作为 `tool_result` 返回给主模型
+6. 主模型可以使用分析结果继续推理，或再次调用 `visual_qa` 做进一步追问
+
+### 视觉 Provider
+
+视觉分析通过 `VisionClient` 接口执行。内置的 `BridgeClient` 实现使用一个独立的 Anthropic 兼容 Provider 来发送图片分析请求，这意味着你可以用任意支持多模态的 Provider（如 Kimi、GPT-4o 等）作为视觉后端。
+
+```go
+type VisionClient interface {
+    Analyze(context.Context, AnalysisRequest) (string, error)
+}
+```
+
+### 配置
+
+```yaml
+provider:
+  visual:
+    enabled: true
+    provider: "visual-backend"
+    model: "kimi-vision-model"
+    max_tokens: 4096
+  providers:
+    my-model:
+      visual: true
+```
+
+### 与 Provider 的交互
+
+Visual orchestrator 包装上游 Anthropic Provider，与 `web_search_injected` 的包装模式相同。在 server 层通过 `resolveProvider()` → `maybeWrapProvider()` 来组合多个 orchestrator 包装器。
