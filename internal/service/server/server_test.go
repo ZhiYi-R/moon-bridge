@@ -819,3 +819,82 @@ func TestOpenAIResponsePassthroughDoesNotDuplicateWebSearch(t *testing.T) {
 		t.Fatalf("upstream request tools = %+v, expected exactly 1 web_search, got %d", upstreamBody.Tools, count)
 	}
 }
+
+func TestAuthWithNoTokenConfiguredPassesAllRequests(t *testing.T) {
+	handler := server.New(server.Config{
+		Bridge: bridge.New(config.Config{
+			Cache: config.CacheConfig{Mode: "off"},
+		}, cache.NewMemoryRegistry(), bridge.PluginHooks{}),
+		Provider: &fakeProvider{},
+	})
+
+	for name, req := range map[string]*http.Request{
+		"no header":        httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)),
+		"valid token":      addAuth(httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)), "Bearer valid-token"),
+		"invalid token":    addAuth(httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)), "Bearer wrong"),
+		"wrong scheme":     addAuth(httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)), "Basic dXNlcjpwYXNz"),
+		"malformed header": addAuth(httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)), "NotBearer"),
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusOK {
+			t.Errorf("%s: status = %d, want 200, body = %s", name, recorder.Code, recorder.Body.String())
+		}
+	}
+}
+
+func TestAuthRejectsRequestsWithoutValidToken(t *testing.T) {
+	handler := server.New(server.Config{
+		Bridge: bridge.New(config.Config{
+			Cache: config.CacheConfig{Mode: "off"},
+		}, cache.NewMemoryRegistry(), bridge.PluginHooks{}),
+		Provider:  &fakeProvider{},
+		AppConfig: config.Config{AuthToken: "my-secret"},
+	})
+
+	for name, req := range map[string]*http.Request{
+		"no header":        httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)),
+		"wrong token":      addAuth(httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)), "Bearer wrong-token"),
+		"wrong scheme":     addAuth(httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)), "Basic dXNlcjpwYXNz"),
+		"malformed header": addAuth(httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`)), "NotBearer"),
+	} {
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, req)
+		if recorder.Code != http.StatusUnauthorized {
+			t.Errorf("%s: status = %d, want 401, body = %s", name, recorder.Code, recorder.Body.String())
+		}
+		var resp openai.ErrorResponse
+		if err := json.NewDecoder(recorder.Body).Decode(&resp); err != nil {
+			t.Fatalf("%s: decode error response: %v", name, err)
+		}
+		if resp.Error.Code != "invalid_auth" {
+			t.Errorf("%s: error code = %q, want invalid_auth", name, resp.Error.Code)
+		}
+	}
+}
+
+func TestAuthAcceptsValidBearerToken(t *testing.T) {
+	handler := server.New(server.Config{
+		Bridge: bridge.New(config.Config{
+			AuthToken:        "my-secret",
+			DefaultMaxTokens: 1024,
+			Routes:           map[string]config.RouteEntry{"gpt-test": {Provider: "default", Model: "claude-test"}},
+			Cache:            config.CacheConfig{Mode: "off"},
+		}, cache.NewMemoryRegistry(), bridge.PluginHooks{}),
+		Provider: &fakeProvider{},
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", bytes.NewBufferString(`{"model":"gpt-test","input":"hi"}`))
+	req.Header.Set("Authorization", "Bearer my-secret")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func addAuth(req *http.Request, value string) *http.Request {
+	req.Header.Set("Authorization", value)
+	return req
+}
