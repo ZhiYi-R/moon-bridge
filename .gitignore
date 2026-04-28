@@ -43,4 +43,7 @@ docker-compose.yml
 
 # config schema dumps
 *.schema.json
-/plugins/deepseek_v4.yml
+# user plugin configs
+/plugins/*.yml
+/plugins/*.yaml
+!/plugins/*.example.*
