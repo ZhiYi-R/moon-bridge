@@ -3,9 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "go run github.com/syumai/workers/cmd/workers-assets-gen -mode=go && CGO_ENABLED=0 GOOS=js GOARCH=wasm go build -o ./build/app.wasm ./cmd/cloudflare",
+    "build": "go run github.com/syumai/workers/cmd/workers-assets-gen && tinygo build -o ./build/app.wasm -target wasm ./cmd/cloudflare",
     "deploy": "wrangler deploy",
-    "dev": "wrangler dev"
+    "dev": "wrangler dev",
+    "start": "wrangler dev"
   },
   "devDependencies": {
     "wrangler": "^4.86.0"
