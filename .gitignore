@@ -48,3 +48,7 @@ docker-compose.yml
 /plugins/*.yml
 /plugins/*.yaml
 !/plugins/*.example.*
+
+# npm
+node_modules/
+build/
