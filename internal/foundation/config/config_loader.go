@@ -24,7 +24,8 @@ type FileConfig struct {
 }
 
 type ServerFileConfig struct {
-	Addr string `yaml:"addr" json:"addr,omitempty"`
+	Addr      string `yaml:"addr" json:"addr,omitempty"`
+	AuthToken string `yaml:"auth_token" json:"auth_token,omitempty"`
 }
 
 type ProviderFileConfig struct {
@@ -292,6 +293,7 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 	cfg := Config{
 		Mode:              mode,
 		Addr:              valueOrDefault(strings.TrimSpace(fileConfig.Server.Addr), DefaultAddr),
+		AuthToken:          strings.TrimSpace(fileConfig.Server.AuthToken),
 		TraceRequests:     fileConfig.TraceRequests,
 		LogLevel:          valueOrDefault(strings.TrimSpace(fileConfig.Log.Level), "info"),
 		LogFormat:         valueOrDefault(strings.TrimSpace(fileConfig.Log.Format), "text"),

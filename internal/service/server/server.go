@@ -85,6 +85,18 @@ func New(cfg Config) *Server {
 }
 
 func (server *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
+	if token := server.appConfig.AuthToken; token != "" {
+		if !checkAuth(request, token) {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(writer).Encode(openai.ErrorResponse{Error: openai.ErrorObject{
+				Message: "未提供有效的认证令牌，请在 Authorization header 中使用 Bearer 方案",
+				Type:    "authentication_error",
+				Code:    "invalid_auth",
+			}})
+			return
+		}
+	}
 	server.mux.ServeHTTP(writer, request)
 }
 
@@ -798,4 +810,11 @@ func InjectWebSearchTool(tools []openai.Tool) []openai.Tool {
 		tools = make([]openai.Tool, 0, 1)
 	}
 	return append(tools, openai.Tool{Type: "web_search"})
+}
+func checkAuth(r *http.Request, expectedToken string) bool {
+	auth := r.Header.Get("Authorization")
+	if !strings.HasPrefix(auth, "Bearer ") {
+		return false
+	}
+	return strings.TrimSpace(auth[7:]) == expectedToken
 }
