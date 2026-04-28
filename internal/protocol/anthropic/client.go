@@ -141,6 +141,11 @@ func (client *Client) ProbeWebSearch(ctx context.Context, model string) (bool, e
 		if IsUnsupportedWebSearchError(err) {
 			return false, nil
 		}
+		// Context deadline exceeded means the provider didn't respond in time.
+		// Treat as unsupported so the caller disables web search gracefully.
+		if errors.Is(err, context.DeadlineExceeded) {
+			return false, nil
+		}
 		return false, err
 	}
 	defer stream.Close()
@@ -150,6 +155,11 @@ func (client *Client) ProbeWebSearch(ctx context.Context, model string) (bool, e
 			return true, nil
 		}
 		if err != nil {
+			// Context deadline exceeded during streaming means the probe
+			// couldn't complete; treat as unsupported.
+			if errors.Is(err, context.DeadlineExceeded) {
+				return false, nil
+			}
 			return false, err
 		}
 		if event.Type == "error" && event.Error != nil {

@@ -328,7 +328,7 @@ func probeProviderWebSearch(ctx context.Context, key string, pm *provider.Provid
 		return "disabled"
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
 	if err != nil {
@@ -352,7 +352,7 @@ func probeModelWebSearch(ctx context.Context, modelAlias string, pm *provider.Pr
 		logger.Warn("网页搜索模型探测跳过：客户端不可用", "model", modelAlias, "error", err)
 		return "disabled"
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
 	if err != nil {
