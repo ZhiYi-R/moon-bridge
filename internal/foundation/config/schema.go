@@ -41,6 +41,7 @@ func DumpConfigSchema(configPath string, extraPlugins map[string]func() any) err
 	if err := writeSchemaIfStale(mainSchemaPath, mainSchema); err != nil {
 		return fmt.Errorf("write schema %s: %w", mainSchemaPath, err)
 	}
+	ensureSchemaRef(configPath, DefaultMainSchemaName)
 
 	// Merge built-in and externally-provided plugin types.
 	allTypes := make(map[string]func() any, len(pluginConfigTypes)+len(extraPlugins))
@@ -77,6 +78,7 @@ func DumpConfigSchema(configPath string, extraPlugins map[string]func() any) err
 		if err := writeSchemaIfStale(schemaPath, data); err != nil {
 			return fmt.Errorf("write plugin schema %s: %w", schemaPath, err)
 		}
+		ensureSchemaRef(filepath.Join(pluginDir, entry.Name()), base+".schema.json")
 	}
 	return nil
 }
@@ -131,6 +133,31 @@ func DecodePluginConfig(name string, raw map[string]any) any {
 	data, _ := json.Marshal(raw)
 	json.Unmarshal(data, typed)
 	return typed
+}
+
+// ensureSchemaRef ensures the YAML config file at configPath has a
+// # yaml-language-server: $schema= line pointing to the schema file
+// in the same directory. If the line is missing or outdated it is
+// added or updated; if already correct nothing is written.
+func ensureSchemaRef(configPath, schemaName string) {
+	raw, err := os.ReadFile(configPath)
+	if err != nil {
+		return
+	}
+	lines := strings.SplitN(string(raw), "\n", 2)
+	refLine := "# yaml-language-server: $schema=./" + schemaName
+	if len(lines) > 0 && strings.Contains(lines[0], "yaml-language-server: $schema=") {
+		if lines[0] == refLine {
+			return
+		}
+		rest := ""
+		if len(lines) > 1 {
+			rest = lines[1]
+		}
+		os.WriteFile(configPath, []byte(refLine+"\n"+rest), 0644)
+		return
+	}
+	os.WriteFile(configPath, []byte(refLine+"\n"+string(raw)), 0644)
 }
 
 func writeSchemaIfStale(path string, data []byte) error {
