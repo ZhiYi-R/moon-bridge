@@ -91,6 +91,20 @@ type BasePlugin struct{}  // 提供所有方法的 no-op 默认实现
 |------|------|----------|
 | `LogConsumer` | `ConsumeLog(ctx, entries) []LogEntry` | 日志刷新时 |
 
+#### 请求完成与 HTTP 路由
+
+| 接口 | 方法 | 作用时机 |
+|------|------|----------|
+| `RequestCompletionHook` | `OnRequestCompleted(ctx, result)` | 每次请求完成后，接收模型、token、费用、状态和耗时 |
+| `RouteRegistrar` | `RegisterRoutes(register)` | Server 初始化时注册额外 HTTP handler |
+
+#### 持久化
+
+| 接口 | 方法 | 作用时机 |
+|------|------|----------|
+| `DBProvider` | `DBProvider() db.Provider` | 声明数据库后端，如 SQLite 或 D1 |
+| `DBConsumer` | `DBConsumer() db.Consumer` | 声明需要数据库的消费者，如 metrics |
+
 ## 注册表（Registry）
 
 `plugin.Registry` 管理所有注册的插件，按能力类型分类存储。
@@ -102,6 +116,10 @@ type Registry struct {
     inputPreprocessors []InputPreprocessor
     requestMutators    []RequestMutator
     toolInjectors      []ToolInjector
+    dbProviders        []DBProvider
+    dbConsumers        []DBConsumer
+    requestCompletionHooks []RequestCompletionHook
+    routeRegistrars    []RouteRegistrar
     // ... 其他能力列表
 }
 ```
@@ -114,6 +132,11 @@ registry := plugin.NewRegistry(logger.L())
 
 // 2. 注册插件（自动检测能力和配置规格）
 registry.Register(deepseekv4.NewPlugin())
+registry.Register(visual.NewPlugin())
+
+// dev 分支开发中的持久化/观测插件：
+registry.Register(dbsqlite.NewPlugin())
+registry.Register(metrics.NewPlugin())
 
 // 3. 初始化（传递 AppConfig 和 typed extension 配置）
 registry.InitAll(&cfg)  // cfg.ExtensionConfig("deepseek_v4", "") → *deepseekv4.Config
@@ -159,6 +182,17 @@ flowchart LR
     SafeHooks -->|注入| Bridge(*bridge.Bridge)
     Bridge -->|ToAnthropic/FromAnthropic| PluginHooksFunctions(调用各个 hook 函数)
 ```
+
+## 与 Server 和持久化的集成
+
+并非所有能力都经过 `bridge.PluginHooks`。Server 层会直接使用这些插件能力：
+
+- `LogConsumer`：通过 `logger.SetConsumeFunc()` 接入日志缓冲。
+- `DBProvider` / `DBConsumer`：dev 分支开发中的持久化能力，由 `db.Registry` 初始化数据库并绑定消费者。
+- `RequestCompletionHook`：请求完成后由 `server.onRequestCompleted()` 触发，成功和失败都会记录；当前主要用于 dev 分支的 metrics。
+- `RouteRegistrar`：由 `server.registerPluginRoutes()` 挂到 `http.ServeMux`；dev 分支的 metrics 会用它注册 `GET /v1/admin/metrics`。
+
+内置扩展目录里还有 `websearchinjected` 辅助模块。它有插件接口实现，主要用于测试和模块边界；当前运行路径中注入式搜索由 bridge/server 根据模型 resolved web search mode 直接调用 `websearch` / `websearchinjected` 的工具和 Provider 包装函数，不在 `BuiltinExtensions()` 中注册。
 
 ## 配置方式
 

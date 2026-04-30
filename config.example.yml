@@ -32,7 +32,7 @@ extensions:
 provider:
   providers:
     deepseek:
-      base_url: "https://api.deepseek.com"
+      base_url: "https://api.deepseek.com/anthropic"
       api_key: "replace-with-deepseek-api-key"
       version: "2023-06-01"
       user_agent: "moonbridge/1.0"
@@ -65,7 +65,10 @@ provider:
             cache_write_price: 1
             cache_read_price: 0.2
     kimi:
-      base_url: "https://api.moonshot.cn/anthropic"
+      # Anthropic-compatible base URL. Moon Bridge appends /v1/messages.
+      # If your Moonshot/Kimi account uses a regional domain, keep the
+      # Anthropic base shape so the final path is /anthropic/v1/messages.
+      base_url: "https://api.moonshot.ai/anthropic"
       api_key: "replace-with-kimi-api-key"
       version: "2023-06-01"
       user_agent: "moonbridge/1.0"

@@ -30,7 +30,7 @@ block-beta
     columns 2
     plugin["plugin\nPlugin 接口+注册表"] pluginhooks["pluginhooks\n适配器"]
     codex["codex\nCodex 兼容性"] space3[" "]
-    ext_row1["deepseek_v4 / websearch"] ext_row2["websearchinjected / visual"]
+    ext_row1["deepseek_v4 / visual"] ext_row2["db_sqlite / db_d1 / metrics"]
   end
 end
 ```
@@ -62,7 +62,7 @@ end
 
 应用服务层，组装各组件并对外提供服务：
 
-- **`internal/service/server`**：HTTP 服务器。处理 `/v1/responses`（POST）和 `/v1/models`（GET）。负责请求路由（判断模型走 Anthropic 转换还是 OpenAI 直通）、会话管理、流式 SSE 输出、用量统计、请求跟踪。
+- **`internal/service/server`**：HTTP 服务器。处理 `/v1/responses` / `/responses`（POST）和 `/v1/models` / `/models`（GET），并允许插件注册额外路由。负责本地 Bearer token 认证、请求路由（判断模型走 Anthropic 转换还是 OpenAI 直通）、会话管理、流式 SSE 输出、用量统计、请求跟踪。
 - **`internal/service/provider`**：多提供商管理。`ProviderManager` 维护多个 `anthropic.Client` 实例，按模型别名路由到对应提供商，支持协议自动发现和 Web Search 模式探测。
 - **`internal/service/proxy`**：Capture 模式下的直通代理。`AnthropicServer` / `ResponseServer` 简单转发 HTTP 请求/响应（可选跟踪）。
 - **`internal/service/stats`**：会话用量统计。累计 token 和费用、支持按模型细分、缓存命中率计算、格式化输出。
@@ -77,7 +77,9 @@ end
 - **`internal/extension/codex`**：Codex CLI 兼容性工具包。包含模型目录 DTO 生成、工具编解码（custom tool / apply_patch / exec / local_shell 的输入输出转换）、流适配器、默认指令模板。
 - **`internal/extension/deepseek_v4`**：DeepSeek V4 扩展（详见 [Extension 一览](extensions-overview.md)）。
 - **`internal/extension/websearch`**：Web Search 核心模块。Tavily 搜索客户端、Firecrawl 抓取客户端、搜索编排器（`Orchestrator`）、工具定义生成。
-- **`internal/extension/websearchinjected`**："注入式" Web Search 模式扩展，将 `tavily_search` 和 `firecrawl_fetch` 作为 function-type tool 注入到 Anthropic 请求中。
+- **`internal/extension/websearchinjected`**："注入式" Web Search 辅助模块，将 `tavily_search` 和 `firecrawl_fetch` 作为 function-type tool 注入到 Anthropic 请求中，并提供 Provider 包装器；当前由 server/bridge 按 resolved web search mode 直接调用，不在 `BuiltinExtensions()` 中注册为独立插件。
+- **`internal/extension/db/sqlite` / `internal/extension/db/d1`**：开发中的持久化 Provider 扩展。SQLite 用于本地进程，D1 通过 Worker 入口注入 `*sql.DB`。
+- **`internal/extension/metrics`**：开发中的请求指标扩展。实现 DBConsumer、RequestCompletionHook 和 RouteRegistrar，持久化每次请求结果并注册 `GET /v1/admin/metrics`。
 
 ## 三种运行模式
 
@@ -288,7 +290,10 @@ Provider 扩展模块。当前包含：
 
 - `deepseek_v4`：按 `extensions.deepseek_v4.enabled: true` 启用，处理 reasoning_content 剥离、thinking 回放、流式 thinking 跟踪等 DeepSeek 特有行为；推理强度使用标准 `reasoning.effort`，其中 `xhigh` 会写入 DeepSeek `output_config.effort=max`。signature-only thinking 会编码进 Codex 可回放的 `reasoning.summary`；旧历史缺失 reasoning/缓存时，仅在请求侧补空 `thinking` block 兜底，不生成空 summary。
 - `visual`：按 `extensions.visual.enabled: true` 启用，向主模型注入 `visual_brief` / `visual_qa`，并通过 `extensions.visual.config.provider` 指向的现有 Anthropic provider 执行视觉分析。
-- `websearch` / `websearchinjected`：当 web search 配置为 `injected` 时，向模型注入 `tavily_search` / `firecrawl_fetch` 工具，并在服务端执行搜索循环。
+- `db/sqlite`：dev 分支开发中的 SQLite store provider，按 `extensions.db_sqlite.enabled` 和 `config.path` 启用。
+- `db/d1`：dev 分支开发中的 Cloudflare Worker 持久化 provider，必须由 Worker 入口注入 D1 `*sql.DB`。
+- `metrics`：dev 分支开发中的 DBConsumer，记录请求模型、实际模型、token、费用、状态和耗时，并在 store 可用时注册 `GET /v1/admin/metrics`。
+- `websearch` / `websearchinjected`：当 web search 配置为 `injected` 时，向模型注入 `tavily_search` / `firecrawl_fetch` 工具，并在服务端执行搜索循环。它们是扩展目录下的功能模块，但当前不作为内置 Registry 插件初始化。
 
 其他 Provider 特有逻辑可直接在此目录下新增子包。
 
@@ -323,7 +328,7 @@ session 级 token 和费用统计。
 
 ### 协议兼容性
 
-- 支持 `/responses` 和 `/v1/responses` 两个路径，兼容 Codex CLI 的不同路由约定。
+- 支持 `/responses` 和 `/v1/responses` 两个请求路径，以及 `/models` 和 `/v1/models` 两个模型目录路径，兼容 Codex CLI 的不同路由约定。
 - `/v1/models` 响应使用 Codex `ModelsResponse` 格式（`{"models": [...]}`）而非标准 OpenAI `{"object":"list","data":[...]}`，因为 Codex 的 `codex-api` crate 反序列化时期望 `models` 字段。
 - Codex 在使用 `requires_openai_auth`、`env_key` 或 `experimental_bearer_token` 认证时不会主动拉取 `/models` 端点（`should_refresh_models` 返回 `false`）。因此 `--print-codex-config --codex-home` 会同时生成 `models_catalog.json` 并在 config.toml 中输出 `model_catalog_json` 指向该文件，让 Codex 在启动时直接加载静态 catalog。
 - `usage.input_tokens_details.cached_tokens` 即使为 0 也序列化输出，避免 Codex 压缩上下文时解析失败。
@@ -365,7 +370,7 @@ Anthropic Messages API 要求轮次内 `tool_use` block 不能跨消息分割。
   1. `ProviderManager.ClientFor(modelAlias)` — 按 model alias 精确路由
   2. `ClientForKey(providerKey)` — 按 Bridge.ProviderFor 返回的 key 路由
   3. 遍历任意可用 Provider — 最后兜底
-- `handleOpenAIResponse()` 在 `Bridge.ProviderFor` 返回空时调用 `ProviderKeyForModel()` 二次解析路由 key
+- `handleOpenAIResponse()` 使用请求解析阶段得到的 provider key，从 ProviderManager 读取 `base_url` / `api_key`，并将上游 URL 规范化到 `/v1/responses` 或已有 `/responses` 后缀
 - `app.resolveDefaultClient()` 安全处理无 default provider 场景：defaultKey 为空或 client 不可用时返回 nil，下游 web search probing 和 fallback Provider 包装条件性跳过
 - 启动时 `resolvePerProviderWebSearch()` 分两步解析：先按 provider 解析默认值，再按 route 解析模型级别覆盖，结果存入 `ProviderManager.resolvedWS`
 - 请求时 `maybeWrapInjectedSearch()` / `maybeWrapVisual()` 按模型别名包装 injected web search / Visual，`resolveRequestOptions()` 按模型别名解析 web search 配置并传递给 `Bridge.ToAnthropic()`

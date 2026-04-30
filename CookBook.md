@@ -67,7 +67,7 @@ server:
 provider:
   providers:
     deepseek:
-      base_url: "https://api.deepseek.com"
+      base_url: "https://api.deepseek.com/anthropic"
       api_key: "sk-你的DeepSeek密钥"
       models:
         deepseek-chat:
@@ -216,7 +216,7 @@ extensions:
 provider:
   providers:
     deepseek:
-      base_url: "https://api.deepseek.com"
+      base_url: "https://api.deepseek.com/anthropic"
       api_key: "sk-你的密钥"
       models:
         deepseek-v4-pro:
@@ -253,7 +253,7 @@ provider:
 
 **食材：**
 - 菜谱 1 已跑通
-- 一个支持 Anthropic 的视觉模型 Provider（如 Kimi `api.moonshot.cn`）
+- 一个支持 Anthropic Messages 格式的视觉模型 Provider（如 Kimi `https://api.moonshot.ai/anthropic`；若你的账号仍使用 `.cn` 区域端点，请替换成对应 Anthropic-compatible base URL）
 - 两个 API Key：主模型 + 视觉模型
 
 **步骤：**
@@ -270,7 +270,7 @@ extensions:
 provider:
   providers:
     deepseek:
-      base_url: "https://api.deepseek.com"
+      base_url: "https://api.deepseek.com/anthropic"
       api_key: "sk-你的DeepSeek密钥"
       models:
         deepseek-v4-pro:
@@ -282,7 +282,7 @@ provider:
               enabled: true
 
     kimi:
-      base_url: "https://api.moonshot.cn/anthropic"
+      base_url: "https://api.moonshot.ai/anthropic"
       api_key: "sk-你的Kimi密钥"
       models:
         kimi-for-coding:
@@ -317,7 +317,7 @@ provider:
 
   providers:
     deepseek:
-      base_url: "https://api.deepseek.com"
+      base_url: "https://api.deepseek.com/anthropic"
       api_key: "sk-你的密钥"
       models:
         deepseek-chat:

@@ -74,7 +74,7 @@ provider:
             visual:
               enabled: true
     kimi:
-      base_url: "https://api.moonshot.cn/anthropic"
+      base_url: "https://api.moonshot.ai/anthropic"
       api_key: "replace-with-kimi-api-key"
       models:
         kimi-for-coding: {}

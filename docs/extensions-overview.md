@@ -114,11 +114,13 @@ provider:
 
 ---
 
-## web_search_injected（注入式 Web Search 扩展）
+## web_search_injected（注入式 Web Search 模块）
 
 当上游提供商不支持 Anthropic 原生 `web_search_20250305` server tool 时，Moon Bridge 可以改用"注入式"模式——将 `tavily_search` 和 `firecrawl_fetch` 作为 function-type tool 注入请求，由服务端自动执行搜索。
 
 **位置**：`internal/extension/websearchinjected/`
+
+当前运行路径中，它不是 `BuiltinExtensions()` 注册的独立内置插件；bridge/server 会根据模型 resolved web search mode 直接调用该模块的 `InjectTools()` 和 `WrapProvider()`。`plugin.go` 保留插件接口实现，主要用于模块边界和测试。
 
 **文件清单**：
 
@@ -142,10 +144,10 @@ var (
 ```
 1. Codex 请求中包含 web_search_preview tool
 2. Bridge 检查模型 Web Search 模式 → "injected"
-3. WSInjectedPlugin.InjectTools() 注入：
+3. Bridge 调用 `websearch.Tools()` / `websearchinjected.InjectTools()` 注入：
    - tavily_search（function tool）
    - firecrawl_fetch（function tool，如果配置了 Firecrawl key）
-4. WSInjectedPlugin.WrapProvider() 将上游 Client 包装为 Orchestrator
+4. Server 的 `maybeWrapProvider()` 在 resolved mode 为 `injected` 时调用 `websearchinjected.WrapProvider()` 将上游 Client 包装为 Orchestrator
 5. 请求发送后：
    a. 如果上游返回工具调用（tavily_search/firecrawl_fetch）
    b. Orchestrator 自动执行 Tavily 搜索或 Firecrawl 抓取
@@ -307,4 +309,90 @@ provider:
 
 ### 与 Provider 的交互
 
-Visual orchestrator 包装上游 Anthropic Provider，与 `web_search_injected` 的包装模式相同。在 server 层通过 `resolveProvider()` → `maybeWrapVisual()` 来组合视觉 orchestrator 包装器。
+Visual orchestrator 包装上游 Anthropic Provider，与注入式 Web Search 的包装模式相同。在 server 层通过 `resolveProvider()` → `maybeWrapProvider()` → `maybeWrapVisual()` 来组合视觉 orchestrator 包装器。
+
+---
+
+## 开发中：db_sqlite（SQLite 持久化 Provider）
+
+本地进程使用的数据库后端扩展。该能力来自 dev 分支的持久化工作，当前按开发中能力记录，不视为稳定公开接口。
+
+**位置**：`internal/extension/db/sqlite/`
+
+**实现的能力**：
+
+```go
+var (
+    _ plugin.Plugin             = (*Plugin)(nil)
+    _ plugin.ConfigSpecProvider = (*Plugin)(nil)
+    _ plugin.DBProvider         = (*Plugin)(nil)
+)
+```
+
+配置示例：
+
+```yaml
+extensions:
+  db_sqlite:
+    enabled: true
+    config:
+      path: ./data/moonbridge.db
+      wal: true
+      busy_timeout_ms: 5000
+      max_open_conns: 1
+```
+
+当 `path` 为空或 `enabled: false` 时不会提供数据库。默认启用 WAL，默认 busy timeout 为 5000 ms，默认最大连接数为 1。
+
+---
+
+## 开发中：db_d1（Cloudflare D1 持久化 Provider）
+
+Cloudflare Worker 环境使用的数据库后端扩展。该能力来自 dev 分支，依赖 Worker 入口注入数据库。
+
+**位置**：`internal/extension/db/d1/`
+
+D1 provider 不直接导入 Cloudflare Workers SDK，而是由 Worker 入口在初始化前调用 `InjectDB()` 注入 `*sql.DB`。普通本地进程里即使配置了 binding，也会因为没有注入数据库而保持不可用。
+
+配置示例：
+
+```yaml
+extensions:
+  db_d1:
+    enabled: true
+    config:
+      binding: MOONBRIDGE_DB
+```
+
+---
+
+## 开发中：metrics（请求指标扩展）
+
+记录每次请求的模型、实际上游模型、token、费用、状态、错误信息和耗时，并在数据库可用时提供查询接口。该能力来自 dev 分支的持久化/观测工作，当前不视为稳定公开接口。
+
+**位置**：`internal/extension/metrics/`
+
+**实现的能力**：
+
+```go
+var (
+    _ plugin.Plugin                = (*Plugin)(nil)
+    _ plugin.ConfigSpecProvider    = (*Plugin)(nil)
+    _ plugin.RequestCompletionHook = (*Plugin)(nil)
+    _ plugin.RouteRegistrar        = (*Plugin)(nil)
+    _ plugin.DBConsumer            = (*Plugin)(nil)
+)
+```
+
+配置示例：
+
+```yaml
+extensions:
+  metrics:
+    enabled: true
+    config:
+      default_limit: 100
+      max_limit: 1000
+```
+
+当 metrics 成功绑定数据库 store 后，会注册 `GET /v1/admin/metrics`。支持 `limit`、`offset`、`model`、`status`、`since`、`until`、`order=asc` 查询参数。
