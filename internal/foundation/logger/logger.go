@@ -9,7 +9,9 @@ import (
 	"time"
 )
 
-var defaultLogger *slog.Logger
+// defaultHandler is the root consumeHandler wrapping the configured text/json handler.
+// It is referenced by the slog.Default() logger after Init. SetConsumeFunc operates
+// on this handler, and all derived sub-loggers share the same consumeState.
 var defaultHandler *consumeHandler
 
 // LogEntry represents a single log entry passed through the consume pipeline.
@@ -22,11 +24,9 @@ type LogEntry struct {
 }
 
 func init() {
-	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
-	})
+	h := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo})
 	defaultHandler = newConsumeHandler(h)
-	defaultLogger = slog.New(defaultHandler)
+	slog.SetDefault(slog.New(defaultHandler))
 }
 
 // Level represents a log level.
@@ -62,9 +62,11 @@ type Config struct {
 	Output io.Writer
 }
 
-// Init initializes the default logger from config.
+// Init configures slog's default logger.
 // The inner handler is wrapped with a consumeHandler so that plugins
 // registered via SetConsumeFunc receive every log record.
+// After Init, all code using slog.Default() or logger.L() sees the
+// configured handler.
 func Init(cfg Config) error {
 	lvl, err := ParseLevel(string(cfg.Level))
 	if err != nil {
@@ -83,13 +85,14 @@ func Init(cfg Config) error {
 		inner = slog.NewTextHandler(out, opts)
 	}
 	defaultHandler = newConsumeHandler(inner)
-	defaultLogger = slog.New(defaultHandler)
+	slog.SetDefault(slog.New(defaultHandler))
 	return nil
 }
 
-// L returns the default logger.
+// L returns slog's default logger.
+// It is equivalent to slog.Default() and provided for convenience.
 func L() *slog.Logger {
-	return defaultLogger
+	return slog.Default()
 }
 
 // SetConsumeFunc registers a consume callback that is invoked for every
@@ -101,22 +104,22 @@ func SetConsumeFunc(fn ConsumeFunc) {
 	}
 }
 
-// Debug logs a debug message.
+// Debug logs at debug level via slog.Default().
 func Debug(msg string, args ...any) {
-	defaultLogger.Debug(msg, args...)
+	slog.Default().Debug(msg, args...)
 }
 
-// Info logs an info message.
+// Info logs at info level via slog.Default().
 func Info(msg string, args ...any) {
-	defaultLogger.Info(msg, args...)
+	slog.Default().Info(msg, args...)
 }
 
-// Warn logs a warning message.
+// Warn logs at warn level via slog.Default().
 func Warn(msg string, args ...any) {
-	defaultLogger.Warn(msg, args...)
+	slog.Default().Warn(msg, args...)
 }
 
-// Error logs an error message.
+// Error logs at error level via slog.Default().
 func Error(msg string, args ...any) {
-	defaultLogger.Error(msg, args...)
+	slog.Default().Error(msg, args...)
 }
