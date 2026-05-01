@@ -10,9 +10,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"log/slog"
 	"moonbridge/internal/extension/codex"
 	"moonbridge/internal/foundation/config"
-	"log/slog"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/service/app"
 )
