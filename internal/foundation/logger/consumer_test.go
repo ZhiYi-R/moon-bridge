@@ -2,6 +2,7 @@ package logger
 
 import (
 	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,7 @@ func TestConsumeHandler_SetConsumeFunc_AfterWithAttrs(t *testing.T) {
 	Init(Config{Level: LevelInfo, Format: "json", Output: &buf})
 
 	// Derive logger BEFORE setting consume func.
-	derived := L().With("plugin", "test-plugin")
+	derived := slog.With("plugin", "test-plugin")
 
 	var received []LogEntry
 	SetConsumeFunc(func(entries []LogEntry) []LogEntry {
@@ -53,7 +54,7 @@ func TestConsumeHandler_SetConsumeFunc_Suppress(t *testing.T) {
 		return nil // suppress
 	})
 
-	L().Info("should be suppressed")
+	slog.Info("should be suppressed")
 
 	if buf.Len() != 0 {
 		t.Fatalf("expected empty output after suppression, got: %s", buf.String())
@@ -69,7 +70,7 @@ func TestConsumeHandler_SetConsumeFunc_Modify(t *testing.T) {
 		return entries
 	})
 
-	L().Info("original")
+	slog.Info("original")
 
 	if !strings.Contains(buf.String(), "modified") {
 		t.Fatalf("expected modified message in output, got: %s", buf.String())
@@ -84,7 +85,7 @@ func TestConsumeHandler_NoFunc_FastPath(t *testing.T) {
 	Init(Config{Level: LevelInfo, Format: "json", Output: &buf})
 
 	// No SetConsumeFunc — should delegate directly.
-	L().Info("fast path")
+	slog.Info("fast path")
 
 	if !strings.Contains(buf.String(), "fast path") {
 		t.Fatalf("expected output, got: %s", buf.String())
@@ -95,7 +96,7 @@ func TestConsumeHandler_WithGroup_VisibleToConsumer(t *testing.T) {
 	var buf bytes.Buffer
 	Init(Config{Level: LevelInfo, Format: "json", Output: &buf})
 
-	derived := L().WithGroup("request").With("method", "GET")
+	derived := slog.Default().WithGroup("request").With("method", "GET")
 
 	var received []LogEntry
 	SetConsumeFunc(func(entries []LogEntry) []LogEntry {
