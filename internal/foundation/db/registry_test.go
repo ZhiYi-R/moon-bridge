@@ -3,9 +3,9 @@ package db_test
 import (
 	"context"
 	"database/sql"
+	"log/slog"
 
 	"errors"
-	"moonbridge/internal/foundation/logger"
 	"strings"
 	"testing"
 
