@@ -77,7 +77,7 @@ func newTable(name string) db.TableSpec {
 
 func TestBoundStoreTable(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", dialect: db.DialectSQLite, database: d})
 	c := &mockConsumer{name: "metrics", tables: []db.TableSpec{newTable("req")}}
 	r.RegisterConsumer(c)
@@ -105,7 +105,7 @@ func TestBoundStoreTable(t *testing.T) {
 
 func TestBoundStoreExecAndQuery(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", dialect: db.DialectSQLite, database: d})
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{
 		{Name: "items", Schema: `CREATE TABLE IF NOT EXISTS {{table}} (id INTEGER PRIMARY KEY, name TEXT)`},
@@ -140,7 +140,7 @@ func TestBoundStoreExecAndQuery(t *testing.T) {
 
 func TestBoundStoreWithTx(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", dialect: db.DialectSQLite, database: d})
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{
 		{Name: "items", Schema: `CREATE TABLE IF NOT EXISTS {{table}} (id INTEGER PRIMARY KEY, val TEXT)`},
@@ -296,14 +296,14 @@ func TestValidateTablesIndexMissingPlaceholder(t *testing.T) {
 // ======================
 
 func TestRegistryNoConsumersIsNoop(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	if err := r.Init(context.Background(), ""); err != nil {
 		t.Fatalf("Init error = %v", err)
 	}
 }
 
 func TestRegistryNoProviderDisablesConsumers(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{newTable("t")}}
 	r.RegisterConsumer(c)
 	if err := r.Init(context.Background(), ""); err != nil {
@@ -316,7 +316,7 @@ func TestRegistryNoProviderDisablesConsumers(t *testing.T) {
 
 func TestRegistrySingleProviderAutoSelect(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", dialect: db.DialectSQLite, database: d})
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{newTable("t")}}
 	r.RegisterConsumer(c)
@@ -334,7 +334,7 @@ func TestRegistrySingleProviderAutoSelect(t *testing.T) {
 
 func TestRegistrySingleProviderWrongActiveName(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", dialect: db.DialectSQLite, database: d})
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{newTable("t")}}
 	r.RegisterConsumer(c)
@@ -345,7 +345,7 @@ func TestRegistrySingleProviderWrongActiveName(t *testing.T) {
 }
 
 func TestRegistryMultipleProvidersNoActiveName(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "a"})
 	r.RegisterProvider(&mockProvider{name: "b"})
 	r.RegisterConsumer(&mockConsumer{name: "t", tables: []db.TableSpec{newTable("x")}})
@@ -357,7 +357,7 @@ func TestRegistryMultipleProvidersNoActiveName(t *testing.T) {
 }
 func TestRegistryMultipleProvidersWithActiveName(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "a"})
 	r.RegisterProvider(&mockProvider{name: "b", dialect: db.DialectSQLite, database: d})
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{newTable("t")}}
@@ -371,7 +371,7 @@ func TestRegistryMultipleProvidersWithActiveName(t *testing.T) {
 }
 
 func TestRegistryMultipleProvidersWrongActiveName(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "a"})
 	r.RegisterProvider(&mockProvider{name: "b"})
 	r.RegisterConsumer(&mockConsumer{name: "t", tables: []db.TableSpec{newTable("x")}})
@@ -382,7 +382,7 @@ func TestRegistryMultipleProvidersWrongActiveName(t *testing.T) {
 }
 
 func TestRegistryProviderOpenFails(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", openErr: errors.New("boom")})
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{newTable("t")}}
 	r.RegisterConsumer(c)
@@ -393,7 +393,7 @@ func TestRegistryProviderOpenFails(t *testing.T) {
 }
 
 func TestRegistryProviderPingFails(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", pingErr: errors.New("nope")})
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{newTable("t")}}
 	r.RegisterConsumer(c)
@@ -405,7 +405,7 @@ func TestRegistryProviderPingFails(t *testing.T) {
 
 func TestRegistryBadTableDisablesOnlyThatConsumer(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", dialect: db.DialectSQLite, database: d})
 	cBad := &mockConsumer{name: "bad", tables: []db.TableSpec{
 		{Name: "t", Schema: `INVALID SQL {{table}}`},
@@ -427,7 +427,7 @@ func TestRegistryBadTableDisablesOnlyThatConsumer(t *testing.T) {
 
 func TestRegistryBindStoreFailsDisablesOnlyThatConsumer(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", dialect: db.DialectSQLite, database: d})
 	cBad := &mockConsumer{name: "bad", tables: []db.TableSpec{newTable("t")}, bindErr: errors.New("nope")}
 	cGood := &mockConsumer{name: "good", tables: []db.TableSpec{newTable("t")}}
@@ -446,7 +446,7 @@ func TestRegistryBindStoreFailsDisablesOnlyThatConsumer(t *testing.T) {
 }
 
 func TestRegistryDisableAllCallsEveryConsumer(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	ch1 := make(chan error, 1)
 	ch2 := make(chan error, 1)
 	c1 := &mockConsumer{name: "a", tables: []db.TableSpec{newTable("t")}, disableCh: ch1}
@@ -469,7 +469,7 @@ func TestRegistryDisableAllCallsEveryConsumer(t *testing.T) {
 }
 
 func TestRegistryNilProviderSkipped(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(nil)
 	r.RegisterProvider(nil)
 	c := &mockConsumer{name: "test", tables: []db.TableSpec{newTable("t")}}
@@ -484,7 +484,7 @@ func TestRegistryNilProviderSkipped(t *testing.T) {
 
 func TestRegistryShutdown(t *testing.T) {
 	d := memoryDB(t)
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	r.RegisterProvider(&mockProvider{name: "p", dialect: db.DialectSQLite, database: d})
 	r.RegisterConsumer(&mockConsumer{name: "test", tables: []db.TableSpec{newTable("t")}})
 	if err := r.Init(context.Background(), ""); err != nil {
@@ -496,21 +496,21 @@ func TestRegistryShutdown(t *testing.T) {
 }
 
 func TestRegistryShutdownBeforeInit(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	if err := r.Shutdown(); err != nil {
 		t.Fatalf("Shutdown error = %v", err)
 	}
 }
 
 func TestActiveProviderNilBeforeInit(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	if r.ActiveProvider() != nil {
 		t.Fatal("expected nil")
 	}
 }
 
 func TestStoreForConsumerFalseBeforeInit(t *testing.T) {
-	r := db.NewRegistry(logger.L())
+	r := db.NewRegistry(slog.Default())
 	if _, ok := r.StoreForConsumer("x"); ok {
 		t.Fatal("expected false")
 	}

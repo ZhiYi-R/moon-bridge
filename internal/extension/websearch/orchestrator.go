@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"moonbridge/internal/foundation/logger"
+	"log/slog"
 	"moonbridge/internal/protocol/anthropic"
 )
 
@@ -91,7 +91,7 @@ func NewInjectedOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 // CreateMessage sends a request and transparently executes search/fetch
 // tool loops. The caller receives a fully resolved response.
 func (o *Orchestrator) CreateMessage(ctx context.Context, req anthropic.MessageRequest) (anthropic.MessageResponse, error) {
-	log := logger.L()
+	log := slog.Default()
 	for round := 0; round <= o.maxRounds; round++ {
 		resp, err := o.anthropic.CreateMessage(ctx, req)
 		if err != nil {
@@ -156,7 +156,7 @@ func (o *Orchestrator) CreateMessage(ctx context.Context, req anthropic.MessageR
 // StreamMessage implements streaming with search loop support.
 // All events are collected across rounds and returned as a single stream.
 func (o *Orchestrator) StreamMessage(ctx context.Context, req anthropic.MessageRequest) (anthropic.Stream, error) {
-	log := logger.L()
+	log := slog.Default()
 	var allEvents []anthropic.StreamEvent
 	for round := 0; round <= o.maxRounds; round++ {
 		stream, err := o.anthropic.StreamMessage(ctx, req)

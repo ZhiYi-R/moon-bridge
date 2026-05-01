@@ -65,8 +65,7 @@ type Config struct {
 // Init configures slog's default logger.
 // The inner handler is wrapped with a consumeHandler so that plugins
 // registered via SetConsumeFunc receive every log record.
-// After Init, all code using slog.Default() or logger.L() sees the
-// configured handler.
+// After Init, all code using slog.Default() sees the configured handler.
 func Init(cfg Config) error {
 	lvl, err := ParseLevel(string(cfg.Level))
 	if err != nil {
@@ -89,12 +88,6 @@ func Init(cfg Config) error {
 	return nil
 }
 
-// L returns slog's default logger.
-// It is equivalent to slog.Default() and provided for convenience.
-func L() *slog.Logger {
-	return slog.Default()
-}
-
 // SetConsumeFunc registers a consume callback that is invoked for every
 // log record before it is serialized. The callback receives a single-entry
 // LogEntry slice and may return it modified (or empty to suppress).
@@ -102,24 +95,4 @@ func SetConsumeFunc(fn ConsumeFunc) {
 	if defaultHandler != nil {
 		defaultHandler.SetConsumeFunc(fn)
 	}
-}
-
-// Debug logs at debug level via slog.Default().
-func Debug(msg string, args ...any) {
-	slog.Default().Debug(msg, args...)
-}
-
-// Info logs at info level via slog.Default().
-func Info(msg string, args ...any) {
-	slog.Default().Info(msg, args...)
-}
-
-// Warn logs at warn level via slog.Default().
-func Warn(msg string, args ...any) {
-	slog.Default().Warn(msg, args...)
-}
-
-// Error logs at error level via slog.Default().
-func Error(msg string, args ...any) {
-	slog.Default().Error(msg, args...)
 }

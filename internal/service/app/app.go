@@ -11,6 +11,7 @@ import (
 	"moonbridge/internal/extension/pluginhooks"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/db"
+	"log/slog"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/bridge"
@@ -35,13 +36,13 @@ func WelcomeMessage() string {
 func RunServer(ctx context.Context, cfg config.Config, errors io.Writer) error {
 	switch cfg.Mode {
 	case config.ModeTransform:
-		logger.Info("启动服务器", "mode", cfg.Mode, "addr", cfg.Addr)
+		slog.Info("启动服务器", "mode", cfg.Mode, "addr", cfg.Addr)
 		return runTransform(ctx, cfg, errors)
 	case config.ModeCaptureResponse:
-		logger.Info("启动服务器", "mode", cfg.Mode, "addr", cfg.Addr)
+		slog.Info("启动服务器", "mode", cfg.Mode, "addr", cfg.Addr)
 		return runCaptureResponse(ctx, cfg, errors)
 	case config.ModeCaptureAnthropic:
-		logger.Info("启动服务器", "mode", cfg.Mode, "addr", cfg.Addr)
+		slog.Info("启动服务器", "mode", cfg.Mode, "addr", cfg.Addr)
 		return runCaptureAnthropic(ctx, cfg, errors)
 	default:
 		return fmt.Errorf("unsupported mode %q", cfg.Mode)
@@ -117,7 +118,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	}
 
 	// Register plugins.
-	plugins := BuiltinExtensions().NewRegistry(logger.L(), cfg)
+	plugins := BuiltinExtensions().NewRegistry(slog.Default(), cfg)
 	if err := plugins.InitAll(&cfg); err != nil {
 		return fmt.Errorf("init plugins: %w", err)
 	}
@@ -129,7 +130,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	})
 
 	// Initialize persistence layer (db.Registry).
-	dbRegistry := db.NewRegistry(logger.L())
+	dbRegistry := db.NewRegistry(slog.Default())
 	for _, p := range plugins.DBProviders() {
 		if prov := p.DBProvider(); prov != nil {
 			dbRegistry.RegisterProvider(prov)
@@ -162,12 +163,12 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 // Returns nil when no default provider is configured (all models use explicit routing).
 func resolveDefaultClient(pm *provider.ProviderManager, errors io.Writer) *anthropic.Client {
 	if pm.DefaultKey() == "" {
-		logger.Warn("未配置默认提供商，跳过网页搜索探测和服务器回退")
+		slog.Warn("未配置默认提供商，跳过网页搜索探测和服务器回退")
 		return nil
 	}
 	client, err := pm.ClientForKey(pm.DefaultKey())
 	if err != nil {
-		logger.Warn("默认提供商客户端不可用", "error", err)
+		slog.Warn("默认提供商客户端不可用", "error", err)
 		return nil
 	}
 	return client
@@ -237,13 +238,13 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 			switch support {
 			case config.WebSearchSupportDisabled:
 				pm.SetResolvedWebSearch(key, "disabled")
-				logger.Info("配置禁用网页搜索", "provider", key)
+				slog.Info("配置禁用网页搜索", "provider", key)
 			case config.WebSearchSupportEnabled:
 				pm.SetResolvedWebSearch(key, "enabled")
-				logger.Info("配置强制启用网页搜索", "provider", key)
+				slog.Info("配置强制启用网页搜索", "provider", key)
 			case config.WebSearchSupportInjected:
 				pm.SetResolvedWebSearch(key, "injected")
-				logger.Info("网页搜索注入模式已启用", "provider", key)
+				slog.Info("网页搜索注入模式已启用", "provider", key)
 			default:
 				resolved := probeProviderWebSearch(ctx, key, pm, errors)
 				pm.SetResolvedWebSearch(key, resolved)
@@ -255,14 +256,14 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 			switch support {
 			case config.WebSearchSupportDisabled, config.WebSearchSupportInjected:
 				pm.SetResolvedWebSearch(key, "disabled")
-				logger.Info("响应端网页搜索已禁用", "provider", key, "protocol", protocol, "config", support)
+				slog.Info("响应端网页搜索已禁用", "provider", key, "protocol", protocol, "config", support)
 			default:
 				pm.SetResolvedWebSearch(key, "enabled")
-				logger.Info("已启用响应端网页搜索", "provider", key, "protocol", protocol)
+				slog.Info("已启用响应端网页搜索", "provider", key, "protocol", protocol)
 			}
 		default:
 			pm.SetResolvedWebSearch(key, "disabled")
-			logger.Info("跳过网页搜索：不支持的协议", "provider", key, "protocol", protocol)
+			slog.Info("跳过网页搜索：不支持的协议", "provider", key, "protocol", protocol)
 		}
 	}
 	// 2. Resolve model-level overrides for provider catalog slugs and route aliases.
@@ -298,27 +299,27 @@ func resolveModelWebSearch(ctx context.Context, alias string, modelWS config.Web
 		switch modelWS {
 		case config.WebSearchSupportDisabled, config.WebSearchSupportInjected:
 			pm.SetResolvedWebSearch(modelKey, "disabled")
-			logger.Info("模型禁用响应端网页搜索", "model", alias, "config", modelWS)
+			slog.Info("模型禁用响应端网页搜索", "model", alias, "config", modelWS)
 		default:
 			pm.SetResolvedWebSearch(modelKey, "enabled")
-			logger.Info("模型启用响应端网页搜索", "model", alias)
+			slog.Info("模型启用响应端网页搜索", "model", alias)
 		}
 		return
 	default:
 		pm.SetResolvedWebSearch(modelKey, "disabled")
-		logger.Info("跳过模型级网页搜索：不支持的协议", "model", alias, "protocol", protocol)
+		slog.Info("跳过模型级网页搜索：不支持的协议", "model", alias, "protocol", protocol)
 		return
 	}
 	switch modelWS {
 	case config.WebSearchSupportDisabled:
 		pm.SetResolvedWebSearch(modelKey, "disabled")
-		logger.Info("模型配置禁用网页搜索", "model", alias)
+		slog.Info("模型配置禁用网页搜索", "model", alias)
 	case config.WebSearchSupportEnabled:
 		pm.SetResolvedWebSearch(modelKey, "enabled")
-		logger.Info("模型配置强制启用网页搜索", "model", alias)
+		slog.Info("模型配置强制启用网页搜索", "model", alias)
 	case config.WebSearchSupportInjected:
 		pm.SetResolvedWebSearch(modelKey, "injected")
-		logger.Info("模型配置启用网页搜索注入模式", "model", alias)
+		slog.Info("模型配置启用网页搜索注入模式", "model", alias)
 	default:
 		// Auto: probe using this model's upstream name.
 		resolved := probeModelWebSearch(ctx, alias, pm, errors)
@@ -331,13 +332,13 @@ func resolveModelWebSearch(ctx context.Context, alias string, modelWS config.Web
 func probeProviderWebSearch(ctx context.Context, key string, pm *provider.ProviderManager, errors io.Writer) string {
 	client, err := pm.ClientForKey(key)
 	if err != nil {
-		logger.Warn("网页搜索探测跳过：客户端不可用", "provider", key, "error", err)
+		slog.Warn("网页搜索探测跳过：客户端不可用", "provider", key, "error", err)
 		return "disabled"
 	}
 
 	upstreamModel := pm.FirstUpstreamModelForKey(key)
 	if upstreamModel == "" {
-		logger.Warn("网页搜索自动探测跳过：无模型路由到提供商", "provider", key)
+		slog.Warn("网页搜索自动探测跳过：无模型路由到提供商", "provider", key)
 		return "disabled"
 	}
 
@@ -345,16 +346,16 @@ func probeProviderWebSearch(ctx context.Context, key string, pm *provider.Provid
 	defer cancel()
 	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
 	if err != nil {
-		logger.Warn("网页搜索自动探测失败", "provider", key, "error", err)
+		slog.Warn("网页搜索自动探测失败", "provider", key, "error", err)
 		fmt.Fprintf(errors, "网页搜索自动探测失败（提供商 %s）: %v\n", key, err)
 		return "disabled"
 	}
 	if !supported {
-		logger.Warn("提供商不支持网页搜索", "provider", key, "model", upstreamModel)
+		slog.Warn("提供商不支持网页搜索", "provider", key, "model", upstreamModel)
 		fmt.Fprintf(errors, "提供商 %s 不支持网页搜索\n", key)
 		return "disabled"
 	}
-	logger.Info("提供商支持网页搜索", "provider", key, "model", upstreamModel)
+	slog.Info("提供商支持网页搜索", "provider", key, "model", upstreamModel)
 	return "enabled"
 }
 
@@ -362,23 +363,23 @@ func probeProviderWebSearch(ctx context.Context, key string, pm *provider.Provid
 func probeModelWebSearch(ctx context.Context, modelAlias string, pm *provider.ProviderManager, errors io.Writer) string {
 	upstreamModel, client, err := pm.ClientFor(modelAlias)
 	if err != nil {
-		logger.Warn("网页搜索模型探测跳过：客户端不可用", "model", modelAlias, "error", err)
+		slog.Warn("网页搜索模型探测跳过：客户端不可用", "model", modelAlias, "error", err)
 		return "disabled"
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
 	if err != nil {
-		logger.Warn("网页搜索模型探测失败", "model", modelAlias, "error", err)
+		slog.Warn("网页搜索模型探测失败", "model", modelAlias, "error", err)
 		fmt.Fprintf(errors, "网页搜索模型探测失败（%s）: %v\n", modelAlias, err)
 		return "disabled"
 	}
 	if !supported {
-		logger.Warn("模型不支持网页搜索", "model", modelAlias)
+		slog.Warn("模型不支持网页搜索", "model", modelAlias)
 		fmt.Fprintf(errors, "模型 %s 不支持网页搜索\n", modelAlias)
 		return "disabled"
 	}
-	logger.Info("模型支持网页搜索", "model", modelAlias)
+	slog.Info("模型支持网页搜索", "model", modelAlias)
 	return "enabled"
 }
 
@@ -394,7 +395,7 @@ func runCaptureResponse(ctx context.Context, cfg config.Config, errors io.Writer
 	if err != nil {
 		return err
 	}
-	logger.Info("响应代理已初始化", "upstream", cfg.ResponseProxy.ProviderBaseURL)
+	slog.Info("响应代理已初始化", "upstream", cfg.ResponseProxy.ProviderBaseURL)
 	return runHTTPServer(ctx, cfg.Addr, handler, errors, nil)
 }
 
@@ -411,7 +412,7 @@ func runCaptureAnthropic(ctx context.Context, cfg config.Config, errors io.Write
 	if err != nil {
 		return err
 	}
-	logger.Info("Anthropic 代理已初始化", "upstream", cfg.AnthropicProxy.ProviderBaseURL)
+	slog.Info("Anthropic 代理已初始化", "upstream", cfg.AnthropicProxy.ProviderBaseURL)
 	return runHTTPServer(ctx, cfg.Addr, handler, errors, nil)
 }
 
@@ -420,7 +421,7 @@ func logTrace(errors io.Writer, label string, tracer *mbtrace.Tracer) {
 		fmt.Fprintf(errors, "%s 跟踪已禁用\n", label)
 		return
 	}
-	logger.Info("跟踪已启用", "label", label, "dir", tracer.Directory())
+	slog.Info("跟踪已启用", "label", label, "dir", tracer.Directory())
 	fmt.Fprintf(errors, "%s 跟踪已启用于 %s\n", label, tracer.Directory())
 }
 
@@ -452,7 +453,7 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 	errCh := make(chan error, 1)
 	go func() {
 		fmt.Fprintf(errors, "%s 监听于 %s\n", Name, addr)
-		logger.Info("HTTP 服务器监听中", "addr", addr)
+		slog.Info("HTTP 服务器监听中", "addr", addr)
 		errCh <- httpServer.ListenAndServe()
 	}()
 
@@ -460,7 +461,7 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 	case <-ctx.Done():
 		if sessionStats != nil {
 			summary := sessionStats.Summary()
-			logger.Info(stats.FormatSummaryLine(summary))
+			slog.Info(stats.FormatSummaryLine(summary))
 			fmt.Fprintln(errors)
 			stats.WriteSummary(errors, summary)
 		}
@@ -471,7 +472,7 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 		if err == http.ErrServerClosed {
 			return nil
 		}
-		logger.Error("HTTP 服务器错误", "error", err)
+		slog.Error("HTTP 服务器错误", "error", err)
 		return err
 	}
 }

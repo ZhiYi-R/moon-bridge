@@ -11,6 +11,7 @@ import (
 	"moonbridge/internal/extension/pluginhooks"
 	"moonbridge/internal/foundation/config"
 	"moonbridge/internal/foundation/db"
+	"log/slog"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/bridge"
@@ -32,7 +33,7 @@ func main() {
 	//   wrangler secret put MOONBRIDGE_CONFIG < config.yml
 	rawConfig := cloudflare.Getenv("MOONBRIDGE_CONFIG")
 	if rawConfig == "" {
-		logger.Error("MOONBRIDGE_CONFIG environment variable is not set")
+		slog.Error("MOONBRIDGE_CONFIG environment variable is not set")
 		os.Exit(1)
 	}
 
@@ -40,12 +41,12 @@ func main() {
 		ExtensionSpecs: app.BuiltinExtensions().ConfigSpecs(),
 	})
 	if err != nil {
-		logger.Error("parse config", "error", err)
+		slog.Error("parse config", "error", err)
 		os.Exit(1)
 	}
 
 	if cfg.AuthToken == "" && !isDevEnv() {
-		logger.Error("Worker 生产环境必须配置认证：请在 server.auth_token 中设置 Bearer token，" +
+		slog.Error("Worker 生产环境必须配置认证：请在 server.auth_token 中设置 Bearer token，" +
 			"或通过 wrangler secret put MOONBRIDGE_CONFIG 注入包含 auth_token 的配置")
 		os.Exit(1)
 	}
@@ -55,7 +56,7 @@ func main() {
 	modelRoutes := buildModelRoutes(cfg)
 	providerMgr, err := provider.NewProviderManager(providerDefs, modelRoutes)
 	if err != nil {
-		logger.Error("init provider manager", "error", err)
+		slog.Error("init provider manager", "error", err)
 		os.Exit(1)
 	}
 
@@ -75,7 +76,7 @@ func main() {
 				cat.Opts.D1DB = func() *sql.DB {
 					c, err := d1.OpenConnector(binding)
 					if err != nil {
-						logger.Error("D1 connector", "error", err)
+						slog.Error("D1 connector", "error", err)
 						os.Exit(1)
 					}
 					return sql.OpenDB(c)
@@ -83,9 +84,9 @@ func main() {
 			}
 		}
 	}
-	plugins := cat.NewRegistry(logger.L(), cfg)
+	plugins := cat.NewRegistry(slog.Default(), cfg)
 	if err := plugins.InitAll(&cfg); err != nil {
-		logger.Error("init plugins", "error", err)
+		slog.Error("init plugins", "error", err)
 		os.Exit(1)
 	}
 
@@ -98,7 +99,7 @@ func main() {
 
 	// Initialize persistence layer (db.Registry).
 	ctx := context.Background()
-	dbRegistry := db.NewRegistry(logger.L())
+	dbRegistry := db.NewRegistry(slog.Default())
 	for _, p := range plugins.DBProviders() {
 		if prov := p.DBProvider(); prov != nil {
 			dbRegistry.RegisterProvider(prov)
@@ -110,7 +111,7 @@ func main() {
 		}
 	}
 	if err := dbRegistry.Init(ctx, cfg.Persistence.ActiveProvider); err != nil {
-		logger.Error("init persistence", "error", err)
+		slog.Error("init persistence", "error", err)
 		os.Exit(1)
 	}
 	defer dbRegistry.Shutdown()

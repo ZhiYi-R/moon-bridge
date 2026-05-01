@@ -12,6 +12,7 @@ import (
 
 	"moonbridge/internal/extension/codex"
 	"moonbridge/internal/foundation/config"
+	"log/slog"
 	"moonbridge/internal/foundation/logger"
 	"moonbridge/internal/service/app"
 )
@@ -81,7 +82,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 			"检查 log.level 和 log.format 是否为支持的取值。")
 		return exitStartupErr
 	}
-	logger.Info("配置已加载", "path", resolvedConfigPath, "mode", cfg.Mode, "addr", cfg.Addr)
+	slog.Info("配置已加载", "path", resolvedConfigPath, "mode", cfg.Mode, "addr", cfg.Addr)
 	if *mode != "" {
 		cfg.Mode = config.Mode(*mode)
 		if err := cfg.Validate(); err != nil {

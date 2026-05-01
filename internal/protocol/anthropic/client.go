@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"moonbridge/internal/foundation/logger"
+	"log/slog"
 	"net/http"
 	"strings"
 )
@@ -64,7 +64,7 @@ func NewClient(cfg ClientConfig) *Client {
 
 func (client *Client) CreateMessage(ctx context.Context, request MessageRequest) (MessageResponse, error) {
 	request.Stream = false
-	log := logger.L().With("model", request.Model)
+	log := slog.Default().With("model", request.Model)
 	log.Debug("正在创建消息", "max_tokens", request.MaxTokens, "messages", len(request.Messages), "tools", len(request.Tools))
 
 	httpRequest, err := client.newRequest(ctx, request)
@@ -97,7 +97,7 @@ func (client *Client) CreateMessage(ctx context.Context, request MessageRequest)
 
 func (client *Client) StreamMessage(ctx context.Context, request MessageRequest) (Stream, error) {
 	request.Stream = true
-	log := logger.L().With("model", request.Model)
+	log := slog.Default().With("model", request.Model)
 	log.Debug("开始流式传输", "max_tokens", request.MaxTokens, "messages", len(request.Messages), "tools", len(request.Tools))
 
 	httpRequest, err := client.newRequest(ctx, request)

@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"moonbridge/internal/foundation/logger"
+	"log/slog"
 	"moonbridge/internal/protocol/anthropic"
 )
 
@@ -60,7 +60,7 @@ func (o *Orchestrator) CreateMessage(ctx context.Context, req anthropic.MessageR
 		return anthropic.MessageResponse{}, fmt.Errorf("visual upstream provider is nil")
 	}
 	req, availableImages := prepareRequestForVisual(req)
-	log := logger.L()
+	log := slog.Default()
 	for round := 0; round <= o.maxRounds; round++ {
 		resp, err := o.upstream.CreateMessage(ctx, req)
 		if err != nil {
@@ -104,7 +104,7 @@ func (o *Orchestrator) StreamMessage(ctx context.Context, req anthropic.MessageR
 		return nil, fmt.Errorf("visual upstream provider is nil")
 	}
 	req, availableImages := prepareRequestForVisual(req)
-	log := logger.L()
+	log := slog.Default()
 	var allEvents []anthropic.StreamEvent
 	for round := 0; round <= o.maxRounds; round++ {
 		stream, err := o.upstream.StreamMessage(ctx, req)
@@ -224,10 +224,10 @@ func (o *Orchestrator) executeVisualTool(ctx context.Context, toolUse anthropic.
 	}
 	result, err := o.client.Analyze(ctx, request)
 	if err != nil {
-		logger.L().Warn("Visual tool execution failed", "tool", toolUse.Name, "error", err)
+		slog.Default().Warn("Visual tool execution failed", "tool", toolUse.Name, "error", err)
 		return "Visual error: " + err.Error()
 	}
-	logger.L().Info("Visual tool executed", "tool", toolUse.Name, "images", len(request.Images))
+	slog.Default().Info("Visual tool executed", "tool", toolUse.Name, "images", len(request.Images))
 	switch toolUse.Name {
 	case ToolVisualBrief:
 		return "Visual Brief result:\n" + strings.TrimSpace(result)

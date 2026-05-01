@@ -8,7 +8,7 @@ import (
 
 	"moonbridge/internal/extension/codex"
 	"moonbridge/internal/extension/websearch"
-	"moonbridge/internal/foundation/logger"
+	"log/slog"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/cache"
@@ -131,7 +131,7 @@ func (bridge *Bridge) convertTools(tools []openai.Tool, opt RequestOptions) ([]a
 				FirecrawlAPIKey: firstNonEmpty(opt.FirecrawlAPIKey, bridge.cfg.FirecrawlAPIKey),
 			})
 			if len(wsTools) == 0 {
-				logger.L().With("tool_type", tool.Type).Debug("skipping web_search tool because provider support is disabled")
+				slog.Default().With("tool_type", tool.Type).Debug("skipping web_search tool because provider support is disabled")
 				continue
 			}
 			converted = append(converted, wsTools...)

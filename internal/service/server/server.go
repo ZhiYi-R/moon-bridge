@@ -16,7 +16,7 @@ import (
 	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/extension/websearchinjected"
 	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/logger"
+	"log/slog"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/foundation/session"
 	"moonbridge/internal/protocol/anthropic"
@@ -330,7 +330,7 @@ func mustMarshalJSON(value any) json.RawMessage {
 }
 
 func (server *Server) handleResponses(writer http.ResponseWriter, request *http.Request) {
-	log := logger.L().With("path", request.URL.Path, "method", request.Method, "remote", request.RemoteAddr)
+	log := slog.Default().With("path", request.URL.Path, "method", request.Method, "remote", request.RemoteAddr)
 	log.Debug("收到请求")
 	requestStart := time.Now()
 	if request.Method != http.MethodPost {
@@ -488,7 +488,7 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 }
 
 func (server *Server) handleStream(writer http.ResponseWriter, request *http.Request, responsesRequest openai.ResponsesRequest, anthropicRequest anthropic.MessageRequest, plan cache.CacheCreationPlan, record mbtrace.Record, context codex.ConversionContext, sess *session.Session, provider Provider) {
-	log := logger.L().With("model", responsesRequest.Model)
+	log := slog.Default().With("model", responsesRequest.Model)
 	log.Debug("开始流式传输")
 	streamStart := time.Now()
 	server.bridge.MarkCacheAttempt(plan)
@@ -725,7 +725,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 			)
 		}
 	}()
-	log := logger.L().With("path", request.URL.Path, "method", request.Method)
+	log := slog.Default().With("path", request.URL.Path, "method", request.Method)
 	if server.providerMgr == nil {
 		log.Error("未配置 OpenAI Responses 直通的提供商管理器")
 		payload := openai.ErrorResponse{Error: openai.ErrorObject{
@@ -913,7 +913,7 @@ func logBillingUsageLine(requestModel, actualModel string, usage stats.BillingUs
 		summary = sessionStats.Summary()
 	}
 	rwRatio := stats.BillingCacheRWRatio(usage)
-	logger.Info("请求完成",
+	slog.Info("请求完成",
 		"request_model", requestModel,
 		"actual_model", actualModel,
 		"input_fresh", usage.FreshInputTokens,
@@ -1043,7 +1043,7 @@ func (server *Server) maybeWrapProvider(client *anthropic.Client, modelAlias str
 		tavilyKey := server.appConfig.WebSearchTavilyKeyForModel(modelAlias)
 		firecrawlKey := server.appConfig.WebSearchFirecrawlKeyForModel(modelAlias)
 		maxRounds := server.appConfig.WebSearchMaxRoundsForModel(modelAlias)
-		logger.L().Debug("包装注入式搜索编排器", "model", modelAlias)
+		slog.Default().Debug("包装注入式搜索编排器", "model", modelAlias)
 		wrapped = websearchinjected.WrapProvider(client, tavilyKey, firecrawlKey, maxRounds)
 	}
 	return server.maybeWrapVisual(wrapped, modelAlias)
@@ -1055,7 +1055,7 @@ func (server *Server) maybeWrapVisual(provider Provider, modelAlias string) Prov
 		return provider
 	}
 	visualProvider := server.visualProvider(visualCfg)
-	logger.L().Debug("Wrapping Visual orchestrator", "model", modelAlias, "visual_model", visualCfg.Model)
+	slog.Default().Debug("Wrapping Visual orchestrator", "model", modelAlias, "visual_model", visualCfg.Model)
 	return visual.WrapProvider(provider, visualProvider, visualCfg.Model, visualCfg.MaxRounds, visualCfg.MaxTokens)
 }
 
@@ -1063,7 +1063,7 @@ func (server *Server) visualProvider(cfg visual.Config) Provider {
 	if server.providerMgr != nil && cfg.Provider != "" {
 		client, err := server.providerMgr.ClientForKey(cfg.Provider)
 		if err != nil {
-			logger.L().Warn("Visual provider unavailable", "provider", cfg.Provider, "error", err)
+			slog.Default().Warn("Visual provider unavailable", "provider", cfg.Provider, "error", err)
 			return nil
 		}
 		return &anthropicClientWrapper{client: client}

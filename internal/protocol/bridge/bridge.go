@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"moonbridge/internal/foundation/config"
-	"moonbridge/internal/foundation/logger"
+	"log/slog"
 	"moonbridge/internal/foundation/openai"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/cache"
@@ -57,7 +57,7 @@ func (bridge *Bridge) ToAnthropic(request openai.ResponsesRequest, extData map[s
 		opt = opts[0]
 	}
 	hookCtx := bridge.hookContext(request.Model, extData, request.Reasoning, opt)
-	log := logger.L().With("model", request.Model)
+	log := slog.Default().With("model", request.Model)
 	log.Debug("正在将 OpenAI 请求转换为 Anthropic 格式")
 	if request.Model == "" {
 		log.Warn("模型名称是必需的")
@@ -142,7 +142,7 @@ func (bridge *Bridge) UpdateRegistryFromUsage(plan cache.CacheCreationPlan, sign
 }
 
 func (bridge *Bridge) FromAnthropicWithPlanAndContext(response anthropic.MessageResponse, model string, plan cache.CacheCreationPlan, context codex.ConversionContext, extData map[string]any) openai.Response {
-	log := logger.L().With("model", model)
+	log := slog.Default().With("model", model)
 	log.Debug("正在将 Anthropic 响应转换为 OpenAI 格式", "provider_id", response.ID, "stop_reason", response.StopReason)
 	cache.UpdateRegistryFromUsage(bridge.registry, plan, cache.UsageSignals{
 		InputTokens:              response.Usage.InputTokens,

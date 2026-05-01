@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"moonbridge/internal/foundation/logger"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -203,7 +203,7 @@ func NewPlannerWithRegistry(cfg PlannerConfig, registry *MemoryRegistry) *Planne
 }
 
 func (planner *Planner) Plan(input PlanInput) (CacheCreationPlan, error) {
-	log := logger.L().With("model", input.Model)
+	log := slog.Default().With("model", input.Model)
 	if !planner.cfg.PromptCaching || planner.cfg.Mode == "off" {
 		log.Debug("缓存已禁用", "reason", "prompt_caching_disabled")
 		return CacheCreationPlan{Mode: "off", TTL: planner.cfg.TTL, Reason: "prompt_caching_disabled"}, nil

@@ -3,7 +3,7 @@ package proxy
 import (
 	"bytes"
 	"io"
-	"moonbridge/internal/foundation/logger"
+	"log/slog"
 	"net/http"
 
 	mbtrace "moonbridge/internal/service/trace"
@@ -51,7 +51,7 @@ func (server *AnthropicServer) ServeHTTP(writer http.ResponseWriter, request *ht
 }
 
 func (server *AnthropicServer) serveProxy(writer http.ResponseWriter, request *http.Request) {
-	log := logger.L().With("path", request.URL.Path, "method", request.Method)
+	log := slog.Default().With("path", request.URL.Path, "method", request.Method)
 	log.Debug("代理请求已收到")
 	requestBody, err := io.ReadAll(request.Body)
 	if err != nil {
