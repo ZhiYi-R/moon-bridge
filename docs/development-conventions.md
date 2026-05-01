@@ -97,8 +97,8 @@ foundation → （无内部依赖）
 ### 日志
 
 - 使用 `internal/foundation/logger` 包，基于 `slog`
-- 调用 `logger.Info()`, `logger.Warn()`, `logger.Error()`, `logger.Debug()`
-- 使用 `With("key", value)` 添加结构化字段
+- 调用 `slog.Info()`, `slog.Warn()`, `slog.Error()`, `slog.Debug()` 或 `slog.Default().With(...)`
+- 使用 `With("key", value)` 添加结构化字段，对相关属性群使用 `WithGroup` 或 `slog.Group`
 - 日志级别支持：`debug`、`info`、`warn`、`error`
 
 ### 配置演进

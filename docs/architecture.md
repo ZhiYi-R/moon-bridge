@@ -41,6 +41,7 @@ end
 
 - **`internal/foundation/config`**：YAML 配置加载、结构校验、多模式支持。`FileConfig` 是 YAML 映射结构，`Config` 是运行时使用的扁平化/合并后结构。
 - **`internal/foundation/logger`**：基于 `slog` 的结构化日志系统，通过 `consumeHandler` 包装层支持插件日志消费管线。请求级日志通过 slog attrs 输出，支持 `text` 和 `json` 格式。
+  应用启动时调用 `logger.Init()` 配置 `slog.SetDefault()`，所有代码使用 `slog.Default()` / `slog.Info()` 系列。通过 `With` 和 `WithGroup` 组织结构化字段。
 - **`internal/foundation/openai`**：共享的 OpenAI Responses API DTO（`ResponsesRequest`、`Response`、`OutputItem`、`Usage`、`StreamEvent` 等），供 bridge、codex、server 等多个包引用，避免循环依赖。
 - **`internal/foundation/modelref`**：统一的模型引用解析器，支持 `provider/model` 和 `model(provider)` 两种格式。
 - **`internal/foundation/session`**：会话管理，携带 `ExtensionData` 用于插件的跨请求状态保持。
