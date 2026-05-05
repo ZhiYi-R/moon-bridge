@@ -51,7 +51,7 @@ mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge"
 cp config.example.yml "${XDG_CONFIG_HOME:-$HOME/.config}/moonbridge/config.yml"
 ```
 
-编辑 `config.yml`，至少填入一个上游 Provider 的 `base_url` 和 `api_key`。
+编辑 `config.yml`，至少填入一个上游 Provider 的 `base_url` 和 `api_key`。密钥也可以用同名 `*_file` 字段从文件读取，例如 Docker Secret 路径 `/run/secrets/provider_api_key`；同一个密钥的 inline 字段和 `*_file` 不能同时配置。
 
 最小的可工作配置：
 
@@ -69,6 +69,7 @@ providers:
   my-provider:
     base_url: "https://api.example.com"
     api_key: "sk-..."
+    # api_key_file: "/run/secrets/provider_api_key"
     # 协议：默认 "anthropic"，设为 "openai-response" 可直通 OpenAI Responses API
     # protocol: "anthropic"
     offers:
@@ -154,12 +155,14 @@ providers:
   deepseek:
     base_url: "https://api.deepseek.com/anthropic"
     api_key: "replace-with-deepseek-api-key"
+    # api_key_file: "/run/secrets/provider_api_key"
     version: "2023-06-01"
     offers:
       - model: deepseek-v4-pro
   openai:
     base_url: "https://api.openai.com"
     api_key: "replace-with-openai-api-key"
+    # api_key_file: "/run/secrets/provider_api_key"
     protocol: "openai-response"
     offers:
       - model: gpt-image-1.5
@@ -394,6 +397,7 @@ proxy:
     model: "gpt-5.5"
     base_url: "https://api.openai.com"
     api_key: "sk-..."
+    # api_key_file: "/run/secrets/provider_api_key"
 ```
 
 ### CaptureAnthropic
@@ -416,6 +420,7 @@ proxy:
     model: "claude-sonnet-4-6"
     base_url: "https://api.anthropic.com"
     api_key: "sk-ant-..."
+    # api_key_file: "/run/secrets/provider_api_key"
     version: "2023-06-01"
 ```
 
@@ -478,13 +483,16 @@ web_search:
   support: "auto"          # 全局默认，可选 auto/enabled/disabled/injected
   max_uses: 8
   tavily_api_key: "tvly-..."
+  # tavily_api_key_file: "/run/secrets/tavily_api_key"
   firecrawl_api_key: "fc-..."
+  # firecrawl_api_key_file: "/run/secrets/firecrawl_api_key"
   search_max_rounds: 5
 
 providers:
   anthropic:
     base_url: "https://api.anthropic.com"
     api_key: "sk-ant-..."
+    # api_key_file: "/run/secrets/provider_api_key"
     web_search:
       support: "enabled"   # 提供商级覆盖
 ```

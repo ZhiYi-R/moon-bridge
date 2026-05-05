@@ -88,8 +88,9 @@ type TraceFileConfig struct {
 }
 
 type ServerFileConfig struct {
-	Addr      string `yaml:"addr" json:"addr,omitempty"`
-	AuthToken string `yaml:"auth_token" json:"auth_token,omitempty"`
+	Addr          string `yaml:"addr" json:"addr,omitempty"`
+	AuthToken     string `yaml:"auth_token" json:"auth_token,omitempty"`
+	AuthTokenFile string `yaml:"auth_token_file" json:"auth_token_file,omitempty"`
 }
 
 type LogFileConfig struct {
@@ -120,33 +121,34 @@ type ModelDefFileConfig struct {
 }
 
 type OfferFileConfig struct {
-	Model        string                  `yaml:"model" json:"model"`
-	UpstreamName string                  `yaml:"upstream_name,omitempty" json:"upstream_name,omitempty"`
-	Priority     int                     `yaml:"priority,omitempty" json:"priority,omitempty"`
-	Pricing      ModelPricingFileConfig  `yaml:"pricing,omitempty" json:"pricing,omitempty"`
-	Overrides    *ModelDefFileConfig     `yaml:"overrides,omitempty" json:"overrides,omitempty"`
+	Model        string                 `yaml:"model" json:"model"`
+	UpstreamName string                 `yaml:"upstream_name,omitempty" json:"upstream_name,omitempty"`
+	Priority     int                    `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Pricing      ModelPricingFileConfig `yaml:"pricing,omitempty" json:"pricing,omitempty"`
+	Overrides    *ModelDefFileConfig    `yaml:"overrides,omitempty" json:"overrides,omitempty"`
 }
 
 type ProviderDefFileConfig struct {
-	BaseURL    string                           `yaml:"base_url" json:"base_url"`
-	APIKey     string                           `yaml:"api_key" json:"api_key"`
-	Version    string                           `yaml:"version,omitempty" json:"version,omitempty"`
-	UserAgent  string                           `yaml:"user_agent,omitempty" json:"user_agent,omitempty"`
-	Protocol   string                           `yaml:"protocol,omitempty" json:"protocol,omitempty"`
-	WebSearch  WebSearchFileConfig              `yaml:"web_search,omitempty" json:"web_search,omitempty"`
-	Extensions map[string]ExtensionFileConfig   `yaml:"extensions,omitempty" json:"extensions,omitempty"`
-	Offers     []OfferFileConfig                `yaml:"offers,omitempty" json:"offers,omitempty"`
+	BaseURL    string                         `yaml:"base_url" json:"base_url"`
+	APIKey     string                         `yaml:"api_key" json:"api_key"`
+	APIKeyFile string                         `yaml:"api_key_file,omitempty" json:"api_key_file,omitempty"`
+	Version    string                         `yaml:"version,omitempty" json:"version,omitempty"`
+	UserAgent  string                         `yaml:"user_agent,omitempty" json:"user_agent,omitempty"`
+	Protocol   string                         `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+	WebSearch  WebSearchFileConfig            `yaml:"web_search,omitempty" json:"web_search,omitempty"`
+	Extensions map[string]ExtensionFileConfig `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	Offers     []OfferFileConfig              `yaml:"offers,omitempty" json:"offers,omitempty"`
 }
 
 type RouteFileConfig struct {
-	To            string                           `yaml:"to,omitempty" json:"to,omitempty"` // backward compat "provider/model"
-	Model         string                           `yaml:"model,omitempty" json:"model,omitempty"`
-	Provider      string                           `yaml:"provider,omitempty" json:"provider,omitempty"`
-	DisplayName   string                           `yaml:"display_name,omitempty" json:"display_name,omitempty"`
-	Description   string                           `yaml:"description,omitempty" json:"description,omitempty"`
-	ContextWindow int                              `yaml:"context_window,omitempty" json:"context_window,omitempty"`
-	WebSearch     WebSearchFileConfig              `yaml:"web_search,omitempty" json:"web_search,omitempty"`
-	Extensions    map[string]ExtensionFileConfig   `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	To            string                         `yaml:"to,omitempty" json:"to,omitempty"` // backward compat "provider/model"
+	Model         string                         `yaml:"model,omitempty" json:"model,omitempty"`
+	Provider      string                         `yaml:"provider,omitempty" json:"provider,omitempty"`
+	DisplayName   string                         `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	Description   string                         `yaml:"description,omitempty" json:"description,omitempty"`
+	ContextWindow int                            `yaml:"context_window,omitempty" json:"context_window,omitempty"`
+	WebSearch     WebSearchFileConfig            `yaml:"web_search,omitempty" json:"web_search,omitempty"`
+	Extensions    map[string]ExtensionFileConfig `yaml:"extensions,omitempty" json:"extensions,omitempty"`
 }
 
 func (cfg *RouteFileConfig) UnmarshalYAML(value *yaml.Node) error {
@@ -187,11 +189,13 @@ type ReasoningLevelPresetFileConfig struct {
 }
 
 type WebSearchFileConfig struct {
-	Support         string `yaml:"support" json:"support,omitempty"`
-	MaxUses         int    `yaml:"max_uses" json:"max_uses,omitempty"`
-	TavilyAPIKey    string `yaml:"tavily_api_key" json:"tavily_api_key,omitempty"`
-	FirecrawlAPIKey string `yaml:"firecrawl_api_key" json:"firecrawl_api_key,omitempty"`
-	SearchMaxRounds int    `yaml:"search_max_rounds" json:"search_max_rounds,omitempty"`
+	Support             string `yaml:"support" json:"support,omitempty"`
+	MaxUses             int    `yaml:"max_uses" json:"max_uses,omitempty"`
+	TavilyAPIKey        string `yaml:"tavily_api_key" json:"tavily_api_key,omitempty"`
+	TavilyAPIKeyFile    string `yaml:"tavily_api_key_file" json:"tavily_api_key_file,omitempty"`
+	FirecrawlAPIKey     string `yaml:"firecrawl_api_key" json:"firecrawl_api_key,omitempty"`
+	FirecrawlAPIKeyFile string `yaml:"firecrawl_api_key_file" json:"firecrawl_api_key_file,omitempty"`
+	SearchMaxRounds     int    `yaml:"search_max_rounds" json:"search_max_rounds,omitempty"`
 }
 
 type PersistenceFileConfig struct {
@@ -218,10 +222,11 @@ type ProxyFileConfig struct {
 }
 
 type ProxyTargetFileConfig struct {
-	BaseURL string `yaml:"base_url" json:"base_url"`
-	APIKey  string `yaml:"api_key" json:"api_key"`
-	Model   string `yaml:"model,omitempty" json:"model,omitempty"`
-	Version string `yaml:"version,omitempty" json:"version,omitempty"`
+	BaseURL    string `yaml:"base_url" json:"base_url"`
+	APIKey     string `yaml:"api_key" json:"api_key"`
+	APIKeyFile string `yaml:"api_key_file,omitempty" json:"api_key_file,omitempty"`
+	Model      string `yaml:"model,omitempty" json:"model,omitempty"`
+	Version    string `yaml:"version,omitempty" json:"version,omitempty"`
 }
 
 // ---- Loading functions ----
@@ -235,6 +240,7 @@ func LoadFromFileWithOptions(path string, opts LoadOptions) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("read config %s: %w", path, err)
 	}
+	opts.ConfigDir = filepath.Dir(path)
 	fileConfig, err := decodeFileConfig(data)
 	if err != nil {
 		return Config{}, err
@@ -293,6 +299,9 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 }
 
 func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config, error) {
+	if err := resolveSecretFiles(&fileConfig, opts); err != nil {
+		return Config{}, err
+	}
 	specs, err := newExtensionSpecIndex(opts.ExtensionSpecs)
 	if err != nil {
 		return Config{}, err
@@ -377,6 +386,107 @@ func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config,
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func resolveSecretFiles(fileConfig *FileConfig, opts LoadOptions) error {
+	var err error
+	if fileConfig.Server.AuthToken, err = secretValue(fileConfig.Server.AuthToken, fileConfig.Server.AuthTokenFile, "server.auth_token", "server.auth_token_file", opts); err != nil {
+		return err
+	}
+	if err := resolveWebSearchSecretFiles(&fileConfig.WebSearch, "web_search", opts); err != nil {
+		return err
+	}
+	for modelName, model := range fileConfig.Models {
+		path := "models." + modelName
+		if err := resolveWebSearchSecretFiles(&model.WebSearch, path+".web_search", opts); err != nil {
+			return err
+		}
+		fileConfig.Models[modelName] = model
+	}
+	for providerName, def := range fileConfig.Providers {
+		path := "providers." + providerName
+		if def.APIKey, err = secretValue(def.APIKey, def.APIKeyFile, path+".api_key", path+".api_key_file", opts); err != nil {
+			return err
+		}
+		if err := resolveWebSearchSecretFiles(&def.WebSearch, path+".web_search", opts); err != nil {
+			return err
+		}
+		for i, offer := range def.Offers {
+			if offer.Overrides != nil {
+				offerPath := fmt.Sprintf("%s.offers[%d].overrides.web_search", path, i)
+				if err := resolveWebSearchSecretFiles(&offer.Overrides.WebSearch, offerPath, opts); err != nil {
+					return err
+				}
+				def.Offers[i] = offer
+			}
+		}
+		fileConfig.Providers[providerName] = def
+	}
+	for routeName, route := range fileConfig.Routes {
+		path := "routes." + routeName
+		if err := resolveWebSearchSecretFiles(&route.WebSearch, path+".web_search", opts); err != nil {
+			return err
+		}
+		fileConfig.Routes[routeName] = route
+	}
+	if fileConfig.Proxy.Response.APIKey, err = secretValue(
+		fileConfig.Proxy.Response.APIKey,
+		fileConfig.Proxy.Response.APIKeyFile,
+		"proxy.response.api_key",
+		"proxy.response.api_key_file",
+		opts,
+	); err != nil {
+		return err
+	}
+	if fileConfig.Proxy.Anthropic.APIKey, err = secretValue(
+		fileConfig.Proxy.Anthropic.APIKey,
+		fileConfig.Proxy.Anthropic.APIKeyFile,
+		"proxy.anthropic.api_key",
+		"proxy.anthropic.api_key_file",
+		opts,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+func resolveWebSearchSecretFiles(ws *WebSearchFileConfig, path string, opts LoadOptions) error {
+	var err error
+	if ws.TavilyAPIKey, err = secretValue(ws.TavilyAPIKey, ws.TavilyAPIKeyFile, path+".tavily_api_key", path+".tavily_api_key_file", opts); err != nil {
+		return err
+	}
+	if ws.FirecrawlAPIKey, err = secretValue(ws.FirecrawlAPIKey, ws.FirecrawlAPIKeyFile, path+".firecrawl_api_key", path+".firecrawl_api_key_file", opts); err != nil {
+		return err
+	}
+	return nil
+}
+
+func secretValue(inlineValue, fileValue, inlinePath, filePath string, opts LoadOptions) (string, error) {
+	inline := strings.TrimSpace(inlineValue)
+	secretPath := strings.TrimSpace(fileValue)
+	if inline != "" && secretPath != "" {
+		return "", fmt.Errorf("%s and %s are mutually exclusive", inlinePath, filePath)
+	}
+	if secretPath == "" {
+		return inline, nil
+	}
+	resolvedPath := secretPath
+	if !filepath.IsAbs(resolvedPath) {
+		configDir := strings.TrimSpace(opts.ConfigDir)
+		if configDir == "" {
+			return "", fmt.Errorf("%s requires LoadOptions.ConfigDir when using a relative path", filePath)
+		}
+		resolvedPath = filepath.Join(configDir, resolvedPath)
+	}
+	data, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return "", fmt.Errorf("read %s %s: %w", filePath, resolvedPath, err)
+	}
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return "", fmt.Errorf("%s %s is empty", filePath, resolvedPath)
+	}
+	return value, nil
 }
 
 // ---- Conversion helpers ----

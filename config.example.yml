@@ -12,6 +12,7 @@ server:
   # Set a Bearer token for API authentication. When non-empty, all requests
   # must include an Authorization: Bearer <token> header. If empty, auth is disabled.
   # auth_token: "replace-with-your-secret-token"
+  # auth_token_file: "/run/secrets/server_auth_token"
 
 persistence:
   active_provider: db_sqlite
@@ -72,14 +73,26 @@ defaults:
   max_tokens: 65536
 trace:
   enabled: false
+
+# web_search:
+#   support: "disabled" # auto / enabled / disabled / injected
+#   max_uses: 8
+#   tavily_api_key: "replace-with-tavily-api-key"
+#   tavily_api_key_file: "/run/secrets/tavily_api_key"
+#   firecrawl_api_key: "replace-with-firecrawl-api-key"
+#   firecrawl_api_key_file: "/run/secrets/firecrawl_api_key"
+#   search_max_rounds: 5
+
 proxy:
   response:
     base_url: "https://api.openai.com"
     api_key: "replace-with-real-openai-responses-api-key"
+    # api_key_file: "/run/secrets/provider_api_key"
     model: "gpt-5.4"
   anthropic:
     base_url: "https://provider.example.com"
     api_key: "replace-with-real-anthropic-compatible-api-key"
+    # api_key_file: "/run/secrets/provider_api_key"
     version: "2023-06-01"
 models:
   deepseek-v4-pro:
@@ -148,6 +161,7 @@ providers:
   deepseek:
     base_url: "https://api.deepseek.com/anthropic"
     api_key: "replace-with-deepseek-api-key"
+    # api_key_file: "/run/secrets/provider_api_key"
     version: "2023-06-01"
     user_agent: "moonbridge/1.0"
     web_search:

@@ -18,6 +18,11 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - ./trace:/app/trace
+    # To use providers.<name>.api_key_file: "/run/secrets/provider_api_key",
+    # create ./secrets/provider_api_key and uncomment this block plus the
+    # top-level secrets block below.
+    # secrets:
+    #   - provider_api_key
     healthcheck:
       test:
         - CMD
@@ -31,3 +36,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+# secrets:
+#   provider_api_key:
+#     file: ./secrets/provider_api_key
