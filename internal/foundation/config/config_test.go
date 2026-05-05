@@ -121,6 +121,287 @@ func TestXDGDefaultConfigPathFallsBackToHome(t *testing.T) {
 		t.Fatalf("XDGDefaultConfigPath() = %q, want %q", got, want)
 	}
 }
+
+func writeSecretFile(t *testing.T, dir, name, value string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte(value), 0600); err != nil {
+		t.Fatalf("WriteFile(%s) error = %v", path, err)
+	}
+	return path
+}
+
+func TestLoadFromFileResolvesServerAuthTokenFile(t *testing.T) {
+	dir := t.TempDir()
+	writeSecretFile(t, dir, "server-token", "  file-token\n")
+	configPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(configPath, []byte(`
+mode: CaptureResponse
+server:
+  auth_token_file: server-token
+developer:
+  proxy:
+    response:
+      model: gpt-capture
+      provider:
+        base_url: https://api.openai.example.test
+        api_key: upstream-openai-key
+`), 0644); err != nil {
+		t.Fatalf("WriteFile(config) error = %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		t.Fatalf("LoadFromFile() error = %v", err)
+	}
+	if cfg.AuthToken != "file-token" {
+		t.Fatalf("AuthToken = %q, want file-token", cfg.AuthToken)
+	}
+}
+
+func TestLoadFromYAMLResolvesLegacyProviderAPIKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := writeSecretFile(t, dir, "provider-key", "\nlegacy-key\n")
+
+	cfg, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: Transform
+provider:
+  base_url: https://provider.example.test
+  api_key_file: `+keyPath+`
+  routes:
+    moonbridge: claude-test
+`), config.LoadOptions{})
+	if err != nil {
+		t.Fatalf("LoadFromYAMLWithOptions() error = %v", err)
+	}
+	if cfg.ProviderAPIKey != "legacy-key" {
+		t.Fatalf("ProviderAPIKey = %q, want legacy-key", cfg.ProviderAPIKey)
+	}
+}
+
+func TestLoadFromYAMLResolvesMultiProviderAPIKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := writeSecretFile(t, dir, "main-key", "main-key\n")
+
+	cfg, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: Transform
+provider:
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key_file: `+keyPath+`
+      models:
+        claude-test: {}
+  routes:
+    moonbridge: main/claude-test
+`), config.LoadOptions{})
+	if err != nil {
+		t.Fatalf("LoadFromYAMLWithOptions() error = %v", err)
+	}
+	if cfg.ProviderDefs["main"].APIKey != "main-key" {
+		t.Fatalf("ProviderDefs[main].APIKey = %q, want main-key", cfg.ProviderDefs["main"].APIKey)
+	}
+}
+
+func TestLoadFromYAMLResolvesCaptureProxyAPIKeyFiles(t *testing.T) {
+	dir := t.TempDir()
+	responseKeyPath := writeSecretFile(t, dir, "response-key", "response-key")
+	anthropicKeyPath := writeSecretFile(t, dir, "anthropic-key", "anthropic-key")
+
+	responseCfg, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: CaptureResponse
+developer:
+  proxy:
+    response:
+      model: gpt-capture
+      provider:
+        base_url: https://api.openai.example.test
+        api_key_file: `+responseKeyPath+`
+`), config.LoadOptions{})
+	if err != nil {
+		t.Fatalf("LoadFromYAMLWithOptions(response) error = %v", err)
+	}
+	if responseCfg.ResponseProxy.ProviderAPIKey != "response-key" {
+		t.Fatalf("ResponseProxy.ProviderAPIKey = %q, want response-key", responseCfg.ResponseProxy.ProviderAPIKey)
+	}
+
+	anthropicCfg, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: CaptureAnthropic
+developer:
+  proxy:
+    anthropic:
+      model: claude-test
+      provider:
+        base_url: https://provider.example.test
+        api_key_file: `+anthropicKeyPath+`
+`), config.LoadOptions{})
+	if err != nil {
+		t.Fatalf("LoadFromYAMLWithOptions(anthropic) error = %v", err)
+	}
+	if anthropicCfg.AnthropicProxy.ProviderAPIKey != "anthropic-key" {
+		t.Fatalf("AnthropicProxy.ProviderAPIKey = %q, want anthropic-key", anthropicCfg.AnthropicProxy.ProviderAPIKey)
+	}
+}
+
+func TestLoadFromYAMLResolvesWebSearchAPIKeyFiles(t *testing.T) {
+	dir := t.TempDir()
+	globalTavily := writeSecretFile(t, dir, "global-tavily", "global-tavily")
+	globalFirecrawl := writeSecretFile(t, dir, "global-firecrawl", "global-firecrawl")
+	providerTavily := writeSecretFile(t, dir, "provider-tavily", "provider-tavily")
+	providerFirecrawl := writeSecretFile(t, dir, "provider-firecrawl", "provider-firecrawl")
+	modelTavily := writeSecretFile(t, dir, "model-tavily", "model-tavily")
+	modelFirecrawl := writeSecretFile(t, dir, "model-firecrawl", "model-firecrawl")
+
+	cfg, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: Transform
+provider:
+  web_search:
+    support: auto
+    tavily_api_key_file: `+globalTavily+`
+    firecrawl_api_key_file: `+globalFirecrawl+`
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: upstream-key
+      web_search:
+        support: auto
+        tavily_api_key_file: `+providerTavily+`
+        firecrawl_api_key_file: `+providerFirecrawl+`
+      models:
+        claude-test:
+          web_search:
+            support: injected
+            tavily_api_key_file: `+modelTavily+`
+            firecrawl_api_key_file: `+modelFirecrawl+`
+  routes:
+    moonbridge: main/claude-test
+`), config.LoadOptions{})
+	if err != nil {
+		t.Fatalf("LoadFromYAMLWithOptions() error = %v", err)
+	}
+	if cfg.TavilyAPIKey != "global-tavily" || cfg.FirecrawlAPIKey != "global-firecrawl" {
+		t.Fatalf("global web search keys = %q/%q", cfg.TavilyAPIKey, cfg.FirecrawlAPIKey)
+	}
+	if got := cfg.WebSearchTavilyKeyForProvider("main"); got != "provider-tavily" {
+		t.Fatalf("WebSearchTavilyKeyForProvider(main) = %q", got)
+	}
+	if got := cfg.WebSearchFirecrawlKeyForProvider("main"); got != "provider-firecrawl" {
+		t.Fatalf("WebSearchFirecrawlKeyForProvider(main) = %q", got)
+	}
+	if got := cfg.WebSearchTavilyKeyForModel("moonbridge"); got != "model-tavily" {
+		t.Fatalf("WebSearchTavilyKeyForModel(moonbridge) = %q", got)
+	}
+	if got := cfg.WebSearchFirecrawlKeyForModel("moonbridge"); got != "model-firecrawl" {
+		t.Fatalf("WebSearchFirecrawlKeyForModel(moonbridge) = %q", got)
+	}
+}
+
+func TestLoadFromYAMLRejectsInlineAndFileSecretConflict(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := writeSecretFile(t, dir, "provider-key", "provider-key")
+
+	_, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: Transform
+provider:
+  providers:
+    main:
+      base_url: https://provider.example.test
+      api_key: inline-key
+      api_key_file: `+keyPath+`
+      models:
+        claude-test: {}
+  routes:
+    moonbridge: main/claude-test
+`), config.LoadOptions{})
+	if err == nil {
+		t.Fatal("LoadFromYAMLWithOptions() error = nil, want inline/file conflict")
+	}
+	if !strings.Contains(err.Error(), "provider.providers.main.api_key") || !strings.Contains(err.Error(), "provider.providers.main.api_key_file") {
+		t.Fatalf("LoadFromYAMLWithOptions() error = %v, want field paths", err)
+	}
+}
+
+func TestLoadFromYAMLRejectsMissingSecretFile(t *testing.T) {
+	_, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: CaptureResponse
+developer:
+  proxy:
+    response:
+      model: gpt-capture
+      provider:
+        base_url: https://api.openai.example.test
+        api_key_file: /no/such/provider-key
+`), config.LoadOptions{})
+	if err == nil {
+		t.Fatal("LoadFromYAMLWithOptions() error = nil, want missing file error")
+	}
+	if !strings.Contains(err.Error(), "developer.proxy.response.provider.api_key_file") {
+		t.Fatalf("LoadFromYAMLWithOptions() error = %v, want field path", err)
+	}
+}
+
+func TestLoadFromYAMLRejectsEmptySecretFile(t *testing.T) {
+	dir := t.TempDir()
+	keyPath := writeSecretFile(t, dir, "empty-key", " \n\t")
+
+	_, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: CaptureAnthropic
+developer:
+  proxy:
+    anthropic:
+      model: claude-test
+      provider:
+        base_url: https://provider.example.test
+        api_key_file: `+keyPath+`
+`), config.LoadOptions{})
+	if err == nil {
+		t.Fatal("LoadFromYAMLWithOptions() error = nil, want empty file error")
+	}
+	if !strings.Contains(err.Error(), "developer.proxy.anthropic.provider.api_key_file") {
+		t.Fatalf("LoadFromYAMLWithOptions() error = %v, want field path", err)
+	}
+}
+
+func TestLoadFromYAMLRejectsRelativeSecretFileWithoutConfigDir(t *testing.T) {
+	_, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: CaptureResponse
+developer:
+  proxy:
+    response:
+      model: gpt-capture
+      provider:
+        base_url: https://api.openai.example.test
+        api_key_file: provider-key
+`), config.LoadOptions{})
+	if err == nil {
+		t.Fatal("LoadFromYAMLWithOptions() error = nil, want relative path error")
+	}
+	if !strings.Contains(err.Error(), "developer.proxy.response.provider.api_key_file") || !strings.Contains(err.Error(), "ConfigDir") {
+		t.Fatalf("LoadFromYAMLWithOptions() error = %v, want ConfigDir field path error", err)
+	}
+}
+
+func TestLoadFromYAMLResolvesRelativeSecretFileWithConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	writeSecretFile(t, dir, "provider-key", "relative-key")
+
+	cfg, err := config.LoadFromYAMLWithOptions([]byte(`
+mode: CaptureResponse
+developer:
+  proxy:
+    response:
+      model: gpt-capture
+      provider:
+        base_url: https://api.openai.example.test
+        api_key_file: provider-key
+`), config.LoadOptions{ConfigDir: dir})
+	if err != nil {
+		t.Fatalf("LoadFromYAMLWithOptions() error = %v", err)
+	}
+	if cfg.ResponseProxy.ProviderAPIKey != "relative-key" {
+		t.Fatalf("ResponseProxy.ProviderAPIKey = %q, want relative-key", cfg.ResponseProxy.ProviderAPIKey)
+	}
+}
 func TestLoadFromYAMLCanDisableWebSearch(t *testing.T) {
 	cfg, err := config.LoadFromYAML([]byte(`
 mode: Transform

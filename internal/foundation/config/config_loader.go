@@ -25,13 +25,15 @@ type FileConfig struct {
 }
 
 type ServerFileConfig struct {
-	Addr      string `yaml:"addr" json:"addr,omitempty"`
-	AuthToken string `yaml:"auth_token" json:"auth_token,omitempty"`
+	Addr          string `yaml:"addr" json:"addr,omitempty"`
+	AuthToken     string `yaml:"auth_token" json:"auth_token,omitempty"`
+	AuthTokenFile string `yaml:"auth_token_file" json:"auth_token_file,omitempty"`
 }
 
 type ProviderFileConfig struct {
 	BaseURL          string                           `yaml:"base_url" json:"base_url,omitempty"`
 	APIKey           string                           `yaml:"api_key" json:"api_key,omitempty"`
+	APIKeyFile       string                           `yaml:"api_key_file" json:"api_key_file,omitempty"`
 	Version          string                           `yaml:"version" json:"version,omitempty"`
 	UserAgent        string                           `yaml:"user_agent" json:"user_agent,omitempty"`
 	WebSearch        WebSearchFileConfig              `yaml:"web_search" json:"web_search,omitempty"`
@@ -77,6 +79,7 @@ type ProviderModelFileConfig struct {
 type ProviderDefFileConfig struct {
 	BaseURL    string                             `yaml:"base_url" json:"base_url"`
 	APIKey     string                             `yaml:"api_key" json:"api_key"`
+	APIKeyFile string                             `yaml:"api_key_file" json:"api_key_file,omitempty"`
 	Version    string                             `yaml:"version" json:"version,omitempty"`
 	UserAgent  string                             `yaml:"user_agent" json:"user_agent,omitempty"`
 	Protocol   string                             `yaml:"protocol" json:"protocol,omitempty"`
@@ -122,11 +125,13 @@ type ReasoningLevelPresetFileConfig struct {
 }
 
 type WebSearchFileConfig struct {
-	Support         string `yaml:"support" json:"support,omitempty"`
-	MaxUses         int    `yaml:"max_uses" json:"max_uses,omitempty"`
-	TavilyAPIKey    string `yaml:"tavily_api_key" json:"tavily_api_key,omitempty"`
-	FirecrawlAPIKey string `yaml:"firecrawl_api_key" json:"firecrawl_api_key,omitempty"`
-	SearchMaxRounds int    `yaml:"search_max_rounds" json:"search_max_rounds,omitempty"`
+	Support             string `yaml:"support" json:"support,omitempty"`
+	MaxUses             int    `yaml:"max_uses" json:"max_uses,omitempty"`
+	TavilyAPIKey        string `yaml:"tavily_api_key" json:"tavily_api_key,omitempty"`
+	TavilyAPIKeyFile    string `yaml:"tavily_api_key_file" json:"tavily_api_key_file,omitempty"`
+	FirecrawlAPIKey     string `yaml:"firecrawl_api_key" json:"firecrawl_api_key,omitempty"`
+	FirecrawlAPIKeyFile string `yaml:"firecrawl_api_key_file" json:"firecrawl_api_key_file,omitempty"`
+	SearchMaxRounds     int    `yaml:"search_max_rounds" json:"search_max_rounds,omitempty"`
 }
 
 type DeveloperFileConfig struct {
@@ -144,9 +149,10 @@ type ProxyFileConfig struct {
 }
 
 type ProxyProviderFileConfig struct {
-	BaseURL string `yaml:"base_url" json:"base_url,omitempty"`
-	APIKey  string `yaml:"api_key" json:"api_key,omitempty"`
-	Version string `yaml:"version" json:"version,omitempty"`
+	BaseURL    string `yaml:"base_url" json:"base_url,omitempty"`
+	APIKey     string `yaml:"api_key" json:"api_key,omitempty"`
+	APIKeyFile string `yaml:"api_key_file" json:"api_key_file,omitempty"`
+	Version    string `yaml:"version" json:"version,omitempty"`
 }
 
 type PersistenceFileConfig struct {
@@ -167,6 +173,7 @@ func LoadFromFileWithOptions(path string, opts LoadOptions) (Config, error) {
 	if err != nil {
 		return Config{}, fmt.Errorf("read config %s: %w", path, err)
 	}
+	opts.ConfigDir = filepath.Dir(path)
 	fileConfig, err := decodeFileConfig(data)
 	if err != nil {
 		return Config{}, err
@@ -226,6 +233,9 @@ func FromFileConfig(fileConfig FileConfig) (Config, error) {
 }
 
 func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config, error) {
+	if err := resolveSecretFiles(&fileConfig, opts); err != nil {
+		return Config{}, err
+	}
 	specs, err := newExtensionSpecIndex(opts.ExtensionSpecs)
 	if err != nil {
 		return Config{}, err
@@ -305,6 +315,94 @@ func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config,
 		return Config{}, err
 	}
 	return cfg, nil
+}
+
+func resolveSecretFiles(fileConfig *FileConfig, opts LoadOptions) error {
+	var err error
+	if fileConfig.Server.AuthToken, err = secretValue(fileConfig.Server.AuthToken, fileConfig.Server.AuthTokenFile, "server.auth_token", "server.auth_token_file", opts); err != nil {
+		return err
+	}
+	if fileConfig.Provider.APIKey, err = secretValue(fileConfig.Provider.APIKey, fileConfig.Provider.APIKeyFile, "provider.api_key", "provider.api_key_file", opts); err != nil {
+		return err
+	}
+	if err := resolveWebSearchSecretFiles(&fileConfig.Provider.WebSearch, "provider.web_search", opts); err != nil {
+		return err
+	}
+	for providerName, def := range fileConfig.Provider.Providers {
+		path := "provider.providers." + providerName
+		if def.APIKey, err = secretValue(def.APIKey, def.APIKeyFile, path+".api_key", path+".api_key_file", opts); err != nil {
+			return err
+		}
+		if err := resolveWebSearchSecretFiles(&def.WebSearch, path+".web_search", opts); err != nil {
+			return err
+		}
+		for modelName, model := range def.Models {
+			modelPath := path + ".models." + modelName
+			if err := resolveWebSearchSecretFiles(&model.WebSearch, modelPath+".web_search", opts); err != nil {
+				return err
+			}
+			def.Models[modelName] = model
+		}
+		fileConfig.Provider.Providers[providerName] = def
+	}
+	if fileConfig.Developer.Proxy.Response.Provider.APIKey, err = secretValue(
+		fileConfig.Developer.Proxy.Response.Provider.APIKey,
+		fileConfig.Developer.Proxy.Response.Provider.APIKeyFile,
+		"developer.proxy.response.provider.api_key",
+		"developer.proxy.response.provider.api_key_file",
+		opts,
+	); err != nil {
+		return err
+	}
+	if fileConfig.Developer.Proxy.Anthropic.Provider.APIKey, err = secretValue(
+		fileConfig.Developer.Proxy.Anthropic.Provider.APIKey,
+		fileConfig.Developer.Proxy.Anthropic.Provider.APIKeyFile,
+		"developer.proxy.anthropic.provider.api_key",
+		"developer.proxy.anthropic.provider.api_key_file",
+		opts,
+	); err != nil {
+		return err
+	}
+	return nil
+}
+
+func resolveWebSearchSecretFiles(ws *WebSearchFileConfig, path string, opts LoadOptions) error {
+	var err error
+	if ws.TavilyAPIKey, err = secretValue(ws.TavilyAPIKey, ws.TavilyAPIKeyFile, path+".tavily_api_key", path+".tavily_api_key_file", opts); err != nil {
+		return err
+	}
+	if ws.FirecrawlAPIKey, err = secretValue(ws.FirecrawlAPIKey, ws.FirecrawlAPIKeyFile, path+".firecrawl_api_key", path+".firecrawl_api_key_file", opts); err != nil {
+		return err
+	}
+	return nil
+}
+
+func secretValue(inlineValue, fileValue, inlinePath, filePath string, opts LoadOptions) (string, error) {
+	inline := strings.TrimSpace(inlineValue)
+	secretPath := strings.TrimSpace(fileValue)
+	if inline != "" && secretPath != "" {
+		return "", fmt.Errorf("%s and %s are mutually exclusive", inlinePath, filePath)
+	}
+	if secretPath == "" {
+		return inline, nil
+	}
+	resolvedPath := secretPath
+	if !filepath.IsAbs(resolvedPath) {
+		configDir := strings.TrimSpace(opts.ConfigDir)
+		if configDir == "" {
+			return "", fmt.Errorf("%s requires LoadOptions.ConfigDir when using a relative path", filePath)
+		}
+		resolvedPath = filepath.Join(configDir, resolvedPath)
+	}
+	data, err := os.ReadFile(resolvedPath)
+	if err != nil {
+		return "", fmt.Errorf("read %s %s: %w", filePath, resolvedPath, err)
+	}
+	value := strings.TrimSpace(string(data))
+	if value == "" {
+		return "", fmt.Errorf("%s %s is empty", filePath, resolvedPath)
+	}
+	return value, nil
 }
 
 func parseMode(value string) (Mode, error) {

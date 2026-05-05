@@ -26,6 +26,7 @@ type ExtensionConfigSpec struct {
 
 type LoadOptions struct {
 	ExtensionSpecs []ExtensionConfigSpec
+	ConfigDir      string
 }
 
 type ExtensionFileConfig struct {
