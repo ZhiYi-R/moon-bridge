@@ -12,6 +12,27 @@ import (
 	"encoding/json"
 )
 
+type coreRequestContextKey struct{}
+
+// ContextWithCoreRequest returns a child context carrying the active CoreRequest.
+// Hooks that only receive context can use CoreRequestFromContext to recover
+// request-scoped metadata such as the model alias.
+func ContextWithCoreRequest(ctx context.Context, req *CoreRequest) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, coreRequestContextKey{}, req)
+}
+
+// CoreRequestFromContext returns the CoreRequest previously stored in ctx.
+func CoreRequestFromContext(ctx context.Context) (*CoreRequest, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	req, ok := ctx.Value(coreRequestContextKey{}).(*CoreRequest)
+	return req, ok
+}
+
 // ============================================================================
 // ClientAdapter — inbound protocol ↔ Core (inbound side of the bridge)
 // ============================================================================

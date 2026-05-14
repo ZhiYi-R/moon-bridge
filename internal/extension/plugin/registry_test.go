@@ -1,9 +1,10 @@
 package plugin_test
 
 import (
+	"context"
 	"encoding/json"
-	"testing"
 	"moonbridge/internal/format"
+	"testing"
 
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/protocol/openai"
@@ -162,6 +163,18 @@ func TestRegistryInjectTools(t *testing.T) {
 	}
 }
 
+func TestRegistryCorePluginHooksInjectTools(t *testing.T) {
+	r := plugin.NewRegistry(nil)
+	r.Register(&testToolInjector{testPlugin: testPlugin{name: "ti", enabled: true}})
+
+	hooks := r.CorePluginHooks()
+	req := &format.CoreRequest{Model: "test"}
+	tools := hooks.InjectTools(format.ContextWithCoreRequest(context.Background(), req))
+	if len(tools) != 1 || tools[0].Name != "injected_tool" {
+		t.Fatalf("unexpected tools: %+v", tools)
+	}
+}
+
 func TestRegistryFilterContent(t *testing.T) {
 	r := plugin.NewRegistry(nil)
 	r.Register(&testContentFilter{testPlugin: testPlugin{name: "cf", enabled: true}})
@@ -218,8 +231,8 @@ func TestRegistryOnStreamEvent(t *testing.T) {
 	r := plugin.NewRegistry(nil)
 	r.Register(&testStreamInterceptor{testPlugin: testPlugin{name: "si", enabled: true}})
 
-		states := r.NewStreamStates("model")
-		block := &format.CoreContentBlock{Type: "reasoning"}
+	states := r.NewStreamStates("model")
+	block := &format.CoreContentBlock{Type: "reasoning"}
 	consumed, _ := r.OnStreamEvent("model", plugin.StreamEvent{Type: "block_start", Index: 0, Block: block}, states)
 	if !consumed {
 		t.Fatal("should consume thinking block_start")
@@ -247,6 +260,7 @@ func TestRegistryNilSafe(t *testing.T) {
 		t.Fatal("nil registry should not have enabled plugins")
 	}
 }
+
 type onStreamCompleteRecorder struct {
 	testPlugin
 	called bool

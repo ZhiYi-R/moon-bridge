@@ -9,8 +9,8 @@ import (
 	"context"
 
 	"moonbridge/internal/config"
-	"moonbridge/internal/logger"
 	"moonbridge/internal/format"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/openai"
 )
 
@@ -492,7 +492,9 @@ func (r *Registry) CorePluginHooks() format.CorePluginHooks {
 		if m, ok := p.(CoreRequestMutator); ok {
 			prev := hooks.MutateCoreRequest
 			hooks.MutateCoreRequest = func(ctx context.Context, req *format.CoreRequest) {
-				if prev != nil { prev(ctx, req) }
+				if prev != nil {
+					prev(ctx, req)
+				}
 				m.MutateCoreRequest(ctx, req)
 			}
 		}
@@ -500,7 +502,9 @@ func (r *Registry) CorePluginHooks() format.CorePluginHooks {
 		if f, ok := p.(CoreContentFilter); ok {
 			prev := hooks.FilterContent
 			hooks.FilterContent = func(ctx context.Context, block *format.CoreContentBlock) bool {
-				if prev != nil && prev(ctx, block) { return true }
+				if prev != nil && prev(ctx, block) {
+					return true
+				}
 				return f.FilterCoreContent(ctx, block)
 			}
 		}
@@ -509,18 +513,38 @@ func (r *Registry) CorePluginHooks() format.CorePluginHooks {
 			prev := hooks.RewriteMessages
 			plugin := p.(Plugin) // for EnabledForModel check
 			hooks.RewriteMessages = func(ctx context.Context, req *format.CoreRequest) {
-				if prev != nil { prev(ctx, req) }
+				if prev != nil {
+					prev(ctx, req)
+				}
 				pluginCtx := &RequestContext{ModelAlias: req.Model}
 				if plugin.EnabledForModel(req.Model) {
 					req.Messages = mw.RewriteMessages(pluginCtx, req.Messages)
 				}
 			}
 		}
+		// InjectTools — only chain plugins enabled for this model.
+		if ti, ok := p.(ToolInjector); ok {
+			prev := hooks.InjectTools
+			plugin := p.(Plugin) // for EnabledForModel check
+			hooks.InjectTools = func(ctx context.Context) []format.CoreTool {
+				tools := prev(ctx)
+				modelAlias := ""
+				if req, ok := format.CoreRequestFromContext(ctx); ok && req != nil {
+					modelAlias = req.Model
+				}
+				if plugin.EnabledForModel(modelAlias) {
+					tools = append(tools, ti.InjectTools(&RequestContext{ModelAlias: modelAlias})...)
+				}
+				return tools
+			}
+		}
 		// RememberCoreContent
 		if rmem, ok := p.(CoreContentRememberer); ok {
 			prev := hooks.RememberContent
 			hooks.RememberContent = func(ctx context.Context, content []format.CoreContentBlock) {
-				if prev != nil { prev(ctx, content) }
+				if prev != nil {
+					prev(ctx, content)
+				}
 				rmem.RememberCoreContent(ctx, content)
 			}
 		}

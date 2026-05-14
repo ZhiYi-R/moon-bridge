@@ -224,7 +224,7 @@ func TestCoreOrchestratorExecutesVisualBrief(t *testing.T) {
 			{
 				ID: "msg_final", Status: "completed", StopReason: "end_turn",
 				Messages: []format.CoreMessage{{
-					Role: "assistant",
+					Role:    "assistant",
 					Content: []format.CoreContentBlock{{Type: "text", Text: "done"}},
 				}},
 			},
@@ -238,7 +238,7 @@ func TestCoreOrchestratorExecutesVisualBrief(t *testing.T) {
 	})
 
 	resp, err := orchestrator.CreateCore(context.Background(), &format.CoreRequest{
-		Model: "test-model",
+		Model:      "test-model",
 		ToolChoice: &format.CoreToolChoice{Mode: "auto"},
 	})
 	if err != nil {
@@ -271,7 +271,7 @@ func TestCoreOrchestratorPreparesRequest(t *testing.T) {
 			{
 				ID: "msg_final", Status: "completed", StopReason: "end_turn",
 				Messages: []format.CoreMessage{{
-					Role: "assistant",
+					Role:    "assistant",
 					Content: []format.CoreContentBlock{{Type: "text", Text: "ok"}},
 				}},
 			},
@@ -553,6 +553,41 @@ func TestPrepareCoreRequestForVisual_MixedContent(t *testing.T) {
 	}
 }
 
+func TestPrepareCoreRequestForVisual_StripsImagesInsideToolResults(t *testing.T) {
+	req := &format.CoreRequest{
+		Model: "test-model",
+		Messages: []format.CoreMessage{{
+			Role: "tool",
+			Content: []format.CoreContentBlock{{
+				Type:      "tool_result",
+				ToolUseID: "call_view",
+				ToolResultContent: []format.CoreContentBlock{
+					{Type: "image", ImageData: "abc123", MediaType: "image/jpeg"},
+				},
+			}},
+		}},
+	}
+
+	stripped, images := prepareCoreRequestForVisual(req)
+
+	if len(images) != 1 {
+		t.Fatalf("images = %d, want 1", len(images))
+	}
+	if images[0].Data != "abc123" || images[0].MimeType != "image/jpeg" {
+		t.Fatalf("image = %+v", images[0])
+	}
+	toolResult := stripped.Messages[0].Content[0]
+	if toolResult.Type != "tool_result" {
+		t.Fatalf("content = %+v", stripped.Messages[0].Content)
+	}
+	if len(toolResult.ToolResultContent) != 1 || toolResult.ToolResultContent[0].Type != "text" {
+		t.Fatalf("tool result content = %+v", toolResult.ToolResultContent)
+	}
+	if !strings.Contains(toolResult.ToolResultContent[0].Text, "Image #1") {
+		t.Fatalf("placeholder missing: %+v", toolResult.ToolResultContent[0])
+	}
+}
+
 // ============================================================================
 // Multi-turn visual orchestration test (regression: strip across rounds)
 // ============================================================================
@@ -590,7 +625,7 @@ func TestCoreOrchestrator_ImageStrippedAcrossMultipleTurns(t *testing.T) {
 			{
 				ID: "turn3", Status: "completed", StopReason: "end_turn",
 				Messages: []format.CoreMessage{{
-					Role: "assistant",
+					Role:    "assistant",
 					Content: []format.CoreContentBlock{{Type: "text", Text: "final answer"}},
 				}},
 			},
@@ -666,4 +701,3 @@ func TestCoreOrchestrator_ImageStrippedAcrossMultipleTurns(t *testing.T) {
 			placeholderCount, firstMsg.Content)
 	}
 }
-

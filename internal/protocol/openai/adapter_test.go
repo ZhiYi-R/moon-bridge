@@ -60,6 +60,67 @@ func TestToCoreRequest_WithInstructions(t *testing.T) {
 	}
 }
 
+func TestToCoreRequest_AppendsInjectedTools(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{
+		InjectTools: func(context.Context) []format.CoreTool {
+			return []format.CoreTool{{
+				Name:        "visual_brief",
+				Description: "inspect attached image",
+				InputSchema: map[string]any{"type": "object"},
+			}}
+		},
+	})
+
+	req := &openai.ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`"describe the attached image"`),
+	}
+
+	result, err := adapter.ToCoreRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tools) != 1 {
+		t.Fatalf("got %d tools, want 1: %+v", len(result.Tools), result.Tools)
+	}
+	if result.Tools[0].Name != "visual_brief" {
+		t.Fatalf("tool name = %q, want visual_brief", result.Tools[0].Name)
+	}
+}
+
+func TestToCoreRequest_FunctionCallOutputImage(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+
+	req := &openai.ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{"type":"function_call","call_id":"call_view","name":"view_image","arguments":"{\"path\":\"dog.jpg\"}"},
+			{"type":"function_call_output","call_id":"call_view","output":[
+				{"type":"input_image","image_url":"data:image/jpeg;base64,abc123","detail":"original"}
+			]}
+		]`),
+	}
+
+	result, err := adapter.ToCoreRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 2 {
+		t.Fatalf("messages = %d, want 2: %+v", len(result.Messages), result.Messages)
+	}
+	toolResult := result.Messages[1].Content[0]
+	if toolResult.Type != "tool_result" || toolResult.ToolUseID != "call_view" {
+		t.Fatalf("tool result = %+v", toolResult)
+	}
+	if len(toolResult.ToolResultContent) != 1 {
+		t.Fatalf("tool result content = %+v", toolResult.ToolResultContent)
+	}
+	image := toolResult.ToolResultContent[0]
+	if image.Type != "image" || image.ImageData != "data:image/jpeg;base64,abc123" || image.MediaType != "image/jpeg" {
+		t.Fatalf("image block = %+v", image)
+	}
+}
+
 func TestFromCoreResponse_Basic(t *testing.T) {
 	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 

@@ -87,8 +87,8 @@ func (o *CoreOrchestrator) CreateCore(ctx context.Context, req *format.CoreReque
 		for _, toolUse := range toolUses {
 			result := o.executeCoreVisualTool(ctx, toolUse, availableImages)
 			toolResults = append(toolResults, format.CoreContentBlock{
-				Type:         "tool_result",
-				ToolUseID:    toolUse.ToolUseID,
+				Type:              "tool_result",
+				ToolUseID:         toolUse.ToolUseID,
 				ToolResultContent: []format.CoreContentBlock{{Type: "text", Text: result}},
 			})
 		}
@@ -122,23 +122,41 @@ func prepareCoreRequestForVisual(req *format.CoreRequest) (*format.CoreRequest, 
 		}
 		rewritten := make([]format.CoreContentBlock, 0, len(content))
 		for _, block := range content {
-			if block.Type != "image" {
-				rewritten = append(rewritten, block)
-				continue
-			}
-			image, ok := imageInputFromCoreBlock(block)
-			if !ok {
-				continue
-			}
-			availableImages = append(availableImages, image)
-			rewritten = append(rewritten, format.CoreContentBlock{
-				Type: "text",
-				Text: visualAttachmentText(len(availableImages)),
-			})
+			rewritten = append(rewritten, prepareCoreBlockForVisual(block, &availableImages))
 		}
 		req.Messages[messageIndex].Content = rewritten
 	}
 	return req, availableImages
+}
+
+func prepareCoreBlocksForVisual(blocks []format.CoreContentBlock, availableImages *[]ImageInput) []format.CoreContentBlock {
+	rewritten := make([]format.CoreContentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		rewritten = append(rewritten, prepareCoreBlockForVisual(block, availableImages))
+	}
+	return rewritten
+}
+
+func prepareCoreBlockForVisual(block format.CoreContentBlock, availableImages *[]ImageInput) format.CoreContentBlock {
+	if block.Type == "tool_result" {
+		block.ToolResultContent = prepareCoreBlocksForVisual(block.ToolResultContent, availableImages)
+		return block
+	}
+	if block.Type != "image" {
+		return block
+	}
+	image, ok := imageInputFromCoreBlock(block)
+	if !ok {
+		return format.CoreContentBlock{
+			Type: "text",
+			Text: "[Image was attached but could not be processed.]",
+		}
+	}
+	*availableImages = append(*availableImages, image)
+	return format.CoreContentBlock{
+		Type: "text",
+		Text: visualAttachmentText(len(*availableImages)),
+	}
 }
 
 // imageInputFromCoreBlock converts a Core image content block to ImageInput.

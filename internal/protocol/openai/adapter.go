@@ -15,8 +15,8 @@ import (
 	"strings"
 	"sync"
 
-	"moonbridge/internal/format"
 	"moonbridge/internal/extension/codextool"
+	"moonbridge/internal/format"
 )
 
 // ============================================================================
@@ -31,7 +31,6 @@ import (
 //
 // The adapter is stateless; all configuration is injected via the constructor.
 type OpenAIAdapter struct {
-
 	hooks format.CorePluginHooks
 
 	streamMu     sync.Mutex
@@ -111,6 +110,9 @@ func (a *OpenAIAdapter) ToCoreRequest(ctx context.Context, req any) (*format.Cor
 	if len(openaiReq.Tools) > 0 {
 		coreReq.Tools = flattenToolsWithNamespace(openaiReq.Tools, "")
 	}
+	if injected := a.hooks.InjectTools(format.ContextWithCoreRequest(ctx, coreReq)); len(injected) > 0 {
+		coreReq.Tools = append(coreReq.Tools, injected...)
+	}
 
 	// 6. Convert tool choice.
 	if len(openaiReq.ToolChoice) > 0 && string(openaiReq.ToolChoice) != "null" {
@@ -164,7 +166,6 @@ func (a *OpenAIAdapter) ToCoreRequest(ctx context.Context, req any) (*format.Cor
 	if len(openaiExt) > 0 {
 		coreReq.Extensions["openai"] = openaiExt
 	}
-
 
 	a.hooks.MutateCoreRequest(ctx, coreReq)
 
@@ -287,7 +288,6 @@ func (a *OpenAIAdapter) FromCoreResponse(ctx context.Context, resp *format.CoreR
 		}
 	}
 	response.Usage = usage
-
 
 	// Map error.
 	if resp.Error != nil {
@@ -1001,11 +1001,9 @@ func convertInput(raw json.RawMessage) ([]format.CoreMessage, []format.CoreConte
 			messages = append(messages, format.CoreMessage{
 				Role: "tool",
 				Content: []format.CoreContentBlock{{
-					Type:      "tool_result",
-					ToolUseID: item.CallID,
-					ToolResultContent: []format.CoreContentBlock{
-						{Type: "text", Text: outputToString(item.Output)},
-					},
+					Type:              "tool_result",
+					ToolUseID:         item.CallID,
+					ToolResultContent: outputToContentBlocks(item.Output),
 				}},
 			})
 			continue
@@ -1037,13 +1035,13 @@ func convertInput(raw json.RawMessage) ([]format.CoreMessage, []format.CoreConte
 
 		switch {
 		case item.Type == "function_call":
-		// NOTE: Reasoning alignment for inference models (o3/o4-mini):
-		// OpenAI requires a "reasoning" input item before each "function_call" item
-		// when using reasoning models. Currently, pendingReasoning blocks (from preceding
-		// reasoning input items) are merged into the next assistant message, but no
-		// dummy reasoning block is injected if pendingReasoning is empty.
-		// A future fix should add a dummy reasoning block here when:
-		// (a) the model is a reasoning model, and (b) pendingReasoning is empty.
+			// NOTE: Reasoning alignment for inference models (o3/o4-mini):
+			// OpenAI requires a "reasoning" input item before each "function_call" item
+			// when using reasoning models. Currently, pendingReasoning blocks (from preceding
+			// reasoning input items) are merged into the next assistant message, but no
+			// dummy reasoning block is injected if pendingReasoning is empty.
+			// A future fix should add a dummy reasoning block here when:
+			// (a) the model is a reasoning model, and (b) pendingReasoning is empty.
 
 			// function_call in input → tool_use assistant block.
 			// Collect into pendingFCBlocks to batch consecutive calls into a single assistant message.
@@ -1234,7 +1232,6 @@ func imageSourceFromRaw(raw json.RawMessage) string {
 // Tool Conversion
 // ============================================================================
 
-// convertTool converts an OpenAI Tool to a CoreTool.
 // convertToolChoice parses an OpenAI tool_choice JSON value into a CoreToolChoice.
 
 func convertToolChoice(raw json.RawMessage) (*format.CoreToolChoice, error) {
@@ -1366,7 +1363,6 @@ func outputToString(raw json.RawMessage) string {
 	return string(raw)
 }
 
-
 // localShellActionFromRaw parses tool input JSON into a ToolAction for local_shell.
 func localShellActionFromRaw(raw json.RawMessage) *ToolAction {
 	var input struct {
@@ -1456,7 +1452,7 @@ func convertToolWithNamespace(tool Tool, namespace string) []format.CoreTool {
 	ext := make(map[string]any)
 
 	switch tool.Type {
-case "function":
+	case "function":
 		ct := format.CoreTool{
 			Name:        name,
 			Description: tool.Description,
@@ -1592,4 +1588,18 @@ func customToolDescription(tool Tool, grammar string) string {
 		return "Use this custom tool with its raw freeform input in the input field."
 	}
 	return strings.Join(parts, "\n\n")
+}
+
+func outputToContentBlocks(raw json.RawMessage) []format.CoreContentBlock {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil
+	}
+	blocks := contentBlocksFromRaw(raw)
+	if len(blocks) > 0 {
+		return blocks
+	}
+	if text := outputToString(raw); text != "" {
+		return []format.CoreContentBlock{{Type: "text", Text: text}}
+	}
+	return nil
 }
