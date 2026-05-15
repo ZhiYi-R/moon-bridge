@@ -1134,7 +1134,56 @@ func convertInput(raw json.RawMessage) ([]format.CoreMessage, []format.CoreConte
 		pendingFCBlocks = nil
 	}
 
+	messages = stripOrphanedToolUse(messages)
 	return messages, system, nil
+}
+
+
+// stripOrphanedToolUse removes tool_use blocks from assistant messages that lack
+// a matching tool_result anywhere in the following messages.
+// Individual orphaned tool_use blocks are stripped; paired ones in the same
+// message are preserved.
+func stripOrphanedToolUse(messages []format.CoreMessage) []format.CoreMessage {
+	// Build a set of tool_result IDs present in tool-role messages.
+	resultIDs := make(map[string]bool)
+	for _, msg := range messages {
+		if msg.Role != "tool" {
+			continue
+		}
+		for _, block := range msg.Content {
+			if block.Type == "tool_result" && block.ToolUseID != "" {
+				resultIDs[block.ToolUseID] = true
+			}
+		}
+	}
+
+	result := make([]format.CoreMessage, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role != "assistant" {
+			result = append(result, msg)
+			continue
+		}
+		// Strip only orphaned tool_use blocks; keep paired ones.
+		var clean []format.CoreContentBlock
+		hasOrphaned := false
+		for _, block := range msg.Content {
+			if block.Type == "tool_use" && block.ToolUseID != "" && !resultIDs[block.ToolUseID] {
+				hasOrphaned = true
+				continue // skip this orphaned tool_use
+			}
+			clean = append(clean, block)
+		}
+		if !hasOrphaned {
+			result = append(result, msg)
+			continue
+		}
+		// Keep remaining non-orphaned content.
+		if len(clean) > 0 {
+			msg.Content = clean
+			result = append(result, msg)
+		}
+	}
+	return result
 }
 
 // contentPartRaw is a lightweight struct for content part JSON parsing.
