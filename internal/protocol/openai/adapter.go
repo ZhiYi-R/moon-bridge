@@ -1126,14 +1126,12 @@ func convertInput(raw json.RawMessage) ([]format.CoreMessage, []format.CoreConte
 		})
 	}
 
-	// Flush any remaining batched function_calls.
+	// Discard orphaned function_calls — no matching function_call_output in input.
+	// This happens when a session is aborted mid-turn (process killed before
+	// tool_result arrives). Flushing orphaned tool_use blocks causes upstream
+	// provider validation errors (422 -> 502 Bad Gateway, unrecoverable dead loop).
 	if len(pendingFCBlocks) > 0 {
-		flushed := make([]format.CoreContentBlock, len(pendingFCBlocks))
-		copy(flushed, pendingFCBlocks)
-		messages = append(messages, format.CoreMessage{
-			Role:    "assistant",
-			Content: flushed,
-		})
+		pendingFCBlocks = nil
 	}
 
 	return messages, system, nil
