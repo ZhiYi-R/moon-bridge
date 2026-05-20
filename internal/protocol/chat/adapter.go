@@ -138,7 +138,27 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 		}
 	}
 
+	// extra_body: vendor-specific top-level JSON switches (e.g. enable_search)
+	// sourced from CoreRequest.Extensions["openai_chat"]["extra_body"].
+	// The dispatcher writes this value once per request based on the resolved
+	// (provider, upstream-model) tuple. ChatRequest.MarshalJSON flattens it to
+	// the top-level JSON object of the outbound body.
+	if extra := extractChatExtraBody(req.Extensions); len(extra) > 0 {
+		chatReq.ExtraParams = extra
+	}
+
 	return chatReq, nil
+}
+
+// extractChatExtraBody returns the openai-chat extra_body map carried on a
+// CoreRequest, or nil when the key is absent or has the wrong shape.
+func extractChatExtraBody(ext map[string]any) map[string]any {
+	bag, ok := ext["openai_chat"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	extra, _ := bag["extra_body"].(map[string]any)
+	return extra
 }
 
 // =========================================================================

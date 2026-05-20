@@ -96,6 +96,18 @@ func (s *Server) activeProviderDefs() map[string]config.ProviderDef {
 	return nil
 }
 
+// modelExtraBody returns the vendor-specific top-level JSON switches configured
+// for a (provider, upstream-model) tuple via providers.<key>.offers[].overrides.extra_body.
+// Returns nil when no overrides are configured for this offer.
+func (s *Server) modelExtraBody(providerKey, upstreamModel string) map[string]any {
+	if snap := s.runtimeSnapshot(); snap != nil {
+		if meta, ok := snap.Config.ModelMetaFor(upstreamModel, providerKey); ok {
+			return meta.ExtraBody
+		}
+	}
+	return nil
+}
+
 func (s *Server) activeChatClient(providerKey string) any {
 	if snap := s.runtimeSnapshot(); snap != nil {
 		if def, ok := snap.Config.ProviderDefs[providerKey]; ok && def.Protocol == config.ProtocolOpenAIChat {

@@ -215,6 +215,24 @@ providers:
           output_price: 15
           cache_write_price: 3.75
           cache_read_price: 0.30
+  # Example: per-(provider, upstream-model) extra_body for vendor-specific
+  # switches that are not part of the OpenAI Chat Completions schema. Only
+  # honored on the openai-chat protocol dispatch path; the configured map is
+  # merged into the top-level JSON of each outbound request to that specific
+  # offer. Standard fields (model/messages/stream/...) take precedence and
+  # cannot be clobbered. Sibling offers on the same provider are unaffected.
+  #
+  # qwen-dashscope:
+  #   base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  #   api_key: "replace-with-dashscope-api-key"
+  #   protocol: openai-chat
+  #   offers:
+  #     - model: qwen3-plus
+  #       overrides:
+  #         extra_body:
+  #           enable_search: true
+  #     - model: deepseek-v4-pro
+  #       # No overrides.extra_body → no vendor switches injected.
 
 routes:
     # Optional aliases. Provider models are listed directly in the Codex catalog

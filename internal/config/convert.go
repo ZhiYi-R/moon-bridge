@@ -134,6 +134,10 @@ func toModelDefFileConfig(def ModelDef) ModelDefFileConfig {
 		}
 	}
 
+	if len(def.ExtraBody) > 0 {
+		m.ExtraBody = cloneAnyMap(def.ExtraBody)
+	}
+
 	return m
 }
 

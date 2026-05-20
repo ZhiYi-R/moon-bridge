@@ -105,6 +105,10 @@ providers:
           output_price: 8
           cache_write_price: 1
           cache_read_price: 0.25
+        overrides:
+          # 供应商私有顶层 JSON 字段（仅 openai-chat 协议）。作用域为当前 offer。
+          extra_body:
+            enable_search: true
 ```
 
 ### Protocol 类型
