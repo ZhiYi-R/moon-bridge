@@ -2602,3 +2602,125 @@ func TestFromCoreRequest_ToolCallArgumentsAreJSONString(t *testing.T) {
 		t.Errorf("unexpected city value: %v", obj["city"])
 	}
 }
+
+// ============================================================================
+// ChatRequest.ExtraParams: vendor-specific top-level passthrough
+// ============================================================================
+//
+// ExtraParams carries vendor-specific switches (such as enable_search for
+// Qwen/DashScope) that are not part of the OpenAI Chat Completions schema.
+// MarshalJSON must flatten these into the top-level JSON object so the upstream
+// sees them as siblings of model/messages. Standard fields take precedence —
+// ExtraParams cannot clobber model/messages/stream by accident.
+
+// decodeTopLevel marshals a ChatRequest and returns its top-level JSON object.
+func decodeTopLevel(t *testing.T, req chat.ChatRequest) map[string]json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Fatalf("Unmarshal top-level: %v (raw=%s)", err, data)
+	}
+	return top
+}
+
+func TestTypes_ChatRequest_ExtraParams_FlattensToTopLevel(t *testing.T) {
+	req := chat.ChatRequest{
+		Model:    "qwen3-max",
+		Messages: []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		ExtraParams: map[string]any{
+			"enable_search": true,
+		},
+	}
+	top := decodeTopLevel(t, req)
+
+	raw, ok := top["enable_search"]
+	if !ok {
+		t.Fatalf("enable_search missing from top-level JSON; keys=%v", keysOf(top))
+	}
+	if string(raw) != "true" {
+		t.Errorf("enable_search = %s, want true", raw)
+	}
+	if _, ok := top["model"]; !ok {
+		t.Error("model field disappeared after MarshalJSON")
+	}
+	if _, ok := top["messages"]; !ok {
+		t.Error("messages field disappeared after MarshalJSON")
+	}
+}
+
+func TestTypes_ChatRequest_ExtraParams_NilHasNoEffect(t *testing.T) {
+	req := chat.ChatRequest{
+		Model:       "gpt-4o",
+		Messages:    []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		ExtraParams: nil,
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "extra_params") {
+		t.Errorf("Output should not expose extra_params key: %s", data)
+	}
+	// Round-trip should still produce a valid ChatRequest with model intact.
+	var out chat.ChatRequest
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.Model != "gpt-4o" {
+		t.Errorf("Model = %q, want gpt-4o", out.Model)
+	}
+}
+
+func TestTypes_ChatRequest_ExtraParams_DoesNotOverrideExistingFields(t *testing.T) {
+	req := chat.ChatRequest{
+		Model:    "qwen3-max",
+		Messages: []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		ExtraParams: map[string]any{
+			"model":         "evil-override",
+			"enable_search": true,
+		},
+	}
+	top := decodeTopLevel(t, req)
+
+	var modelOut string
+	if err := json.Unmarshal(top["model"], &modelOut); err != nil {
+		t.Fatalf("decode model: %v", err)
+	}
+	if modelOut != "qwen3-max" {
+		t.Errorf("model = %q, want qwen3-max (extra_params must not clobber real field)", modelOut)
+	}
+	if string(top["enable_search"]) != "true" {
+		t.Errorf("enable_search = %s, want true", top["enable_search"])
+	}
+}
+
+func TestTypes_ChatRequest_ExtraParams_MultipleKeys(t *testing.T) {
+	req := chat.ChatRequest{
+		Model:    "qwen3-max",
+		Messages: []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		ExtraParams: map[string]any{
+			"enable_search": true,
+			"some_int":      42,
+		},
+	}
+	top := decodeTopLevel(t, req)
+
+	if string(top["enable_search"]) != "true" {
+		t.Errorf("enable_search = %s, want true", top["enable_search"])
+	}
+	if string(top["some_int"]) != "42" {
+		t.Errorf("some_int = %s, want 42", top["some_int"])
+	}
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

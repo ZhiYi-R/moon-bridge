@@ -1074,3 +1074,79 @@ routes:
 		t.Fatalf("DisplayName = %q, want \"My Custom Display Name\"", route.DisplayName)
 	}
 }
+
+// TestLoadFromYAMLParsesOfferExtraBody verifies that vendor-specific top-level
+// JSON switches written under providers.<key>.offers[].overrides.extra_body are
+// propagated to the corresponding ModelMeta in cfg.ProviderDefs[provider].Models[upstream].
+//
+// This is the (provider, upstream-model) tuple granularity: two different offers
+// on the same provider, and the same model name offered by two different providers,
+// each carry independent ExtraBody maps.
+func TestLoadFromYAMLParsesOfferExtraBody(t *testing.T) {
+	cfg, err := config.LoadFromYAML([]byte(`
+mode: Transform
+models:
+  qwen3-plus:
+    context_window: 1000000
+  deepseek-v4-pro:
+    context_window: 1000000
+providers:
+  aliyun:
+    base_url: https://dashscope.aliyuncs.com/compatible-mode/v1
+    api_key: aliyun-key
+    protocol: openai-chat
+    offers:
+      - model: qwen3-plus
+        overrides:
+          extra_body:
+            enable_search: true
+            extra_flag: 1
+      - model: deepseek-v4-pro
+  bailian:
+    base_url: https://bailian.example.test/v1
+    api_key: bailian-key
+    protocol: openai-chat
+    offers:
+      - model: qwen3-plus
+        overrides:
+          extra_body:
+            enable_search: false
+routes:
+  qwen:
+    model: qwen3-plus
+    provider: aliyun
+`))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+
+	aliyunQwen, ok := cfg.ProviderDefs["aliyun"].Models["qwen3-plus"]
+	if !ok {
+		t.Fatalf("ProviderDefs[aliyun].Models[qwen3-plus] missing")
+	}
+	if aliyunQwen.ExtraBody["enable_search"] != true {
+		t.Errorf("aliyun/qwen3-plus ExtraBody[enable_search] = %v, want true", aliyunQwen.ExtraBody["enable_search"])
+	}
+	if aliyunQwen.ExtraBody["extra_flag"] != 1 {
+		t.Errorf("aliyun/qwen3-plus ExtraBody[extra_flag] = %v, want 1", aliyunQwen.ExtraBody["extra_flag"])
+	}
+
+	aliyunDeepseek, ok := cfg.ProviderDefs["aliyun"].Models["deepseek-v4-pro"]
+	if !ok {
+		t.Fatalf("ProviderDefs[aliyun].Models[deepseek-v4-pro] missing")
+	}
+	if len(aliyunDeepseek.ExtraBody) != 0 {
+		t.Errorf("aliyun/deepseek-v4-pro ExtraBody = %+v, want empty when no overrides.extra_body is set", aliyunDeepseek.ExtraBody)
+	}
+
+	bailianQwen, ok := cfg.ProviderDefs["bailian"].Models["qwen3-plus"]
+	if !ok {
+		t.Fatalf("ProviderDefs[bailian].Models[qwen3-plus] missing")
+	}
+	if bailianQwen.ExtraBody["enable_search"] != false {
+		t.Errorf("bailian/qwen3-plus ExtraBody[enable_search] = %v, want false (independent from aliyun's same-name offer)", bailianQwen.ExtraBody["enable_search"])
+	}
+	if _, hasExtraFlag := bailianQwen.ExtraBody["extra_flag"]; hasExtraFlag {
+		t.Errorf("bailian/qwen3-plus should not carry aliyun's extra_flag key — per-(provider, model) isolation broken")
+	}
+}
