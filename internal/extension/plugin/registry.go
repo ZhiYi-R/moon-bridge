@@ -525,5 +525,11 @@ func (r *Registry) CorePluginHooks() format.CorePluginHooks {
 			}
 		}
 	}
+
+	// Wire codex_tool_proxy PatchProxyDecider into DisablePatchProxy hook.
+	if ppd, ok := r.Plugin("codex_tool_proxy").(PatchProxyDecider); ok {
+		hooks.DisablePatchProxy = ppd.DisablePatchProxy
+	}
+
 	return hooks
 }
