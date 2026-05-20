@@ -159,6 +159,13 @@ type CorePluginHooks struct {
 	// PrependThinkingToAssistant injects thinking content before assistant messages.
 	// deepseek_v4 uses this for reasoning replay.
 	PrependThinkingToAssistant func(ctx context.Context, req *CoreRequest)
+
+	// DisablePatchProxy reports whether apply_patch proxy expansion should be
+	// skipped for the given model alias. When true, apply_patch custom tools
+	// are passed through as ToolRaw instead of being expanded into five
+	// structured proxy tools (add_file, delete_file, update_file, replace_file, batch).
+	// Populated by the codex_tool_proxy extension via the plugin registry.
+	DisablePatchProxy func(model string) bool
 }
 
 // WithDefaults returns a copy of hooks with all nil function fields
@@ -201,6 +208,9 @@ func (hooks CorePluginHooks) WithDefaults() CorePluginHooks {
 	}
 	if hooks.PrependThinkingToAssistant == nil {
 		hooks.PrependThinkingToAssistant = func(_ context.Context, _ *CoreRequest) {}
+	}
+	if hooks.DisablePatchProxy == nil {
+		hooks.DisablePatchProxy = func(_ string) bool { return false }
 	}
 	return hooks
 }

@@ -9,6 +9,7 @@ import (
 	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	kimiworkaround "moonbridge/internal/extension/kimi_workaround"
 	mbtrics "moonbridge/internal/extension/metrics"
+	codextoolproxy "moonbridge/internal/extension/codex_tool_proxy"
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/config"
@@ -36,6 +37,7 @@ func (cat BuiltinExtensionCatalog) ConfigSpecs() []config.ExtensionConfigSpec {
 	specs = append(specs, dbsqlite.ConfigSpecs()...)
 	specs = append(specs, dbd1.ConfigSpecs()...)
 	specs = append(specs, mbtrics.ConfigSpecs()...)
+	specs = append(specs, codextoolproxy.ConfigSpecs()...)
 	return specs
 }
 
@@ -58,5 +60,6 @@ func (cat BuiltinExtensionCatalog) NewRegistry(logger *slog.Logger, cfg config.C
 	registry.Register(d1)
 
 	registry.Register(mbtrics.NewPlugin())
+	registry.Register(codextoolproxy.NewPlugin())
 	return registry
 }

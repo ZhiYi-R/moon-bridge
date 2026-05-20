@@ -32,6 +32,7 @@ import (
 // The adapter is stateless; all configuration is injected via the constructor.
 type OpenAIAdapter struct {
 	hooks format.CorePluginHooks
+	disablePatchProxy func(string) bool
 
 	streamMu     sync.Mutex
 	streamEvents []StreamEvent
@@ -41,6 +42,7 @@ type OpenAIAdapter struct {
 func NewOpenAIAdapter(hooks format.CorePluginHooks) *OpenAIAdapter {
 	return &OpenAIAdapter{
 		hooks: hooks.WithDefaults(),
+		disablePatchProxy: hooks.DisablePatchProxy,
 	}
 }
 
@@ -108,7 +110,7 @@ func (a *OpenAIAdapter) ToCoreRequest(ctx context.Context, req any) (*format.Cor
 
 	// 5. Convert tools.
 	if len(openaiReq.Tools) > 0 {
-		coreReq.Tools = flattenToolsWithNamespace(openaiReq.Tools, "")
+		coreReq.Tools = flattenToolsWithNamespace(openaiReq.Tools, "", a.disablePatchProxy)
 	}
 	if injected := a.hooks.InjectTools(format.ContextWithCoreRequest(ctx, coreReq)); len(injected) > 0 {
 		coreReq.Tools = append(coreReq.Tools, injected...)
@@ -1521,7 +1523,7 @@ func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map
 // Function/web_search/file_search/code_interpreter/computer_use_preview pass through.
 // Custom tools are expanded using codex package helpers.
 // Namespace tools are recursively flattened.
-func convertToolWithNamespace(tool Tool, namespace string) []format.CoreTool {
+func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy func(string) bool) []format.CoreTool {
 	name := namespacedToolName(namespace, tool.Name)
 	ext := make(map[string]any)
 
@@ -1571,7 +1573,7 @@ func convertToolWithNamespace(tool Tool, namespace string) []format.CoreTool {
 
 	case "namespace":
 		ns := namespacedToolName(namespace, tool.Name)
-		return flattenToolsWithNamespace(tool.Tools, ns)
+		return flattenToolsWithNamespace(tool.Tools, ns, disablePatchProxy)
 
 	case "custom":
 		grammar := codextool.CustomToolGrammar(tool.Format)
@@ -1585,11 +1587,14 @@ func convertToolWithNamespace(tool Tool, namespace string) []format.CoreTool {
 			return []format.CoreTool{ct}
 		}
 		if codextool.IsApplyPatchGrammar(grammar) {
-			proxyTools := codextool.ApplyPatchProxyCoreTools(name)
-			for i := range proxyTools {
-				codextool.AnnotateCoreTool(&proxyTools[i], codextool.ToolApplyPatch, tool.Name, "")
+			if disablePatchProxy == nil || !disablePatchProxy(tool.Name) {
+				proxyTools := codextool.ApplyPatchProxyCoreTools(name)
+				for i := range proxyTools {
+					codextool.AnnotateCoreTool(&proxyTools[i], codextool.ToolApplyPatch, tool.Name, "")
+				}
+				return proxyTools
 			}
-			return proxyTools
+			// Proxy disabled: fall through to ToolRaw.
 		}
 		if codextool.IsExecGrammar(grammar) {
 			ct := format.CoreTool{
@@ -1622,10 +1627,10 @@ func convertToolWithNamespace(tool Tool, namespace string) []format.CoreTool {
 
 // flattenToolsWithNamespace recursively flattens namespace tools and converts
 // individual tools, building a flat list of CoreTools suitable for upstream providers.
-func flattenToolsWithNamespace(openaiTools []Tool, namespace string) []format.CoreTool {
+func flattenToolsWithNamespace(openaiTools []Tool, namespace string, disablePatchProxy func(string) bool) []format.CoreTool {
 	var result []format.CoreTool
 	for _, t := range openaiTools {
-		converted := convertToolWithNamespace(t, namespace)
+		converted := convertToolWithNamespace(t, namespace, disablePatchProxy)
 		result = append(result, converted...)
 	}
 	// Deduplicate by name: Codex may send the same tool both as a namespace member
