@@ -168,6 +168,12 @@ type ModelMeta struct {
 	// WebSearch holds model-level web search config (overrides provider-level).
 	WebSearch  WebSearchConfig
 	Extensions map[string]ExtensionSettings
+	// ExtraBody carries vendor-specific top-level JSON switches that the
+	// openai-chat protocol dispatcher merges into the outbound Chat Completions
+	// request body (e.g. {"enable_search": true} for Qwen/DashScope). Scoped
+	// per (provider, upstream-model) tuple — sourced from
+	// providers.<key>.offers[].overrides.extra_body in YAML.
+	ExtraBody map[string]any
 }
 
 // ModelPricing holds per-provider model pricing.
@@ -200,6 +206,12 @@ type ModelDef struct {
 	SupportsImageDetailOriginal bool
 	WebSearch                   WebSearchConfig
 	Extensions                  map[string]ExtensionSettings
+	// ExtraBody carries vendor-specific top-level JSON switches. On ModelDef
+	// it exists only as the intermediate type used by the offer-override merge
+	// pipeline; it is not exposed at the top-level `models:` YAML segment.
+	// Final propagation target is ModelMeta.ExtraBody, populated per
+	// (provider, upstream-model) tuple via providers.<key>.offers[].overrides.extra_body.
+	ExtraBody map[string]any
 }
 
 // OfferEntry declares that a provider offers a model defined in Models.

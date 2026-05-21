@@ -119,6 +119,7 @@ type ModelDefFileConfig struct {
 	SupportsImageDetailOriginal *bool                            `yaml:"supports_image_detail_original,omitempty" json:"supports_image_detail_original,omitempty"`
 	WebSearch                   WebSearchFileConfig              `yaml:"web_search,omitempty" json:"web_search,omitempty"`
 	Extensions                  map[string]ExtensionFileConfig   `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	ExtraBody                   map[string]any                   `yaml:"extra_body,omitempty" json:"extra_body,omitempty"`
 }
 
 type OfferFileConfig struct {
@@ -611,6 +612,9 @@ func mergeModelDefOverrides(base ModelDef, override ModelDefFileConfig) ModelDef
 			}
 		}
 	}
+	if len(override.ExtraBody) > 0 {
+		out.ExtraBody = cloneAnyMap(override.ExtraBody)
+	}
 	return out
 }
 
@@ -650,6 +654,9 @@ func applyModelOverrides(meta *ModelMeta, override ModelDef) {
 	}
 	if override.SupportsImageDetailOriginal {
 		meta.SupportsImageDetailOriginal = true
+	}
+	if len(override.ExtraBody) > 0 {
+		meta.ExtraBody = cloneAnyMap(override.ExtraBody)
 	}
 }
 

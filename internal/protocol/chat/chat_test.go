@@ -7,11 +7,15 @@ package chat_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
+	visualpkg "moonbridge/internal/extension/visual"
 	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/chat"
 )
@@ -2600,5 +2604,457 @@ func TestFromCoreRequest_ToolCallArgumentsAreJSONString(t *testing.T) {
 	}
 	if obj["city"] != "Paris" {
 		t.Errorf("unexpected city value: %v", obj["city"])
+	}
+}
+
+// ============================================================================
+// ChatRequest.ExtraParams: vendor-specific top-level passthrough
+// ============================================================================
+//
+// ExtraParams carries vendor-specific switches (such as enable_search for
+// Qwen/DashScope) that are not part of the OpenAI Chat Completions schema.
+// MarshalJSON must flatten these into the top-level JSON object so the upstream
+// sees them as siblings of model/messages. Standard fields take precedence —
+// ExtraParams cannot clobber model/messages/stream by accident.
+
+// decodeTopLevel marshals a ChatRequest and returns its top-level JSON object.
+func decodeTopLevel(t *testing.T, req chat.ChatRequest) map[string]json.RawMessage {
+	t.Helper()
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(data, &top); err != nil {
+		t.Fatalf("Unmarshal top-level: %v (raw=%s)", err, data)
+	}
+	return top
+}
+
+func TestTypes_ChatRequest_ExtraParams_FlattensToTopLevel(t *testing.T) {
+	req := chat.ChatRequest{
+		Model:    "qwen3-max",
+		Messages: []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		ExtraParams: map[string]any{
+			"enable_search": true,
+		},
+	}
+	top := decodeTopLevel(t, req)
+
+	raw, ok := top["enable_search"]
+	if !ok {
+		t.Fatalf("enable_search missing from top-level JSON; keys=%v", keysOf(top))
+	}
+	if string(raw) != "true" {
+		t.Errorf("enable_search = %s, want true", raw)
+	}
+	if _, ok := top["model"]; !ok {
+		t.Error("model field disappeared after MarshalJSON")
+	}
+	if _, ok := top["messages"]; !ok {
+		t.Error("messages field disappeared after MarshalJSON")
+	}
+}
+
+func TestTypes_ChatRequest_ExtraParams_NilHasNoEffect(t *testing.T) {
+	req := chat.ChatRequest{
+		Model:       "gpt-4o",
+		Messages:    []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		ExtraParams: nil,
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "extra_params") {
+		t.Errorf("Output should not expose extra_params key: %s", data)
+	}
+	// Round-trip should still produce a valid ChatRequest with model intact.
+	var out chat.ChatRequest
+	if err := json.Unmarshal(data, &out); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if out.Model != "gpt-4o" {
+		t.Errorf("Model = %q, want gpt-4o", out.Model)
+	}
+}
+
+func TestTypes_ChatRequest_ExtraParams_DoesNotOverrideExistingFields(t *testing.T) {
+	req := chat.ChatRequest{
+		Model:    "qwen3-max",
+		Messages: []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		ExtraParams: map[string]any{
+			"model":         "evil-override",
+			"enable_search": true,
+		},
+	}
+	top := decodeTopLevel(t, req)
+
+	var modelOut string
+	if err := json.Unmarshal(top["model"], &modelOut); err != nil {
+		t.Fatalf("decode model: %v", err)
+	}
+	if modelOut != "qwen3-max" {
+		t.Errorf("model = %q, want qwen3-max (extra_params must not clobber real field)", modelOut)
+	}
+	if string(top["enable_search"]) != "true" {
+		t.Errorf("enable_search = %s, want true", top["enable_search"])
+	}
+}
+
+func TestTypes_ChatRequest_ExtraParams_MultipleKeys(t *testing.T) {
+	req := chat.ChatRequest{
+		Model:    "qwen3-max",
+		Messages: []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		ExtraParams: map[string]any{
+			"enable_search": true,
+			"some_int":      42,
+		},
+	}
+	top := decodeTopLevel(t, req)
+
+	if string(top["enable_search"]) != "true" {
+		t.Errorf("enable_search = %s, want true", top["enable_search"])
+	}
+	if string(top["some_int"]) != "42" {
+		t.Errorf("some_int = %s, want 42", top["some_int"])
+	}
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestAdapter_ChatExtraBody_FromExtensions verifies that
+// CoreRequest.Extensions["openai_chat"]["extra_body"] is propagated to
+// ChatRequest.ExtraParams during FromCoreRequest. This is the single read site
+// that every outbound chat completion call (direct, streaming, and per-round
+// inside the visual orchestrator) shares, so the test guards the central
+// behaviour rather than each call-site individually.
+func TestAdapter_ChatExtraBody_FromExtensions(t *testing.T) {
+	adapter := newTestAdapter()
+	core := &format.CoreRequest{
+		Model:    "deepseek-v4-pro",
+		Messages: []format.CoreMessage{{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}}},
+		Extensions: map[string]any{
+			"openai_chat": map[string]any{
+				"extra_body": map[string]any{
+					"enable_search": true,
+					"extra_flag":    1,
+				},
+			},
+		},
+	}
+	upstream, err := adapter.FromCoreRequest(context.Background(), core)
+	if err != nil {
+		t.Fatalf("FromCoreRequest: %v", err)
+	}
+	chatReq, ok := upstream.(*chat.ChatRequest)
+	if !ok {
+		t.Fatalf("upstream type = %T, want *chat.ChatRequest", upstream)
+	}
+	if chatReq.ExtraParams["enable_search"] != true {
+		t.Errorf("ExtraParams[enable_search] = %v, want true", chatReq.ExtraParams["enable_search"])
+	}
+	if chatReq.ExtraParams["extra_flag"] != 1 {
+		t.Errorf("ExtraParams[extra_flag] = %v, want 1", chatReq.ExtraParams["extra_flag"])
+	}
+	// Confirm the keys are flattened to the top level of the marshaled JSON.
+	data, err := json.Marshal(chatReq)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"enable_search":true`) {
+		t.Errorf("outbound body missing enable_search at top level: %s", data)
+	}
+}
+
+func TestAdapter_ChatExtraBody_AbsentExtensionLeavesExtraParamsNil(t *testing.T) {
+	adapter := newTestAdapter()
+	core := &format.CoreRequest{
+		Model:    "deepseek-v4-pro",
+		Messages: []format.CoreMessage{{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}}},
+	}
+	upstream, err := adapter.FromCoreRequest(context.Background(), core)
+	if err != nil {
+		t.Fatalf("FromCoreRequest: %v", err)
+	}
+	chatReq := upstream.(*chat.ChatRequest)
+	if chatReq.ExtraParams != nil {
+		t.Errorf("ExtraParams = %+v, want nil when Extensions carries no openai_chat bag", chatReq.ExtraParams)
+	}
+	data, _ := json.Marshal(chatReq)
+	if strings.Contains(string(data), "enable_search") || strings.Contains(string(data), "extra_body") {
+		t.Errorf("outbound body should not mention vendor keys when none are configured: %s", data)
+	}
+}
+
+// ============================================================================
+// extra_body 在三条出口路径上的端到端透传
+// ============================================================================
+//
+// 用 httptest.NewServer 拦截 chat.Client 真正发出去的请求体，断言
+// CoreRequest.Extensions["openai_chat"]["extra_body"] 里配的供应商私有字段
+// 出现在出口 JSON 的顶层，并且不会覆盖标准字段。覆盖三种出口路径：
+//
+//  1. 非流式直连：chat.Client.CreateChat
+//  2. 流式：chat.Client.StreamChat
+//  3. visual orchestrator 编排：每轮通过 ChatProviderAdapter.FromCoreRequest
+//     重新构建 ChatRequest 后转发
+//
+// 任何一条路径漏掉读取 Extensions 都会被对应的测试捕获。
+
+// extraBodyCoreRequest builds a CoreRequest that carries the vendor switches
+// the dispatcher would have written based on the resolved (provider, upstream-model).
+func extraBodyCoreRequest() *format.CoreRequest {
+	return &format.CoreRequest{
+		Model: "deepseek-v4-pro",
+		Messages: []format.CoreMessage{{
+			Role:    "user",
+			Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}},
+		}},
+		Extensions: map[string]any{
+			"openai_chat": map[string]any{
+				"extra_body": map[string]any{
+					"enable_search": true,
+					"extra_flag":    1,
+				},
+			},
+		},
+	}
+}
+
+// assertExtraBodyOnTopLevel decodes a captured chat completion request body
+// and asserts the vendor switches landed at the top level of the JSON object,
+// while the standard fields remain intact.
+func assertExtraBodyOnTopLevel(t *testing.T, captured []byte, label string) {
+	t.Helper()
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(captured, &top); err != nil {
+		t.Fatalf("%s: outbound body is not valid JSON: %v (raw=%s)", label, err, captured)
+	}
+	if string(top["enable_search"]) != "true" {
+		t.Errorf("%s: top-level enable_search = %s, want true (raw=%s)", label, top["enable_search"], captured)
+	}
+	if string(top["extra_flag"]) != "1" {
+		t.Errorf("%s: top-level extra_flag = %s, want 1 (raw=%s)", label, top["extra_flag"], captured)
+	}
+	var model string
+	if err := json.Unmarshal(top["model"], &model); err != nil {
+		t.Fatalf("%s: cannot decode top-level model: %v", label, err)
+	}
+	if model != "deepseek-v4-pro" {
+		t.Errorf("%s: top-level model = %q, want deepseek-v4-pro (raw=%s)", label, model, captured)
+	}
+	if _, ok := top["messages"]; !ok {
+		t.Errorf("%s: top-level messages field disappeared (raw=%s)", label, captured)
+	}
+}
+
+func TestOpenAIChat_ExtraBody_PropagatesOnNonStreamDirect(t *testing.T) {
+	ctx := context.Background()
+
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{"id":"x","object":"chat.completion","model":"m","choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":"ok"}}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`)
+	}))
+	defer srv.Close()
+
+	adapter := newTestAdapter()
+	upstreamAny, err := adapter.FromCoreRequest(ctx, extraBodyCoreRequest())
+	if err != nil {
+		t.Fatalf("FromCoreRequest: %v", err)
+	}
+	chatReq := upstreamAny.(*chat.ChatRequest)
+
+	client := chat.NewClient(chat.ClientConfig{BaseURL: srv.URL, APIKey: "k", Client: srv.Client()})
+	if _, err := client.CreateChat(ctx, chatReq); err != nil {
+		t.Fatalf("CreateChat: %v", err)
+	}
+
+	assertExtraBodyOnTopLevel(t, captured, "non-stream direct")
+}
+
+func TestOpenAIChat_ExtraBody_PropagatesOnStreaming(t *testing.T) {
+	ctx := context.Background()
+
+	var captured []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured, _ = io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"ok\"},\"finish_reason\":null}]}\n\n")
+		fmt.Fprint(w, "data: {\"id\":\"x\",\"object\":\"chat.completion.chunk\",\"model\":\"m\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}\n\n")
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	adapter := newTestAdapter()
+	upstreamAny, err := adapter.FromCoreRequest(ctx, extraBodyCoreRequest())
+	if err != nil {
+		t.Fatalf("FromCoreRequest: %v", err)
+	}
+	chatReq := upstreamAny.(*chat.ChatRequest)
+	chatReq.Stream = true
+	chatReq.StreamOptions = &chat.StreamOptions{IncludeUsage: true}
+
+	client := chat.NewClient(chat.ClientConfig{BaseURL: srv.URL, APIKey: "k", Client: srv.Client()})
+	stream, err := client.StreamChat(ctx, chatReq)
+	if err != nil {
+		t.Fatalf("StreamChat: %v", err)
+	}
+	for range stream {
+	}
+
+	assertExtraBodyOnTopLevel(t, captured, "streaming")
+
+	var top map[string]json.RawMessage
+	_ = json.Unmarshal(captured, &top)
+	if string(top["stream"]) != "true" {
+		t.Errorf("streaming: top-level stream = %s, want true (raw=%s)", top["stream"], captured)
+	}
+}
+
+// TestOpenAIChat_ExtraBody_PropagatesThroughVisualOrchestrator guards the
+// path that triggered the original bug. With visual orchestration enabled the
+// outbound chat completion is built per-round by ChatProviderAdapter.FromCoreRequest
+// against a cloned CoreRequest, so the extra_body bag must survive both the
+// orchestrator clone and the adapter conversion. Every upstream call the
+// orchestrator makes must carry the configured vendor switches at the top level.
+func TestOpenAIChat_ExtraBody_PropagatesThroughVisualOrchestrator(t *testing.T) {
+	ctx := context.Background()
+
+	type observed struct {
+		mu     sync.Mutex
+		bodies [][]byte
+		rounds int
+	}
+	upstreamObs := &observed{}
+	visualObs := &observed{}
+
+	upstreamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		upstreamObs.mu.Lock()
+		upstreamObs.rounds++
+		round := upstreamObs.rounds
+		upstreamObs.bodies = append(upstreamObs.bodies, body)
+		upstreamObs.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if round == 1 {
+			fmt.Fprint(w, `{
+				"id":"chatcmpl_upstream_1","object":"chat.completion","model":"deepseek-test",
+				"choices":[{"index":0,"finish_reason":"tool_calls","message":{
+					"role":"assistant","content":null,
+					"tool_calls":[{
+						"id":"call_visual_1","type":"function",
+						"function":{"name":"visual_brief","arguments":"{\"image_refs\":[\"Image #1\"],\"context\":\"describe\"}"}
+					}]
+				}}],
+				"usage":{"prompt_tokens":50,"completion_tokens":10,"total_tokens":60}
+			}`)
+			return
+		}
+		fmt.Fprint(w, `{
+			"id":"chatcmpl_upstream_2","object":"chat.completion","model":"deepseek-test",
+			"choices":[{"index":0,"finish_reason":"stop","message":{
+				"role":"assistant","content":"a chat screenshot"
+			}}],
+			"usage":{"prompt_tokens":80,"completion_tokens":12,"total_tokens":92}
+		}`)
+	}))
+	defer upstreamSrv.Close()
+
+	visualSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		visualObs.mu.Lock()
+		visualObs.rounds++
+		visualObs.bodies = append(visualObs.bodies, body)
+		visualObs.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprint(w, `{
+			"id":"chatcmpl_visual_1","object":"chat.completion","model":"qwen-vl-test",
+			"choices":[{"index":0,"finish_reason":"stop","message":{
+				"role":"assistant","content":"a chat screenshot with two people"
+			}}],
+			"usage":{"prompt_tokens":200,"completion_tokens":10,"total_tokens":210}
+		}`)
+	}))
+	defer visualSrv.Close()
+
+	hooks := format.CorePluginHooks{}.WithDefaults()
+	upstreamAdapter := chat.NewChatProviderAdapter(2048, nil, hooks)
+	visualAdapter := chat.NewChatProviderAdapter(2048, nil, hooks)
+
+	upstreamChatClient := chat.NewClient(chat.ClientConfig{BaseURL: upstreamSrv.URL, APIKey: "k", Client: upstreamSrv.Client()})
+	visualChatClient := chat.NewClient(chat.ClientConfig{BaseURL: visualSrv.URL, APIKey: "k", Client: visualSrv.Client()})
+
+	chatCoreProvider := func(adapter *chat.ChatProviderAdapter, client *chat.Client) visualpkg.CoreProvider {
+		return visualpkg.CoreProviderFunc(func(ctx context.Context, req *format.CoreRequest) (*format.CoreResponse, error) {
+			upstreamAny, err := adapter.FromCoreRequest(ctx, req)
+			if err != nil {
+				return nil, err
+			}
+			chatReq := upstreamAny.(*chat.ChatRequest)
+			chatResp, err := client.CreateChat(ctx, chatReq)
+			if err != nil {
+				return nil, err
+			}
+			return adapter.ToCoreResponse(ctx, chatResp)
+		})
+	}
+
+	bridge := visualpkg.NewCoreBridge(
+		chatCoreProvider(upstreamAdapter, upstreamChatClient),
+		chatCoreProvider(visualAdapter, visualChatClient),
+		"qwen-vl-test", 4, 2048,
+	)
+
+	coreReq := &format.CoreRequest{
+		Model: "deepseek-test",
+		Messages: []format.CoreMessage{{
+			Role: "user",
+			Content: []format.CoreContentBlock{
+				{Type: "text", Text: "describe the image"},
+				{Type: "image", ImageData: "ZHVtbXlpbWFnZQ==", MediaType: "image/png"},
+			},
+		}},
+		ToolChoice: &format.CoreToolChoice{Mode: "auto"},
+		Extensions: map[string]any{
+			"openai_chat": map[string]any{
+				"extra_body": map[string]any{
+					"enable_search": true,
+					"extra_flag":    1,
+				},
+			},
+		},
+	}
+
+	if _, err := bridge.CreateCore(ctx, coreReq); err != nil {
+		t.Fatalf("CreateCore: %v", err)
+	}
+
+	if upstreamObs.rounds != 2 {
+		t.Fatalf("upstream rounds = %d, want 2", upstreamObs.rounds)
+	}
+	for i, body := range upstreamObs.bodies {
+		var top map[string]json.RawMessage
+		if err := json.Unmarshal(body, &top); err != nil {
+			t.Fatalf("upstream round %d body is not valid JSON: %v (raw=%s)", i+1, err, body)
+		}
+		if string(top["enable_search"]) != "true" {
+			t.Errorf("upstream round %d: enable_search = %s, want true (raw=%s)", i+1, top["enable_search"], body)
+		}
+		if string(top["extra_flag"]) != "1" {
+			t.Errorf("upstream round %d: extra_flag = %s, want 1 (raw=%s)", i+1, top["extra_flag"], body)
+		}
 	}
 }

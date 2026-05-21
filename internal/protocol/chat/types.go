@@ -23,6 +23,45 @@ type ChatRequest struct {
 	StreamOptions     *StreamOptions  `json:"stream_options,omitempty"`
 	Metadata          map[string]any  `json:"metadata,omitempty"`
 	User              string          `json:"user,omitempty"`
+
+	// ExtraParams holds vendor-specific top-level JSON fields merged at marshal
+	// time (e.g. {"enable_search": true} for Qwen/DashScope). It is not a JSON
+	// field itself; MarshalJSON flattens it into the top-level object. Keys
+	// that collide with already-serialized fields are dropped, so this cannot
+	// clobber model/messages/stream/etc.
+	ExtraParams map[string]any `json:"-"`
+}
+
+// MarshalJSON flattens ExtraParams into the top-level JSON object. Standard
+// fields take precedence; ExtraParams entries are added only when their key
+// is not already present in the serialized base output.
+func (r ChatRequest) MarshalJSON() ([]byte, error) {
+	type alias ChatRequest
+	base, err := json.Marshal(alias(r))
+	if err != nil {
+		return nil, err
+	}
+	if len(r.ExtraParams) == 0 {
+		return base, nil
+	}
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(base, &merged); err != nil {
+		return nil, err
+	}
+	if merged == nil {
+		merged = make(map[string]json.RawMessage, len(r.ExtraParams))
+	}
+	for k, v := range r.ExtraParams {
+		if _, exists := merged[k]; exists {
+			continue
+		}
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return nil, err
+		}
+		merged[k] = raw
+	}
+	return json.Marshal(merged)
 }
 
 // ChatMessage represents a single message in the conversation.

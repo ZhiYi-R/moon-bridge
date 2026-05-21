@@ -177,6 +177,12 @@ func (s *Server) handleWithAdapters(
 	wsInjected := s.injectCoreWebSearch(ctx, coreReq, preferred, openAIReq, wsMode)
 	searchCfg := s.resolvedSearchConfig(preferred.ProviderKey, openAIReq.Model)
 
+	// Inject (provider, upstream-model)-scoped extra_body into CoreRequest.Extensions
+	// once per request. The chat adapter consumes this in FromCoreRequest, so the
+	// same value is honored uniformly across direct, streaming, and visual-orchestrator
+	// paths — all of which call FromCoreRequest to build the outbound *chat.ChatRequest.
+	injectChatExtraBodyIntoCoreRequest(coreReq, s.modelExtraBody(preferred.ProviderKey, preferred.UpstreamModel))
+
 	upstreamAny, err := providerAdapter.FromCoreRequest(ctx, coreReq)
 	if err != nil {
 		log.Error("adapter path: FromCoreRequest failed", "error", err)
@@ -371,10 +377,10 @@ func (s *Server) handleWithAdapters(
 
 		record.ChatRequest = chatReq
 
-		// finalizeChatUpstream applies per-round mutations (cached reasoning
-		// replay) on every orchestrator round. prependCachedReasoningForChat
-		// is idempotent so duplicate application against the initial chatReq
-		// above is safe.
+		// finalizeChatUpstream applies per-round mutations on every orchestrator
+		// round: cached-reasoning replay. extra_body propagation is handled
+		// uniformly by the chat adapter via CoreRequest.Extensions, so it does
+		// not appear here.
 		finalizeChatUpstream := func(_ context.Context, upstream any) (any, error) {
 			req, ok := upstream.(*chat.ChatRequest)
 			if !ok {
@@ -2127,6 +2133,32 @@ func (p *chatProviderClient) StreamMessage(ctx context.Context, req any) (<-chan
 		}
 	}()
 	return out, nil
+}
+
+// injectChatExtraBodyIntoCoreRequest stores a (provider, upstream-model)-scoped
+// extra_body map inside CoreRequest.Extensions under the
+// Extensions["openai_chat"]["extra_body"] key. The chat adapter's FromCoreRequest
+// reads this key and translates it into ChatRequest.ExtraParams, which the
+// custom MarshalJSON flattens to the top-level JSON of each outbound chat
+// completion request.
+//
+// Centralizing the write here ensures every outbound chat completion call —
+// direct, streaming, and per-round inside the visual orchestrator — picks up
+// the same vendor switches, because all three paths go through FromCoreRequest.
+// No-ops when extra is empty.
+func injectChatExtraBodyIntoCoreRequest(coreReq *format.CoreRequest, extra map[string]any) {
+	if coreReq == nil || len(extra) == 0 {
+		return
+	}
+	if coreReq.Extensions == nil {
+		coreReq.Extensions = make(map[string]any)
+	}
+	bag, _ := coreReq.Extensions["openai_chat"].(map[string]any)
+	if bag == nil {
+		bag = make(map[string]any)
+	}
+	bag["extra_body"] = extra
+	coreReq.Extensions["openai_chat"] = bag
 }
 
 func normalizeAnthropicRequest(upstream any) (anthropic.MessageRequest, error) {
