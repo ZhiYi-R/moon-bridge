@@ -96,6 +96,26 @@ func (s *Server) activeProviderDefs() map[string]config.ProviderDef {
 	return nil
 }
 
+// routeMaxOutputTokens resolves the effective per-route max_output_tokens cap
+// for the given inbound model alias, falling back to the upstream provider
+// catalog metadata when the route does not declare its own value.
+// Returns 0 when no cap is configured (caller should leave defaults alone).
+func (s *Server) routeMaxOutputTokens(modelAlias string, preferred provider.ProviderCandidate) int {
+	snap := s.runtimeSnapshot()
+	if snap == nil {
+		return 0
+	}
+	if entry, ok := snap.Config.Routes[modelAlias]; ok && entry.MaxOutputTokens > 0 {
+		return entry.MaxOutputTokens
+	}
+	if def, ok := snap.Config.ProviderDefs[preferred.ProviderKey]; ok {
+		if meta, ok := def.Models[preferred.UpstreamModel]; ok && meta.MaxOutputTokens > 0 {
+			return meta.MaxOutputTokens
+		}
+	}
+	return 0
+}
+
 func (s *Server) activeChatClient(providerKey string) any {
 	if snap := s.runtimeSnapshot(); snap != nil {
 		if def, ok := snap.Config.ProviderDefs[providerKey]; ok && def.Protocol == config.ProtocolOpenAIChat {

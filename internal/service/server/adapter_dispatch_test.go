@@ -265,3 +265,75 @@ func TestInjectCoreWebSearchSkipsWhenCandidateHasNativeSearch(t *testing.T) {
 		t.Fatalf("len(coreReq.Tools) = %d, want 0", len(coreReq.Tools))
 	}
 }
+
+func TestRouteMaxOutputTokensPrefersRouteEntry(t *testing.T) {
+	rt := runtime.NewRuntime(config.Config{
+		Routes: map[string]config.RouteEntry{
+			"claude-haiku-4-5": {
+				Provider:        "newapi",
+				Model:           "claude-haiku-4-5",
+				MaxOutputTokens: 64000,
+			},
+		},
+		ProviderDefs: map[string]config.ProviderDef{
+			"newapi": {
+				Models: map[string]config.ModelMeta{
+					"claude-haiku-4-5": {MaxOutputTokens: 200000},
+				},
+			},
+		},
+	}, nil, nil)
+	srv := &Server{runtime: rt}
+
+	got := srv.routeMaxOutputTokens("claude-haiku-4-5", provider.ProviderCandidate{
+		ProviderKey:   "newapi",
+		UpstreamModel: "claude-haiku-4-5",
+	})
+	if got != 64000 {
+		t.Fatalf("routeMaxOutputTokens() = %d, want 64000", got)
+	}
+}
+
+func TestRouteMaxOutputTokensFallsBackToProviderModelMeta(t *testing.T) {
+	rt := runtime.NewRuntime(config.Config{
+		Routes: map[string]config.RouteEntry{
+			"qwen3.6-plus": {Provider: "newapi", Model: "qwen3.6-plus"},
+		},
+		ProviderDefs: map[string]config.ProviderDef{
+			"newapi": {
+				Models: map[string]config.ModelMeta{
+					"qwen3.6-plus": {MaxOutputTokens: 65536},
+				},
+			},
+		},
+	}, nil, nil)
+	srv := &Server{runtime: rt}
+
+	got := srv.routeMaxOutputTokens("qwen3.6-plus", provider.ProviderCandidate{
+		ProviderKey:   "newapi",
+		UpstreamModel: "qwen3.6-plus",
+	})
+	if got != 65536 {
+		t.Fatalf("routeMaxOutputTokens() = %d, want 65536", got)
+	}
+}
+
+func TestRouteMaxOutputTokensReturnsZeroWhenUnset(t *testing.T) {
+	rt := runtime.NewRuntime(config.Config{
+		Routes: map[string]config.RouteEntry{
+			"unbounded": {Provider: "newapi", Model: "unbounded"},
+		},
+		ProviderDefs: map[string]config.ProviderDef{
+			"newapi": {Models: map[string]config.ModelMeta{}},
+		},
+	}, nil, nil)
+	srv := &Server{runtime: rt}
+
+	got := srv.routeMaxOutputTokens("unbounded", provider.ProviderCandidate{
+		ProviderKey:   "newapi",
+		UpstreamModel: "unbounded",
+	})
+	if got != 0 {
+		t.Fatalf("routeMaxOutputTokens() = %d, want 0", got)
+	}
+}
