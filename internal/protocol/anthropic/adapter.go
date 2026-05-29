@@ -120,6 +120,9 @@ func (a *AnthropicProviderAdapter) anthropicToCoreRequest(req *MessageRequest) *
 	if len(req.Tools) > 0 {
 		coreReq.Tools = make([]format.CoreTool, 0, len(req.Tools))
 		for _, t := range req.Tools {
+			if t.Name == "" {
+				continue
+			}
 			coreReq.Tools = append(coreReq.Tools, format.CoreTool{
 				Name:        t.Name,
 				Description: t.Description,
@@ -310,6 +313,9 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 	if len(req.Tools) > 0 {
 		anthropicReq.Tools = make([]Tool, 0, len(req.Tools))
 		for _, t := range req.Tools {
+			if t.Name == "" {
+				continue
+			}
 			schema := cleanSchema(t.InputSchema)
 			if schema == nil {
 				schema = map[string]any{"type": "object"}
