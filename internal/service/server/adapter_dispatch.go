@@ -263,10 +263,10 @@ func (s *Server) handleWithAdapters(
 		// Wrap provider with search orchestrator if web search is "injected".
 		if wsInjected {
 			if acc, ok := effectiveProvider.(provider.AnthropicClientAccessor); ok {
-				wrapped := websearchinjected.WrapProvider(
-					acc.AnthropicClient(),
-					searchCfg.tavilyKey, searchCfg.firecrawlKey, searchCfg.maxRounds,
-				)
+			wrapped := websearchinjected.WrapProvider(
+				acc.AnthropicClient(),
+				searchCfg.tavilyKey, searchCfg.anysearchKey, searchCfg.firecrawlKey, searchCfg.maxRounds,
+			)
 				effectiveProvider = &searchProviderAdapter{wrapped: wrapped}
 			}
 		}
@@ -2250,6 +2250,7 @@ func (a *searchProviderAdapter) AnthropicClient() *anthropic.Client { return nil
 
 type searchConfig struct {
 	tavilyKey    string
+	anysearchKey string
 	firecrawlKey string
 	maxRounds    int
 }
@@ -2258,6 +2259,7 @@ func (s *Server) resolvedSearchConfig(providerKey, modelAlias string) searchConf
 	// Keep a conservative fallback to existing global/runtime behavior.
 	cfg := searchConfig{
 		tavilyKey:    "",
+		anysearchKey: "",
 		firecrawlKey: "",
 		maxRounds:    s.maxSearchRounds(),
 	}
@@ -2266,6 +2268,7 @@ func (s *Server) resolvedSearchConfig(providerKey, modelAlias string) searchConf
 	}
 	fullCfg := s.runtime.Current().Config
 	cfg.tavilyKey = fullCfg.TavilyAPIKey
+	cfg.anysearchKey = fullCfg.AnySearchAPIKey
 	cfg.firecrawlKey = fullCfg.FirecrawlAPIKey
 
 	// Prefer model-level resolved config; then provider-level fallback.

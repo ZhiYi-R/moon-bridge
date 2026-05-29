@@ -45,10 +45,11 @@ func CoreTools(firecrawlKey string) []format.CoreTool {
 // WrapProvider wraps an Anthropic client with the injected search orchestrator.
 // The returned *websearch.Orchestrator implements the same CreateMessage /
 // StreamMessage interface as *anthropic.Client.
-func WrapProvider(client *anthropic.Client, tavilyKey, firecrawlKey string, maxRounds int) *websearch.Orchestrator {
+func WrapProvider(client *anthropic.Client, tavilyKey, anysearchKey, firecrawlKey string, maxRounds int) *websearch.Orchestrator {
 	return websearch.NewInjectedOrchestrator(websearch.OrchestratorConfig{
 		Anthropic:       client,
 		TavilyKey:       tavilyKey,
+		AnySearchKey:    anysearchKey,
 		FirecrawlKey:    firecrawlKey,
 		SearchMaxRounds: maxRounds,
 	})

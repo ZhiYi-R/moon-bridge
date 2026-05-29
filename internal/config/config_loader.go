@@ -193,6 +193,7 @@ type WebSearchFileConfig struct {
 	MaxUses         int    `yaml:"max_uses" json:"max_uses,omitempty"`
 	TavilyAPIKey    string `yaml:"tavily_api_key" json:"tavily_api_key,omitempty"`
 	FirecrawlAPIKey string `yaml:"firecrawl_api_key" json:"firecrawl_api_key,omitempty"`
+	AnySearchAPIKey string `yaml:"anysearch_api_key" json:"anysearch_api_key,omitempty"`
 	SearchMaxRounds int    `yaml:"search_max_rounds" json:"search_max_rounds,omitempty"`
 }
 
@@ -367,6 +368,7 @@ func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config,
 		WebSearchMaxUses: intOrDefault(fileConfig.WebSearch.MaxUses, 8),
 		TavilyAPIKey:     strings.TrimSpace(fileConfig.WebSearch.TavilyAPIKey),
 		FirecrawlAPIKey:  strings.TrimSpace(fileConfig.WebSearch.FirecrawlAPIKey),
+		AnySearchAPIKey:  strings.TrimSpace(fileConfig.WebSearch.AnySearchAPIKey),
 		SearchMaxRounds:  intOrDefault(fileConfig.WebSearch.SearchMaxRounds, 5),
 		DefaultMaxTokens: intOrDefault(defaults.MaxTokens, 1024),
 		Cache:            fromCacheFileConfig(fileConfig.Cache),
@@ -407,6 +409,7 @@ func fromModelDefFileConfig(fileConfig map[string]ModelDefFileConfig, specs exte
 				MaxUses:         m.WebSearch.MaxUses,
 				TavilyAPIKey:    strings.TrimSpace(m.WebSearch.TavilyAPIKey),
 				FirecrawlAPIKey: strings.TrimSpace(m.WebSearch.FirecrawlAPIKey),
+				AnySearchAPIKey: strings.TrimSpace(m.WebSearch.AnySearchAPIKey),
 				SearchMaxRounds: m.WebSearch.SearchMaxRounds,
 			}
 		}
@@ -536,6 +539,7 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig, spec
 			WebSearchMaxUses: def.WebSearch.MaxUses,
 			TavilyAPIKey:     strings.TrimSpace(def.WebSearch.TavilyAPIKey),
 			FirecrawlAPIKey:  strings.TrimSpace(def.WebSearch.FirecrawlAPIKey),
+			AnySearchAPIKey:  strings.TrimSpace(def.WebSearch.AnySearchAPIKey),
 			SearchMaxRounds:  def.WebSearch.SearchMaxRounds,
 			Extensions:       providerExtensions,
 			Models:           providerModels,

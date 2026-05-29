@@ -14,13 +14,18 @@ import (
 // ToolHandler executes a tool given its input and returns a formatted result string.
 type ToolHandler func(context.Context, json.RawMessage) (string, error)
 
+// Searcher is the interface for search backends (Tavily, AnySearch, etc.)
+type Searcher interface {
+	Search(ctx context.Context, req SearchRequest) (*SearchResult, error)
+}
+
 // Orchestrator wraps an Anthropic client and transparently executes
 // web_search / web_fetch (or tavily_search / firecrawl_fetch in injected mode)
-// tool calls server-side via Tavily / Firecrawl.
+// tool calls server-side via a search backend (Tavily / AnySearch).
 // It presents the same interface as anthropic.Client to callers.
 type Orchestrator struct {
 	anthropic    *anthropic.Client
-	tavily       *TavilyClient
+	searcher     Searcher
 	firecrawl    *FirecrawlClient
 	maxRounds    int
 	toolHandlers map[string]ToolHandler
@@ -30,6 +35,7 @@ type Orchestrator struct {
 type OrchestratorConfig struct {
 	Anthropic       *anthropic.Client
 	TavilyKey       string
+	AnySearchKey    string
 	FirecrawlKey    string
 	SearchMaxRounds int
 	ToolHandlers    map[string]ToolHandler
@@ -38,9 +44,15 @@ type OrchestratorConfig struct {
 // NewOrchestrator creates a new search orchestrator with default
 // handlers for web_search and web_fetch tool names.
 func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
+	var searcher Searcher
+	if cfg.AnySearchKey != "" {
+		searcher = NewAnySearchClient(cfg.AnySearchKey)
+	} else {
+		searcher = NewTavilyClient(cfg.TavilyKey)
+	}
 	o := &Orchestrator{
 		anthropic: cfg.Anthropic,
-		tavily:    NewTavilyClient(cfg.TavilyKey),
+		searcher:  searcher,
 		maxRounds: cfg.SearchMaxRounds,
 	}
 	if cfg.FirecrawlKey != "" {
@@ -68,9 +80,15 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 // where tavily_search and firecrawl_fetch are injected as function tools
 // to the provider.
 func NewInjectedOrchestrator(cfg OrchestratorConfig) *Orchestrator {
+	var searcher Searcher
+	if cfg.AnySearchKey != "" {
+		searcher = NewAnySearchClient(cfg.AnySearchKey)
+	} else {
+		searcher = NewTavilyClient(cfg.TavilyKey)
+	}
 	o := &Orchestrator{
 		anthropic: cfg.Anthropic,
-		tavily:    NewTavilyClient(cfg.TavilyKey),
+		searcher:  searcher,
 		maxRounds: cfg.SearchMaxRounds,
 	}
 	if cfg.FirecrawlKey != "" {
@@ -275,7 +293,7 @@ func (o *Orchestrator) executeTavilySearch(ctx context.Context, raw json.RawMess
 		return "", fmt.Errorf("search: query is required")
 	}
 
-	result, err := o.tavily.Search(ctx, SearchRequest{
+	result, err := o.searcher.Search(ctx, SearchRequest{
 		Query:          params.Query,
 		SearchDepth:    params.SearchDepth,
 		Topic:          params.Topic,

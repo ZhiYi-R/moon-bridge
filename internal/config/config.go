@@ -47,6 +47,7 @@ type WebSearchConfig struct {
 	MaxUses         int
 	TavilyAPIKey    string
 	FirecrawlAPIKey string
+	AnySearchAPIKey string
 	SearchMaxRounds int
 }
 
@@ -63,6 +64,7 @@ type Config struct {
 	WebSearchMaxUses  int
 	TavilyAPIKey      string
 	FirecrawlAPIKey   string
+	AnySearchAPIKey   string
 	SearchMaxRounds   int
 	DefaultMaxTokens  int
 	MaxSessions int    `yaml:"max_sessions"`  // 0 = unlimited
@@ -134,6 +136,7 @@ type ProviderDef struct {
 	WebSearchMaxUses int
 	TavilyAPIKey     string
 	FirecrawlAPIKey  string
+	AnySearchAPIKey  string
 	SearchMaxRounds  int
 	Extensions       map[string]ExtensionSettings
 	// Models is the provider's model catalog: upstream model name -> metadata.
@@ -325,11 +328,11 @@ func (cfg Config) validateTransform() error {
 
 func (cfg Config) validateSearchConfig() error {
 	if cfg.WebSearchSupport == WebSearchSupportInjected {
-		if cfg.TavilyAPIKey == "" {
-			return errors.New("provider.tavily_api_key is required when web_search.support is 'injected'")
+		if cfg.TavilyAPIKey == "" && cfg.AnySearchAPIKey == "" {
+			return errors.New("web_search.tavily_api_key or anysearch_api_key is required when support is 'injected'")
 		}
 		if cfg.SearchMaxRounds <= 0 {
-			return errors.New("provider.search_max_rounds must be > 0 when web_search.support is 'injected'")
+			return errors.New("web_search.search_max_rounds must be > 0 when support is 'injected'")
 		}
 	}
 	for key, def := range cfg.ProviderDefs {
@@ -338,8 +341,8 @@ func (cfg Config) validateSearchConfig() error {
 			if tavilyKey == "" {
 				tavilyKey = cfg.TavilyAPIKey
 			}
-			if tavilyKey == "" {
-				return fmt.Errorf("providers.%s.web_search.tavily_api_key is required when web_search.support is 'injected'", key)
+			if tavilyKey == "" && def.AnySearchAPIKey == "" && cfg.AnySearchAPIKey == "" {
+				return fmt.Errorf("providers.%s: tavily_api_key or anysearch_api_key is required when web_search.support is 'injected'", key)
 			}
 			maxRounds := def.SearchMaxRounds
 			if maxRounds <= 0 {
