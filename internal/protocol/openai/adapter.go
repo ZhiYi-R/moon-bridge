@@ -1630,6 +1630,11 @@ func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy fun
 func flattenToolsWithNamespace(openaiTools []Tool, namespace string, disablePatchProxy func(string) bool) []format.CoreTool {
 	var result []format.CoreTool
 	for _, t := range openaiTools {
+		// Skip tools with empty function names — upstream providers
+		// (e.g. DeepSeek) reject them with a 400/validation error.
+		if t.Name == "" {
+			continue
+		}
 		converted := convertToolWithNamespace(t, namespace, disablePatchProxy)
 		result = append(result, converted...)
 	}
