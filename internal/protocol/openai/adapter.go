@@ -34,14 +34,14 @@ type OpenAIAdapter struct {
 	hooks format.CorePluginHooks
 
 	disablePatchProxy func(string) bool
-	streamMu     sync.Mutex
-	streamEvents []StreamEvent
+	streamMu          sync.Mutex
+	streamEvents      []StreamEvent
 }
 
 // NewOpenAIAdapter creates a new OpenAIAdapter with the given config and hooks.
 func NewOpenAIAdapter(hooks format.CorePluginHooks) *OpenAIAdapter {
 	return &OpenAIAdapter{
-		hooks: hooks.WithDefaults(),
+		hooks:             hooks.WithDefaults(),
 		disablePatchProxy: hooks.DisablePatchProxy,
 	}
 }
@@ -1524,6 +1524,7 @@ func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map
 // Custom tools are expanded using codex package helpers.
 // Namespace tools are recursively flattened.
 func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy func(string) bool) []format.CoreTool {
+	tool = normalizeToolFunction(tool)
 	name := namespacedToolName(namespace, tool.Name)
 	ext := make(map[string]any)
 
@@ -1639,6 +1640,9 @@ func flattenToolsWithNamespace(openaiTools []Tool, namespace string, disablePatc
 	seen := make(map[string]bool, len(result))
 	deduped := make([]format.CoreTool, 0, len(result))
 	for _, t := range result {
+		if strings.TrimSpace(t.Name) == "" {
+			continue
+		}
 		if seen[t.Name] {
 			continue
 		}
@@ -1647,6 +1651,27 @@ func flattenToolsWithNamespace(openaiTools []Tool, namespace string, disablePatc
 	}
 	result = deduped
 	return result
+}
+
+// normalizeToolFunction accepts Chat Completions-style function tools inside
+// Responses requests, where name/schema live under tool.function.
+func normalizeToolFunction(tool Tool) Tool {
+	if tool.Function == nil {
+		return tool
+	}
+	if strings.TrimSpace(tool.Name) == "" {
+		tool.Name = tool.Function.Name
+	}
+	if strings.TrimSpace(tool.Description) == "" {
+		tool.Description = tool.Function.Description
+	}
+	if tool.Parameters == nil {
+		tool.Parameters = tool.Function.Parameters
+	}
+	if tool.Strict == nil {
+		tool.Strict = tool.Function.Strict
+	}
+	return tool
 }
 
 // namespacedToolName joins namespace and name.

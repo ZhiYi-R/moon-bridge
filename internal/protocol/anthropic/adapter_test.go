@@ -177,6 +177,34 @@ func TestFromCoreRequest_Tools(t *testing.T) {
 		t.Errorf("tool type = %q, want empty (Anthropic custom tools have no type field)", msgReq.Tools[0].Type)
 	}
 }
+
+func TestFromCoreRequest_FiltersEmptyToolNames(t *testing.T) {
+	adapter := newTestAdapter()
+
+	coreReq := &format.CoreRequest{
+		Model: "claude-sonnet-4",
+		Messages: []format.CoreMessage{
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "call a tool"}}},
+		},
+		Tools: []format.CoreTool{
+			{Name: "", Description: "invalid", InputSchema: map[string]any{"type": "object"}},
+			{Name: "get_weather", Description: "Get the weather", InputSchema: map[string]any{"type": "object"}},
+		},
+	}
+
+	result, err := adapter.FromCoreRequest(context.Background(), coreReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgReq := result.(*anthropic.MessageRequest)
+	if len(msgReq.Tools) != 1 {
+		t.Fatalf("got %d tools, want 1: %+v", len(msgReq.Tools), msgReq.Tools)
+	}
+	if msgReq.Tools[0].Name != "get_weather" {
+		t.Errorf("tool name = %q", msgReq.Tools[0].Name)
+	}
+}
+
 func TestFromCoreRequest_ImageMessage(t *testing.T) {
 	adapter := newTestAdapter()
 
