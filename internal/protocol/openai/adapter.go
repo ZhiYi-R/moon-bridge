@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -1639,6 +1640,17 @@ func flattenToolsWithNamespace(openaiTools []Tool, namespace string, disablePatc
 	seen := make(map[string]bool, len(result))
 	deduped := make([]format.CoreTool, 0, len(result))
 	for _, t := range result {
+		if strings.TrimSpace(t.Name) == "" {
+			// Codex sends OpenAI-only typed tools (e.g. image_generation, web_search)
+			// that arrive without a function.name; upstream Anthropic-compatible
+			// endpoints reject these. Drop them silently rather than failing the call.
+			extBytes, _ := json.Marshal(t.Extensions)
+			slog.Default().Debug("dropping empty-name tool",
+				"namespace", namespace,
+				"extensions", string(extBytes),
+			)
+			continue
+		}
 		if seen[t.Name] {
 			continue
 		}
