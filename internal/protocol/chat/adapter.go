@@ -33,6 +33,20 @@ type ChatProviderAdapter struct {
 	streamEvents []ChatStreamChunk
 }
 
+type chatStreamChoiceState struct {
+	started          bool
+	blockIndex       int          // monotonically increasing content block index
+	textStarted      bool         // whether a text block is active
+	hasReasoning     bool         // whether a reasoning block is active
+	reasonIndex      int          // block index for the reasoning content block
+	toolCallIdx      int          // next tool call content block index
+	callStarted      map[int]bool // tracks which tool call indices have been started
+	toolCallSlot     map[int]int  // tool_call delta index -> content block index
+	reasoningContent string       // accumulated reasoning content for the current reasoning block
+	thinkActive      bool         // whether a <think>...</think> text tag is open
+	thinkBuffer      string       // buffered text for split tag detection
+}
+
 // NewChatProviderAdapter creates a new ChatProviderAdapter.
 //
 // client is the HTTP client for Chat API calls. May be nil if the adapter
@@ -123,7 +137,7 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 				Function: FunctionDef{
 					Name:        t.Name,
 					Description: t.Description,
-					Parameters:  t.InputSchema,
+					Parameters:  defaultToolParameters(t.InputSchema),
 				},
 			})
 		}
@@ -176,6 +190,7 @@ func (a *ChatProviderAdapter) ToCoreResponse(ctx context.Context, resp any) (*fo
 
 	coreResp := &format.CoreResponse{
 		ID:         chatResp.ID,
+		Model:      chatResp.Model,
 		Status:     status,
 		Messages:   messages,
 		StopReason: stopReason,
@@ -241,17 +256,7 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 		defer close(events)
 
 		// Per-choice state for streaming.
-		type choiceState struct {
-			started          bool
-			blockIndex       int          // monotonically increasing content block index
-			hasReasoning     bool         // whether a reasoning block is active
-			reasonIndex      int          // block index for the reasoning content block
-			toolCallIdx      int          // next tool call content block index (starts after text block)
-			callStarted      map[int]bool // tracks which tool call indices have been started
-			toolCallSlot     map[int]int  // tool_call delta index -> content block index
-			reasoningContent string       // accumulated reasoning content for the current reasoning block
-		}
-		choices := make(map[int]*choiceState)
+		choices := make(map[int]*chatStreamChoiceState)
 		var seqNum int64
 		var finalUsage *format.CoreUsage
 		var lastModel string
@@ -301,69 +306,67 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 				for _, sc := range chunk.Choices {
 					state := choices[sc.Index]
 					if state == nil {
-						state = &choiceState{blockIndex: sc.Index * 2}
+						state = &chatStreamChoiceState{blockIndex: sc.Index * 2}
 						choices[sc.Index] = state
 					}
 
 					ci := sc.Index
 
-					// Emit content_block.started on first appearance with role.
+					// Mark the assistant turn on first appearance with role. The
+					// concrete block is started lazily when text/reasoning/tool
+					// content arrives, which avoids emitting empty text items for
+					// tool-only or reasoning-only turns.
 					if !state.started && sc.Delta.Role == "assistant" {
 						state.started = true
-						blockType := "text"
-						if sc.Delta.ReasoningContent != "" {
-							blockType = "reasoning"
-							state.hasReasoning = true
-							state.reasonIndex = state.blockIndex
+					}
+
+					startText := func() {
+						if state.textStarted {
+							return
+						}
+						state.textStarted = true
+						emit(format.CoreStreamEvent{
+							Type:         format.CoreContentBlockStarted,
+							Index:        state.blockIndex,
+							ChoiceIndex:  &ci,
+							ContentBlock: &format.CoreContentBlock{Type: "text"},
+						})
+					}
+					closeText := func(stopReason string) {
+						if !state.textStarted {
+							return
 						}
 						emit(format.CoreStreamEvent{
-							Type:        format.CoreContentBlockStarted,
+							Type:        format.CoreContentBlockDone,
 							Index:       state.blockIndex,
+							StopReason:  stopReason,
 							ChoiceIndex: &ci,
-							ContentBlock: &format.CoreContentBlock{
-								Type: blockType,
-							},
 						})
+						state.textStarted = false
+						state.blockIndex++
 					}
-
-					// Emit text delta.
-					// Emit reasoning content as text delta.
-					// Note: reasoning_content may appear AFTER the text block has started
-					// (DeepSeek first sends role=assistant, then reasoning_content in subsequent chunks).
-					if sc.Delta.ReasoningContent != "" {
-						if !state.hasReasoning {
-							// Transition from premature text block to reasoning block.
-							state.hasReasoning = true
-							state.reasonIndex = state.blockIndex + 1
-							state.blockIndex = state.reasonIndex
-							emit(format.CoreStreamEvent{
-								Type:        format.CoreContentBlockDone,
-								Index:       state.blockIndex,
-								ChoiceIndex: &ci,
-							})
-							emit(format.CoreStreamEvent{
-								Type:        format.CoreContentBlockStarted,
-								Index:       state.reasonIndex,
-								ChoiceIndex: &ci,
-								ContentBlock: &format.CoreContentBlock{
-									Type: "reasoning",
-								},
-							})
+					startReasoning := func() {
+						if state.hasReasoning {
+							return
 						}
-						state.reasoningContent += sc.Delta.ReasoningContent
+						closeText("")
+						state.hasReasoning = true
+						state.reasonIndex = state.blockIndex
 						emit(format.CoreStreamEvent{
-							Type:        format.CoreTextDelta,
-							Index:       state.reasonIndex,
-							Delta:       sc.Delta.ReasoningContent,
-							ChoiceIndex: &ci,
+							Type:         format.CoreContentBlockStarted,
+							Index:        state.reasonIndex,
+							ChoiceIndex:  &ci,
+							ContentBlock: &format.CoreContentBlock{Type: "reasoning"},
 						})
 					}
-
-					// Transition from reasoning block to text block.
-					if sc.Delta.Content != "" && state.hasReasoning {
+					closeReasoning := func(stopReason string) {
+						if !state.hasReasoning {
+							return
+						}
 						emit(format.CoreStreamEvent{
 							Type:        format.CoreContentBlockDone,
 							Index:       state.reasonIndex,
+							StopReason:  stopReason,
 							ChoiceIndex: &ci,
 							ContentBlock: &format.CoreContentBlock{
 								Type:          "reasoning",
@@ -373,22 +376,46 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 						state.reasoningContent = ""
 						state.hasReasoning = false
 						state.blockIndex = state.reasonIndex + 1
-						emit(format.CoreStreamEvent{
-							Type:        format.CoreContentBlockStarted,
-							Index:       state.blockIndex,
-							ChoiceIndex: &ci,
-							ContentBlock: &format.CoreContentBlock{
-								Type: "text",
-							},
-						})
 					}
-					if sc.Delta.Content != "" {
+					emitTextDelta := func(delta string) {
+						if delta == "" {
+							return
+						}
+						startText()
 						emit(format.CoreStreamEvent{
 							Type:        format.CoreTextDelta,
 							Index:       state.blockIndex,
-							Delta:       sc.Delta.Content,
+							Delta:       delta,
 							ChoiceIndex: &ci,
 						})
+					}
+					emitReasoningDelta := func(delta string) {
+						if delta == "" {
+							return
+						}
+						startReasoning()
+						state.reasoningContent += delta
+						emit(format.CoreStreamEvent{
+							Type:        format.CoreTextDelta,
+							Index:       state.reasonIndex,
+							Delta:       delta,
+							ChoiceIndex: &ci,
+						})
+					}
+
+					// Emit provider-native reasoning_content as reasoning deltas.
+					// Note: reasoning_content may appear AFTER the text block has started
+					// (DeepSeek first sends role=assistant, then reasoning_content in subsequent chunks).
+					if sc.Delta.ReasoningContent != "" {
+						emitReasoningDelta(sc.Delta.ReasoningContent)
+					}
+
+					// Transition from reasoning block to text block.
+					if sc.Delta.Content != "" && state.hasReasoning && !state.thinkActive && state.thinkBuffer == "" {
+						closeReasoning("")
+					}
+					if sc.Delta.Content != "" {
+						state.consumeThinkTaggedDelta(sc.Delta.Content, emitTextDelta, emitReasoningDelta, closeReasoning)
 					}
 
 					// Emit tool call content blocks and args deltas.
@@ -399,8 +426,12 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 						}
 						if state.callStarted == nil {
 							state.callStarted = make(map[int]bool)
-							// Start tool call indices after the current text/reasoning block.
-							state.toolCallIdx = state.blockIndex + 1
+							// Start tool call indices after any active text/reasoning block.
+							if state.textStarted || state.hasReasoning {
+								state.toolCallIdx = state.blockIndex + 1
+							} else {
+								state.toolCallIdx = state.blockIndex
+							}
 						}
 						if state.toolCallSlot == nil {
 							state.toolCallSlot = make(map[int]int)
@@ -456,28 +487,14 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 					// Emit content_block.done when finish_reason is set.
 					if sc.FinishReason != "" {
 						stopReason := a.mapFinishReason(sc.FinishReason)
+						state.flushThinkTaggedContent(emitTextDelta, emitReasoningDelta, closeReasoning)
 						if state.hasReasoning {
-							emit(format.CoreStreamEvent{
-								Type:        format.CoreContentBlockDone,
-								Index:       state.blockIndex,
-								StopReason:  stopReason,
-								ChoiceIndex: &ci,
-								ContentBlock: &format.CoreContentBlock{
-									Type:          "reasoning",
-									ReasoningText: state.reasoningContent,
-								},
-							})
-							state.reasoningContent = ""
-						} else {
-							emit(format.CoreStreamEvent{
-								Type:        format.CoreContentBlockDone,
-								Index:       state.blockIndex,
-								StopReason:  stopReason,
-								ChoiceIndex: &ci,
-							})
+							closeReasoning(stopReason)
+						} else if state.textStarted {
+							closeText(stopReason)
 						}
 						// Complete tool call blocks.
-						for idx := state.blockIndex + 1; idx < state.toolCallIdx; idx++ {
+						for idx := 0; idx < state.toolCallIdx; idx++ {
 							if !state.callStarted[idx] {
 								continue
 							}
@@ -805,14 +822,17 @@ func (a *ChatProviderAdapter) fromChatContent(content any) []format.CoreContentB
 		if v == "" {
 			return nil
 		}
-		return []format.CoreContentBlock{
-			{Type: "text", Text: v},
-		}
+		return splitThinkTaggedText(v)
 	case []any:
 		blocks := make([]format.CoreContentBlock, 0, len(v))
 		for _, item := range v {
 			if m, ok := item.(map[string]any); ok {
-				blocks = append(blocks, a.fromContentPartMap(m))
+				block := a.fromContentPartMap(m)
+				if block.Type == "text" && block.Text != "" {
+					blocks = append(blocks, splitThinkTaggedText(block.Text)...)
+				} else {
+					blocks = append(blocks, block)
+				}
 			}
 		}
 		return blocks
@@ -877,4 +897,145 @@ func unquoteArguments(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	return json.RawMessage(s)
+}
+
+func defaultToolParameters(schema map[string]any) map[string]any {
+	if len(schema) > 0 {
+		return schema
+	}
+	return map[string]any{"type": "object"}
+}
+
+const (
+	thinkOpenTag  = "<think>"
+	thinkCloseTag = "</think>"
+)
+
+func splitThinkTaggedText(text string) []format.CoreContentBlock {
+	var blocks []format.CoreContentBlock
+	remaining := text
+	for remaining != "" {
+		open := indexFold(remaining, thinkOpenTag)
+		if open < 0 {
+			appendTextBlock(&blocks, remaining)
+			break
+		}
+		appendTextBlock(&blocks, remaining[:open])
+		remaining = remaining[open+len(thinkOpenTag):]
+		close := indexFold(remaining, thinkCloseTag)
+		if close < 0 {
+			appendReasoningBlock(&blocks, remaining)
+			break
+		}
+		appendReasoningBlock(&blocks, remaining[:close])
+		remaining = trimOneLeadingLineBreak(remaining[close+len(thinkCloseTag):])
+	}
+	return blocks
+}
+
+func appendTextBlock(blocks *[]format.CoreContentBlock, text string) {
+	if text == "" {
+		return
+	}
+	*blocks = append(*blocks, format.CoreContentBlock{Type: "text", Text: text})
+}
+
+func appendReasoningBlock(blocks *[]format.CoreContentBlock, text string) {
+	if text == "" {
+		return
+	}
+	*blocks = append(*blocks, format.CoreContentBlock{
+		Type:          "reasoning",
+		ReasoningText: text,
+	})
+}
+
+func (state *chatStreamChoiceState) consumeThinkTaggedDelta(
+	delta string,
+	emitText func(string),
+	emitReasoning func(string),
+	closeReasoning func(string),
+) {
+	state.thinkBuffer += delta
+	for state.thinkBuffer != "" {
+		if state.thinkActive {
+			close := indexFold(state.thinkBuffer, thinkCloseTag)
+			if close >= 0 {
+				emitReasoning(state.thinkBuffer[:close])
+				state.thinkBuffer = trimOneLeadingLineBreak(state.thinkBuffer[close+len(thinkCloseTag):])
+				state.thinkActive = false
+				closeReasoning("")
+				continue
+			}
+			emit, keep := splitSafeForTag(state.thinkBuffer, thinkCloseTag)
+			emitReasoning(emit)
+			state.thinkBuffer = keep
+			return
+		}
+
+		open := indexFold(state.thinkBuffer, thinkOpenTag)
+		if open >= 0 {
+			emitText(state.thinkBuffer[:open])
+			state.thinkBuffer = state.thinkBuffer[open+len(thinkOpenTag):]
+			state.thinkActive = true
+			continue
+		}
+		emit, keep := splitSafeForTag(state.thinkBuffer, thinkOpenTag)
+		emitText(emit)
+		state.thinkBuffer = keep
+		return
+	}
+}
+
+func (state *chatStreamChoiceState) flushThinkTaggedContent(
+	emitText func(string),
+	emitReasoning func(string),
+	closeReasoning func(string),
+) {
+	if state.thinkBuffer == "" {
+		return
+	}
+	if state.thinkActive {
+		emitReasoning(state.thinkBuffer)
+		state.thinkBuffer = ""
+		state.thinkActive = false
+		closeReasoning("")
+		return
+	}
+	emitText(state.thinkBuffer)
+	state.thinkBuffer = ""
+}
+
+func splitSafeForTag(text string, tag string) (emit string, keep string) {
+	keepLen := longestTagPrefixSuffix(text, tag)
+	if keepLen == 0 {
+		return text, ""
+	}
+	return text[:len(text)-keepLen], text[len(text)-keepLen:]
+}
+
+func longestTagPrefixSuffix(text string, tag string) int {
+	maxLen := min(len(text), len(tag)-1)
+	lowerText := strings.ToLower(text)
+	lowerTag := strings.ToLower(tag)
+	for n := maxLen; n > 0; n-- {
+		if strings.HasSuffix(lowerText, lowerTag[:n]) {
+			return n
+		}
+	}
+	return 0
+}
+
+func indexFold(s string, substr string) int {
+	return strings.Index(strings.ToLower(s), strings.ToLower(substr))
+}
+
+func trimOneLeadingLineBreak(s string) string {
+	if strings.HasPrefix(s, "\r\n") {
+		return s[2:]
+	}
+	if strings.HasPrefix(s, "\n") || strings.HasPrefix(s, "\r") {
+		return s[1:]
+	}
+	return s
 }

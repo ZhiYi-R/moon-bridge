@@ -294,8 +294,8 @@ func TestToCoreRequest_BatchesCustomToolCallsAndOutputsIntoSingleRound(t *testin
 	for i, want := range []struct {
 		assistantTextIdx int
 		msgIdx           int
-		callID  string
-		outcome string
+		callID           string
+		outcome          string
 	}{
 		{0, 1, "call_a", "ok a"},
 		{3, 4, "call_b", "ok b"},
@@ -363,5 +363,32 @@ func TestFromCoreStream_NoDuplicateDoneForToolUse(t *testing.T) {
 	}
 	if itemDone != 1 {
 		t.Fatalf("output_item.done (tool) count=%d, want 1", itemDone)
+	}
+}
+
+func TestFromCoreStream_CompletedCarriesModel(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+	coreReq := &format.CoreRequest{Model: "minimax-test"}
+	evCh := make(chan format.CoreStreamEvent, 1)
+	evCh <- format.CoreStreamEvent{Type: format.CoreEventCompleted, Status: "completed", Model: "MiniMax-M3"}
+	close(evCh)
+
+	streamAny, err := adapter.FromCoreStream(context.Background(), coreReq, evCh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream := streamAny.(<-chan openai.StreamEvent)
+	var completed *openai.ResponseLifecycleEvent
+	for ev := range stream {
+		if ev.Event == "response.completed" {
+			data := ev.Data.(openai.ResponseLifecycleEvent)
+			completed = &data
+		}
+	}
+	if completed == nil {
+		t.Fatal("response.completed not found")
+	}
+	if completed.Response.Model != "MiniMax-M3" {
+		t.Fatalf("completed model = %q, want MiniMax-M3", completed.Response.Model)
 	}
 }

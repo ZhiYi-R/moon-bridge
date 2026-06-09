@@ -1127,6 +1127,25 @@ func TestFromCoreRequest_Tools(t *testing.T) {
 	}
 }
 
+func TestFromCoreRequest_ToolsDefaultEmptyParameters(t *testing.T) {
+	adapter := newTestAdapter()
+	result, err := adapter.FromCoreRequest(context.Background(), &format.CoreRequest{
+		Model: "gpt-4o",
+		Messages: []format.CoreMessage{
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "call tool"}}},
+		},
+		Tools: []format.CoreTool{{Name: "ping"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatReq := result.(*chat.ChatRequest)
+	params := chatReq.Tools[0].Function.Parameters
+	if got := params["type"]; got != "object" {
+		t.Fatalf("default parameters type = %v, want object; params=%+v", got, params)
+	}
+}
+
 func TestFromCoreRequest_ToolChoice(t *testing.T) {
 	adapter := newTestAdapter()
 	tests := []struct {
@@ -1505,6 +1524,43 @@ func TestToCoreResponse_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestToCoreResponse_SplitsThinkTaggedText(t *testing.T) {
+	adapter := newTestAdapter()
+	chatResp := &chat.ChatResponse{
+		ID:    "chatcmpl-think",
+		Model: "MiniMax-M3",
+		Choices: []chat.Choice{{
+			Index: 0,
+			Message: chat.ChatMessage{
+				Role:    "assistant",
+				Content: "<think>\nplan privately\n</think>\npong",
+			},
+			FinishReason: "stop",
+		}},
+	}
+
+	result, err := adapter.ToCoreResponse(context.Background(), chatResp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Model != "MiniMax-M3" {
+		t.Fatalf("Model = %q, want MiniMax-M3", result.Model)
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("Messages: got %d, want 1", len(result.Messages))
+	}
+	content := result.Messages[0].Content
+	if len(content) != 2 {
+		t.Fatalf("content len = %d, want 2: %+v", len(content), content)
+	}
+	if content[0].Type != "reasoning" || content[0].ReasoningText != "\nplan privately\n" {
+		t.Fatalf("reasoning block = %+v", content[0])
+	}
+	if content[1].Type != "text" || content[1].Text != "pong" {
+		t.Fatalf("text block = %+v", content[1])
+	}
+}
+
 func TestToCoreResponse_FinishReasonVariants(t *testing.T) {
 	adapter := newTestAdapter()
 	tests := []struct {
@@ -1746,6 +1802,83 @@ func TestToCoreStream_ToolCallArgsDelta(t *testing.T) {
 	}
 	if toolCallDeltaCount != 1 {
 		t.Errorf("tool_call_args.delta count = %d, want 1", toolCallDeltaCount)
+	}
+}
+
+func TestToCoreStream_SplitsThinkTaggedTextAcrossChunks(t *testing.T) {
+	adapter := newTestAdapter()
+	src := make(chan chat.ChatStreamChunk, 6)
+	src <- chat.ChatStreamChunk{
+		Model: "MiniMax-M3",
+		Choices: []chat.StreamChoice{{
+			Index: 0,
+			Delta: chat.Delta{Role: "assistant", Content: "<thi"},
+		}},
+	}
+	src <- chat.ChatStreamChunk{
+		Choices: []chat.StreamChoice{{
+			Index: 0,
+			Delta: chat.Delta{Content: "nk>\nplan"},
+		}},
+	}
+	src <- chat.ChatStreamChunk{
+		Choices: []chat.StreamChoice{{
+			Index: 0,
+			Delta: chat.Delta{Content: "\n</thi"},
+		}},
+	}
+	src <- chat.ChatStreamChunk{
+		Choices: []chat.StreamChoice{{
+			Index: 0,
+			Delta: chat.Delta{Content: "nk>\npong"},
+		}},
+	}
+	src <- chat.ChatStreamChunk{
+		Choices: []chat.StreamChoice{{Index: 0, FinishReason: "stop"}},
+	}
+	close(src)
+
+	events, err := adapter.ToCoreStream(context.Background(), (<-chan chat.ChatStreamChunk)(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var reasoningStarted bool
+	var reasoningDone *format.CoreStreamEvent
+	var text string
+	var completed *format.CoreStreamEvent
+	for e := range events {
+		if e.Type == format.CoreContentBlockStarted && e.ContentBlock != nil && e.ContentBlock.Type == "reasoning" {
+			reasoningStarted = true
+		}
+		if e.Type == format.CoreTextDelta {
+			if strings.Contains(e.Delta, "<think") || strings.Contains(e.Delta, "</think") {
+				t.Fatalf("think tag leaked in text delta: %+v", e)
+			}
+			if e.Index == 1 {
+				text += e.Delta
+			}
+		}
+		if e.Type == format.CoreContentBlockDone && e.ContentBlock != nil && e.ContentBlock.Type == "reasoning" {
+			ev := e
+			reasoningDone = &ev
+		}
+		if e.Type == format.CoreEventCompleted {
+			ev := e
+			completed = &ev
+		}
+	}
+	if !reasoningStarted {
+		t.Fatal("reasoning block was not started")
+	}
+	if reasoningDone == nil || reasoningDone.ContentBlock.ReasoningText != "\nplan\n" {
+		t.Fatalf("reasoning done = %+v", reasoningDone)
+	}
+	if text != "pong" {
+		t.Fatalf("text = %q, want pong", text)
+	}
+	if completed == nil || completed.Model != "MiniMax-M3" {
+		t.Fatalf("completed = %+v, want model MiniMax-M3", completed)
 	}
 }
 

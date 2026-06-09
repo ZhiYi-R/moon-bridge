@@ -2147,7 +2147,6 @@ func normalizeAnthropicRequest(upstream any) (anthropic.MessageRequest, error) {
 	}
 }
 
-
 // injectCoreWebSearch replaces web_search tools in coreReq.Tools with injected
 // tavily_search/firecrawl_fetch tools when the resolved web search mode is "injected".
 // Returns true if injection was applied.

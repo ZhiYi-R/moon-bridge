@@ -34,14 +34,14 @@ type OpenAIAdapter struct {
 	hooks format.CorePluginHooks
 
 	disablePatchProxy func(string) bool
-	streamMu     sync.Mutex
-	streamEvents []StreamEvent
+	streamMu          sync.Mutex
+	streamEvents      []StreamEvent
 }
 
 // NewOpenAIAdapter creates a new OpenAIAdapter with the given config and hooks.
 func NewOpenAIAdapter(hooks format.CorePluginHooks) *OpenAIAdapter {
 	return &OpenAIAdapter{
-		hooks: hooks.WithDefaults(),
+		hooks:             hooks.WithDefaults(),
 		disablePatchProxy: hooks.DisablePatchProxy,
 	}
 }
@@ -676,6 +676,9 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 		// Lifecycle: completed
 		// ==================================================================
 		case format.CoreEventCompleted:
+			if event.Model != "" {
+				response.Model = event.Model
+			}
 			// Build output_text from message items, same as FromCoreResponse.
 			var texts []string
 			for _, item := range response.Output {
