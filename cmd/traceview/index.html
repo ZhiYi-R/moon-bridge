@@ -65,6 +65,8 @@ body{font:13px/1.5 'Cascadia Code','Fira Code','JetBrains Mono',monospace;backgr
 /* JSON inline */
 .jk{color:#89b4fa}.js{color:#a6e3a1}.jn{color:#fab387}.jb{color:#cba6f7}.jl{color:#6c7086}.jbr{color:#94e2d5}
 .toggle{cursor:pointer;color:#89b4fa}
+.expand-link{cursor:pointer;color:#89b4fa;font-weight:600;user-select:none}
+.expand-link:hover{color:#b4befe;text-decoration:underline}
 .hide{display:none}
 
 .resizer{width:4px;cursor:col-resize;background:transparent;flex-shrink:0}
@@ -271,7 +273,7 @@ function renderMessageBlock(msg, i) {
   html+='<div class="block-body" id="'+id+'">';
   if(Array.isArray(content)){
     content.forEach(c=>{
-      if(c.text) html+='<div class="content-block"><span class="ct">text:</span> '+esc(c.text.length>600?c.text.substring(0,600)+'...':c.text)+'</div>';
+      if(c.text) html+='<div class="content-block"><span class="ct">text:</span> '+expandableText(c.text,600)+'</div>';
       else if(c.type) html+='<div class="content-block"><span class="ct">'+esc(c.type)+':</span> '+jsonToHTML(c,0)+'</div>';
     });
   }else{
@@ -305,7 +307,7 @@ function renderInputItem(msg, i, type) {
 }
 
 function renderInstructionsBody(text) {
-  return esc(text.length>2000?text.substring(0,2000)+'...[truncated]':text);
+  return expandableText(text,2000);
 }
 
 function sectionWrap(label, count, inner) {
@@ -364,7 +366,7 @@ function renderAnthropicMessage(msg, i) {
   if(Array.isArray(content)){
     content.forEach((c,j)=>{
       if(c.type==='text'&&c.text){
-        html+='<div class="content-block"><span class="ct">text:</span> '+esc(c.text.length>600?c.text.substring(0,600)+'...':c.text)+'</div>';
+        html+='<div class="content-block"><span class="ct">text:</span> '+expandableText(c.text,600)+'</div>';
       }else if(c.type==='tool_use'){
         html+='<div class="content-block"><span class="ct">tool_use:</span> '+esc(c.name||'?')+' <span class="jl">id='+esc(c.id||'')+'</span> '+jsonToHTML(c.input,0)+'</div>';
       }else if(c.type==='tool_result'){
@@ -372,7 +374,7 @@ function renderAnthropicMessage(msg, i) {
         const maxLen=5000;
         html+='<div class="content-block"><span class="ct">tool_result:</span> id='+esc(c.tool_use_id||'');
         if(c.is_error)html+=' <span style="color:#f38ba8">[error]</span>';
-        html+='<br>'+esc(txt.length>maxLen?txt.substring(0,maxLen)+'...[truncated]':txt)+'</div>';
+        html+='<br>'+expandableText(txt,maxLen)+'</div>';
       }else{
         html+='<div class="content-block"><span class="ct">'+esc(c.type||'block')+':</span> '+jsonToHTML(c,0)+'</div>';
       }
@@ -392,7 +394,7 @@ function renderSystemBlock(s, i) {
   html+='<span class="arrow" id="'+id+'_arr">▶</span> system #'+i+' <span class="jl">('+text.length+' chars)</span>';
   if(s.cache_control) html+=' <span style="color:#fab387">[cached]</span>';
   html+='</div>';
-  html+='<div class="sys-body" id="'+id+'">'+esc(text.length>2000?text.substring(0,2000)+'...':text)+'</div>';
+  html+='<div class="sys-body" id="'+id+'">'+expandableText(text,2000)+'</div>';
   html+='</div>';
   return html;
 }
@@ -413,7 +415,7 @@ function renderOpenAIResponse(obj) {
     }else if(k==='usage'&&typeof obj.usage==='object'){
       html+=sectionWrap('usage',fmtUsage(obj.usage),jsonToHTML(obj.usage,0));
     }else if(k==='output_text'&&typeof obj.output_text==='string'&&obj.output_text){
-      html+=sectionWrap('output_text',obj.output_text.length+' chars',esc(obj.output_text.length>2000?obj.output_text.substring(0,2000)+'...':obj.output_text));
+      html+=sectionWrap('output_text',obj.output_text.length+' chars',expandableText(obj.output_text,2000));
     }else{
       html+='<span class="jk">"'+esc(k)+'"</span>: '+jsonToHTML(obj[k],0)+'<br>';
     }
@@ -497,8 +499,7 @@ function jsonToHTML(obj,depth){
   if(typeof obj==='boolean')return '<span class="jb">'+obj+'</span>';
   if(typeof obj==='number')return '<span class="jn">'+obj+'</span>';
   if(typeof obj==='string'){
-    let s=obj.length>500?obj.substring(0,500)+'...':obj;
-    return '<span class="js">'+esc(s)+'</span>';
+    return expandableText(obj,500);
   }
   if(Array.isArray(obj)){
     if(obj.length===0)return '<span class="jbr">[]</span>';
@@ -545,6 +546,10 @@ function filterTools(panelIdx,query){
 }
 
 function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+const textCache={};
+function expandableText(full,maxLen){if(!full||full.length<=maxLen)return esc(full||"");const id="exp_"+rand();textCache[id]=full;return"<span id=\""+id+"\">"+esc(full.substring(0,maxLen))+" <span class=\"expand-link\" onclick=\"expandText('"+id+"',"+maxLen+")\">[expand]</span></span>"}
+function expandText(id,maxLen){const full=textCache[id];if(!full)return;const el=document.getElementById(id);if(!el)return;el.innerHTML=esc(full)+" <span class=\"expand-link\" onclick=\"collapseText('"+id+"',"+maxLen+")\">[collapse]</span>"}
+function collapseText(id,maxLen){const full=textCache[id];if(!full)return;const el=document.getElementById(id);if(!el)return;el.innerHTML=esc(full.substring(0,maxLen))+" <span class=\"expand-link\" onclick=\"expandText('"+id+"',"+maxLen+")\">[expand]</span>"}
 function extractText(content){if(!content)return'';if(typeof content==='string')return content;if(Array.isArray(content))return content.filter(c=>c.text).map(c=>c.text).join('\n');return String(content)}
 function rand(){return Math.random().toString(36).slice(2,8)}
 
