@@ -89,6 +89,69 @@ func TestToCoreRequest_AppendsInjectedTools(t *testing.T) {
 	}
 }
 
+func TestToCoreRequest_ChatCompletionsFunctionTool(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+
+	strict := true
+	req := &openai.ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`"call a tool"`),
+		Tools: []openai.Tool{{
+			Type: "function",
+			Function: &openai.ToolFunction{
+				Name:        "get_weather",
+				Description: "Get the weather",
+				Parameters: map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"city": map[string]any{"type": "string"},
+					},
+				},
+				Strict: &strict,
+			},
+		}},
+	}
+
+	result, err := adapter.ToCoreRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tools) != 1 {
+		t.Fatalf("got %d tools, want 1: %+v", len(result.Tools), result.Tools)
+	}
+	if result.Tools[0].Name != "get_weather" {
+		t.Fatalf("tool name = %q, want get_weather", result.Tools[0].Name)
+	}
+	if result.Tools[0].Description != "Get the weather" {
+		t.Fatalf("tool description = %q", result.Tools[0].Description)
+	}
+	if result.Tools[0].InputSchema["type"] != "object" {
+		t.Fatalf("tool schema = %+v", result.Tools[0].InputSchema)
+	}
+}
+
+func TestToCoreRequest_FiltersEmptyToolNames(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+
+	req := &openai.ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`"call a tool"`),
+		Tools: []openai.Tool{{
+			Type:        "function",
+			Description: "missing name",
+			Parameters:  map[string]any{"type": "object"},
+		}},
+	}
+
+	result, err := adapter.ToCoreRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tools) != 0 {
+		t.Fatalf("got tools %+v, want none", result.Tools)
+	}
+}
+
 func TestToCoreRequest_FunctionCallOutputImage(t *testing.T) {
 	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
@@ -294,8 +357,8 @@ func TestToCoreRequest_BatchesCustomToolCallsAndOutputsIntoSingleRound(t *testin
 	for i, want := range []struct {
 		assistantTextIdx int
 		msgIdx           int
-		callID  string
-		outcome string
+		callID           string
+		outcome          string
 	}{
 		{0, 1, "call_a", "ok a"},
 		{3, 4, "call_b", "ok b"},

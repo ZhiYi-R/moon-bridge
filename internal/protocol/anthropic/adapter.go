@@ -310,6 +310,9 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 	if len(req.Tools) > 0 {
 		anthropicReq.Tools = make([]Tool, 0, len(req.Tools))
 		for _, t := range req.Tools {
+			if strings.TrimSpace(t.Name) == "" {
+				continue
+			}
 			schema := cleanSchema(t.InputSchema)
 			if schema == nil {
 				schema = map[string]any{"type": "object"}

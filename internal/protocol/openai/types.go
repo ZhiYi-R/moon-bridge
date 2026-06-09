@@ -47,6 +47,7 @@ type Tool struct {
 	Description        string         `json:"description,omitempty"`
 	Parameters         map[string]any `json:"parameters,omitempty"`
 	Strict             *bool          `json:"strict,omitempty"`
+	Function           *ToolFunction  `json:"function,omitempty"`
 	Format             map[string]any `json:"format,omitempty"`
 	Tools              []Tool         `json:"tools,omitempty"`
 	ExternalWebAccess  *bool          `json:"external_web_access,omitempty"`
@@ -54,6 +55,14 @@ type Tool struct {
 	MaxNumResults      int            `json:"max_num_results,omitempty"`
 	DisplayWidth       int            `json:"display_width,omitempty"`
 	DisplayHeight      int            `json:"display_height,omitempty"`
+}
+
+// ToolFunction represents a Chat Completions-style nested function tool payload.
+type ToolFunction struct {
+	Name        string         `json:"name,omitempty"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters,omitempty"`
+	Strict      *bool          `json:"strict,omitempty"`
 }
 
 // ============================================================================
@@ -116,10 +125,10 @@ type ContentPart struct {
 
 // Usage represents token usage statistics.
 type Usage struct {
-	InputTokens        int                `json:"input_tokens,omitempty"`
-	OutputTokens       int                `json:"output_tokens,omitempty"`
-	TotalTokens        int                `json:"total_tokens"`
-	InputTokensDetails InputTokensDetails `json:"input_tokens_details,omitempty"`
+	InputTokens         int                 `json:"input_tokens,omitempty"`
+	OutputTokens        int                 `json:"output_tokens,omitempty"`
+	TotalTokens         int                 `json:"total_tokens"`
+	InputTokensDetails  InputTokensDetails  `json:"input_tokens_details,omitempty"`
 	OutputTokensDetails OutputTokensDetails `json:"output_tokens_details,omitempty"`
 }
 
