@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 	"sync"
 
@@ -120,8 +121,16 @@ func (a *AnthropicProviderAdapter) anthropicToCoreRequest(req *MessageRequest) *
 	if len(req.Tools) > 0 {
 		coreReq.Tools = make([]format.CoreTool, 0, len(req.Tools))
 		for _, t := range req.Tools {
+			name := t.Name
+			if name == "" {
+				name = repairEmptyToolName(t.Description)
+				if name == "" {
+					slog.Warn("anthropic adapter: skipping tool with empty name", "description", t.Description)
+					continue
+				}
+			}
 			coreReq.Tools = append(coreReq.Tools, format.CoreTool{
-				Name:        t.Name,
+				Name:        name,
 				Description: t.Description,
 				InputSchema: t.InputSchema,
 			})
@@ -310,12 +319,20 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 	if len(req.Tools) > 0 {
 		anthropicReq.Tools = make([]Tool, 0, len(req.Tools))
 		for _, t := range req.Tools {
+			name := t.Name
+			if name == "" {
+				name = repairEmptyToolName(t.Description)
+				if name == "" {
+					slog.Warn("anthropic adapter: skipping tool with empty name in FromCoreRequest", "description", t.Description)
+					continue
+				}
+			}
 			schema := cleanSchema(t.InputSchema)
 			if schema == nil {
 				schema = map[string]any{"type": "object"}
 			}
 			anthropicReq.Tools = append(anthropicReq.Tools, Tool{
-				Name:        t.Name,
+				Name:        name,
 				Description: t.Description,
 				InputSchema: schema,
 			})
@@ -1038,6 +1055,16 @@ func (a *AnthropicProviderAdapter) coreCacheControl(c *format.CoreCacheControl) 
 		cc.TTL = fmt.Sprintf("%ds", c.TTLSeconds)
 	}
 	return cc
+}
+
+// repairEmptyToolName attempts to infer a tool name from its description
+// when the name field is empty. Returns the repaired name, or "" if
+// inference fails — the caller should skip the tool.
+func repairEmptyToolName(description string) string {
+	if description != "" && strings.Contains(description, "tool_search") {
+		return "tool_search"
+	}
+	return ""
 }
 
 // cleanSchema recursively removes nil values from a JSON schema map.

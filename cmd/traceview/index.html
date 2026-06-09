@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Trace Viewer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font:13px/1.5 'Cascadia Code','Fira Code','JetBrains Mono',monospace;background:#1a1a2e;color:#cdd6f4;height:100vh;display:flex}
+::-webkit-scrollbar{width:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#45475a;border-radius:3px}
+
+#sidebar{width:300px;min-width:220px;background:#11111b;border-right:1px solid #313244;display:flex;flex-direction:column;overflow:hidden}
+#sidebar h1{font-size:14px;padding:12px 16px;color:#89b4fa;border-bottom:1px solid #313244;flex-shrink:0}
+#session-select{padding:8px 12px;background:#181825;border-bottom:1px solid #313244;flex-shrink:0}
+#session-select select{width:100%;padding:6px 8px;background:#11111b;border:1px solid #313244;color:#cdd6f4;font:12px monospace;border-radius:3px;outline:none}
+#session-select select:focus{border-color:#89b4fa}
+#session-select .info{color:#6c7086;font-size:10px;margin-top:4px}
+#trace-list{flex:1;overflow-y:auto}
+.trace-item{padding:6px 16px;cursor:pointer;border-bottom:1px solid #1e1e2e;font-size:12px}
+.trace-item:hover{background:#1e1e2e}
+.trace-item.active{background:#313244;border-left:3px solid #89b4fa}
+.trace-item .num{color:#89b4fa}
+.trace-item .model{color:#a6adc8;font-size:11px}
+.trace-item .err{color:#f38ba8;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+#main{flex:1;display:flex;flex-direction:column;overflow:hidden}
+#error-bar{padding:8px 16px;background:#311;color:#f38ba8;font-size:12px;border-bottom:1px solid #f38ba8;display:none}
+#panels{flex:1;display:flex;overflow:hidden}
+
+.panel{flex:1;border-right:1px solid #313244;display:flex;flex-direction:column;overflow:hidden;min-width:200px}
+.panel:last-child{border-right:none}
+.panel-header{padding:6px 12px;background:#181825;border-bottom:1px solid #313244;font-size:11px;color:#a6adc8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex-shrink:0}
+.panel-body{flex:1;overflow-y:auto;padding:8px 12px;white-space:pre-wrap;word-break:break-all;font-size:11px}
+.empty-panel{display:flex;align-items:center;justify-content:center;color:#45475a;font-size:12px;height:100%}
+
+/* Block sections */
+.block{margin:4px 0;border:1px solid #313244;border-radius:4px;overflow:hidden}
+.block-hdr{padding:4px 10px;background:#181825;cursor:pointer;font-size:11px;display:flex;align-items:center;gap:8px}
+.block-hdr:hover{background:#1e1e2e}
+.block-hdr .role{color:#89b4fa;font-weight:600}
+.block-hdr .preview{color:#6c7086;font-size:10px;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.block-hdr .arrow{color:#6c7086;font-size:10px;transition:transform .15s}
+.block-hdr .arrow.open{transform:rotate(90deg)}
+.block-body{display:none;padding:6px 10px;background:#11111b;font-size:10px;max-height:300px;overflow-y:auto}
+.block-body.open{display:block}
+.block-body .content-block{margin:2px 0;padding:3px 6px;background:#181825;border-radius:3px;font-size:10px}
+.block-body .content-block .ct{color:#a6e3a1}
+
+/* System / Instructions blocks */
+.sys-block{margin:4px 0;border:1px solid #45475a;border-radius:4px;overflow:hidden}
+.sys-block .sys-hdr{padding:4px 10px;background:#1e1e2e;cursor:pointer;font-size:11px;color:#89b4fa}
+.sys-block .sys-hdr:hover{background:#252536}
+.sys-block .sys-body{display:none;padding:6px 10px;background:#11111b;font-size:10px;max-height:250px;overflow-y:auto}
+.sys-block .sys-body.open{display:block}
+
+/* Tool sections */
+.tool-section{margin:4px 0;border:1px solid #313244;border-radius:4px;overflow:hidden}
+.tool-section summary{padding:4px 10px;background:#181825;cursor:pointer;color:#89b4fa;font-size:11px}
+.tool-section summary:hover{background:#1e1e2e}
+.tool-section .tool-body{display:none;padding:4px 10px;background:#11111b;font-size:10px;max-height:200px;overflow-y:auto}
+.tool-section .tool-body.open{display:block}
+.tool-section .empty-name{color:#f38ba8}
+
+/* JSON inline */
+.jk{color:#89b4fa}.js{color:#a6e3a1}.jn{color:#fab387}.jb{color:#cba6f7}.jl{color:#6c7086}.jbr{color:#94e2d5}
+.toggle{cursor:pointer;color:#89b4fa}
+.expand-link{cursor:pointer;color:#89b4fa;font-weight:600;user-select:none}
+.expand-link:hover{color:#b4befe;text-decoration:underline}
+.hide{display:none}
+
+.resizer{width:4px;cursor:col-resize;background:transparent;flex-shrink:0}
+.resizer:hover{background:#89b4fa}
+
+.tool-search{padding:6px 8px;background:#181825;border-bottom:1px solid #313244;display:flex;gap:4px}
+.tool-search input{flex:1;padding:4px 8px;background:#11111b;border:1px solid #313244;color:#cdd6f4;font:12px monospace;border-radius:3px;outline:none}
+.tool-search input:focus{border-color:#89b4fa}
+.tool-search button{padding:4px 8px;background:#313244;border:none;color:#cdd6f4;font:11px monospace;border-radius:3px;cursor:pointer}
+.tool-search button:hover{background:#45475a}
+
+/* Collapsible section wrapper */
+.section-wrap{margin:6px 0;border:1px solid #45475a;border-radius:4px;overflow:hidden}
+.section-wrap .sec-hdr{padding:4px 10px;background:#1e1e2e;cursor:pointer;font-size:11px;display:flex;align-items:center;gap:8px}
+.section-wrap .sec-hdr:hover{background:#252536}
+.section-wrap .sec-hdr .sec-label{color:#a6adc8}
+.section-wrap .sec-hdr .sec-count{color:#89b4fa}
+.section-wrap .sec-hdr .arrow{color:#6c7086;font-size:10px;transition:transform .15s}
+.section-wrap .sec-hdr .arrow.open{transform:rotate(90deg)}
+.section-wrap .sec-body{display:none;padding:4px 8px;background:#11111b}
+.section-wrap .sec-body.open{display:block}
+</style>
+</head>
+<body>
+<div id="sidebar">
+  <h1>Trace Viewer</h1>
+  <div id="session-select">
+    <select id="session-dropdown" onchange="onSessionChange()"></select>
+    <div class="info" id="session-info"></div>
+  </div>
+  <div id="trace-list"></div>
+  <div id="pager" style="padding:6px 8px;background:#181825;border-top:1px solid #313244;display:none;flex-shrink:0">
+    <div style="display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap" id="pager-btns"></div>
+    <div style="text-align:center;color:#6c7086;font-size:10px;margin-top:3px" id="pager-info"></div>
+  </div>
+</div>
+<div id="main">
+  <div id="error-bar"></div>
+  <div id="panels">
+    <div class="panel" id="panel0">
+      <div class="panel-header">openai_request (Codex → Bridge)</div>
+      <div class="tool-search">
+        <input placeholder="Filter tools..." oninput="filterTools(0, this.value)">
+        <button onclick="toggleAllTools(0)">+/-</button>
+      </div>
+      <div class="panel-body" id="body0"></div>
+    </div>
+    <div class="resizer" data-panel="0"></div>
+    <div class="panel" id="panel1">
+      <div class="panel-header">upstream_request (Bridge → Upstream)</div>
+      <div class="tool-search">
+        <input placeholder="Filter tools..." oninput="filterTools(1, this.value)">
+        <button onclick="toggleAllTools(1)">+/-</button>
+      </div>
+      <div class="panel-body" id="body1"></div>
+    </div>
+    <div class="resizer" data-panel="1"></div>
+    <div class="panel" id="panel2">
+      <div class="panel-header">upstream_response (Upstream → Bridge)</div>
+      <div class="panel-body" id="body2"></div>
+    </div>
+    <div class="resizer" data-panel="2"></div>
+    <div class="panel" id="panel3">
+      <div class="panel-header">openai_response (Bridge → Codex)</div>
+      <div class="panel-body" id="body3"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let currentSession='', currentTrace=null, currentPage=1, totalTraces=0, pageSize=10;
+
+fetch('/api/sessions').then(r=>r.json()).then(sessions=>{
+  const sel=document.getElementById('session-dropdown');
+  sel.innerHTML='<option value="">-- select session --</option>';
+  sessions.forEach(s=>{
+    const opt=document.createElement('option');
+    opt.value=s.name;
+    opt.textContent=s.name+' ('+s.trace_count+' traces)';
+    sel.appendChild(opt);
+  });
+  document.getElementById('session-info').textContent=sessions.length+' session(s)';
+});
+
+function onSessionChange(){
+  currentSession=document.getElementById('session-dropdown').value;
+  if(!currentSession){document.getElementById('trace-list').innerHTML='';clearPanels();document.getElementById('pager').style.display='none';return}
+  currentPage=1; totalTraces=0;
+  document.getElementById('trace-list').innerHTML='';
+  loadPage(1);
+}
+
+function loadPage(page){
+  const offset=(page-1)*pageSize;
+  fetch('/api/traces?session='+encodeURIComponent(currentSession)+'&offset='+offset+'&limit='+pageSize).then(r=>r.json()).then(data=>{
+    const list=document.getElementById('trace-list');
+    list.innerHTML='';
+    const traces=data.traces||[];
+    totalTraces=data.total||0;
+    currentPage=page;
+    traces.forEach(t=>{
+      const div=document.createElement('div');
+      div.className='trace-item';
+      div.innerHTML=`<span class="num">#${t.number}</span> <span class="model">${t.model||''}</span><br><span class="err">${t.error||''}</span>`;
+      div.onclick=()=>{document.querySelectorAll('.trace-item').forEach(e=>e.classList.remove('active'));div.classList.add('active');loadTrace(t.number)};
+      list.appendChild(div);
+    });
+    renderPager();
+    if(traces.length>0&&page===1) list.firstChild.click();
+  });
+}
+
+function renderPager(){
+  const pager=document.getElementById('pager');
+  const btns=document.getElementById('pager-btns');
+  const info=document.getElementById('pager-info');
+  const totalPages=Math.ceil(totalTraces/pageSize);
+  if(totalPages<=1){pager.style.display='none';return}
+  pager.style.display='block';
+  info.textContent='Page '+currentPage+'/'+totalPages+' ('+totalTraces+' traces)';
+  let h='';
+  const s='padding:3px 8px;background:#313244;border:none;color:#cdd6f4;font:11px monospace;border-radius:3px;cursor:pointer';
+  const as='padding:3px 8px;background:#89b4fa;border:none;color:#11111b;font:11px monospace;border-radius:3px;cursor:pointer;font-weight:600';
+  const ds='padding:3px 8px;background:#1e1e2e;border:none;color:#45475a;font:11px monospace;border-radius:3px';
+  h+='<button style="'+(currentPage>1?s:ds)+'" '+(currentPage>1?'onclick="loadPage(1)"':'')+'>First</button>';
+  h+='<button style="'+(currentPage>1?s:ds)+'" '+(currentPage>1?'onclick="loadPage('+(currentPage-1)+')"':'')+'>Prev</button>';
+  const start=Math.max(1,currentPage-3);
+  const end=Math.min(totalPages,currentPage+3);
+  for(let p=start;p<=end;p++){
+    h+='<button style="'+(p===currentPage?as:s)+'" onclick="loadPage('+p+')">'+p+'</button>';
+  }
+  h+='<button style="'+(currentPage<totalPages?s:ds)+'" '+(currentPage<totalPages?'onclick="loadPage('+(currentPage+1)+')"':'')+'>Next</button>';
+  h+='<button style="'+(currentPage<totalPages?s:ds)+'" '+(currentPage<totalPages?'onclick="loadPage('+totalPages+')"':'')+'>Last</button>';
+  btns.innerHTML=h;
+}
+
+function clearPanels(){for(let i=0;i<4;i++)document.getElementById('body'+i).innerHTML='<div class="empty-panel">(no data)</div>';document.getElementById('error-bar').style.display='none'}
+
+function loadTrace(num){
+  fetch('/api/trace/'+num+'?session='+encodeURIComponent(currentSession)).then(r=>r.json()).then(data=>{
+    currentTrace=data;
+    const eb=document.getElementById('error-bar');
+    if(data.error){eb.style.display='block';eb.textContent='Error: '+(data.error.message||JSON.stringify(data.error))}else{eb.style.display='none'}
+    renderPanel('body0',data.openai_request,'openai_request');
+    renderPanel('body1',data.upstream_request,'upstream_request');
+    renderPanel('body2',data.upstream_response,'upstream_response');
+    renderPanel('body3',data.openai_response,'openai_response');
+  });
+}
+
+function renderPanel(bodyId, data, kind) {
+  const body=document.getElementById(bodyId);
+  if(!data){body.innerHTML='<div class="empty-panel">(no data)</div>';return}
+  if(kind==='openai_request'){body.innerHTML=renderOpenAIRequest(data);return}
+  if(kind==='upstream_request'){body.innerHTML=renderUpstreamRequest(data);return}
+  if(kind==='openai_response'){body.innerHTML=renderOpenAIResponse(data);return}
+  body.innerHTML=jsonToHTML(data,0);
+}
+
+// ---- OpenAI Request rendering ----
+function renderOpenAIRequest(obj) {
+  const keys=Object.keys(obj);
+  let html='';
+  keys.forEach(k=>{
+    if(k==='input'&&Array.isArray(obj.input)){
+      let inner='';
+      obj.input.forEach((msg,i)=>{inner+=renderMessageBlock(msg,i)});
+      html+=sectionWrap('input',obj.input.length+' messages',inner);
+    }else if(k==='instructions'&&typeof obj.instructions==='string'){
+      html+=sectionWrap('instructions',obj.instructions.length+' chars',renderInstructionsBody(obj.instructions));
+    }else if(k==='tools'&&Array.isArray(obj.tools)){
+      let inner='';
+      obj.tools.forEach((t,i)=>{inner+=renderToolBlock(t,i)});
+      html+=sectionWrap('tools',obj.tools.length+' tools',inner);
+    }else{
+      html+='<span class="jk">"'+esc(k)+'"</span>: '+jsonToHTML(obj[k],0)+'<br>';
+    }
+  });
+  return html;
+}
+
+function renderMessageBlock(msg, i) {
+  const type=msg.type||'';
+  // Handle input items that are function_call / function_call_output (no role, no content array)
+  if(type==='function_call'||type==='function_call_output'){
+    return renderInputItem(msg, i, type);
+  }
+  const role=msg.role||'unknown';
+  const content=msg.content||'';
+  let preview='';
+  if(Array.isArray(content)){
+    const texts=content.filter(c=>c.text||c.type==='input_text').map(c=>c.text||'').join(' ');
+    preview=texts.substring(0,80);
+  }else if(typeof content==='string'){
+    preview=content.substring(0,80);
+  }
+  const id='msg_'+rand();
+  let html='<div class="block">';
+  html+='<div class="block-hdr" onclick="toggleBlock(\''+id+'\')">';
+  html+='<span class="arrow" id="'+id+'_arr">▶</span>';
+  html+='<span class="role">'+esc(role)+(type?' ['+esc(type)+']':'')+'</span>';
+  html+='<span class="preview">'+esc(preview)+'</span>';
+  html+='</div>';
+  html+='<div class="block-body" id="'+id+'">';
+  if(Array.isArray(content)){
+    content.forEach(c=>{
+      if(c.text) html+='<div class="content-block"><span class="ct">text:</span> '+expandableText(c.text,600)+'</div>';
+      else if(c.type) html+='<div class="content-block"><span class="ct">'+esc(c.type)+':</span> '+jsonToHTML(c,0)+'</div>';
+    });
+  }else{
+    html+=jsonToHTML(content,0);
+  }
+  html+='</div></div>';
+  return html;
+}
+
+function renderInputItem(msg, i, type) {
+  let preview='', body='';
+  if(type==='function_call'){
+    preview='fn: '+esc(msg.name||'')+'('+(msg.arguments||'').substring(0,60)+')';
+    body='<span class="jk">name</span>: <span class="js">'+esc(msg.name||'')+'</span><br>';
+    body+='<span class="jk">call_id</span>: <span class="js">'+esc(msg.call_id||'')+'</span><br>';
+    body+='<span class="jk">arguments</span>:<br>'+jsonToHTML(tryParse(msg.arguments),0);
+  }else if(type==='function_call_output'){
+    preview='output: '+esc((typeof msg.output==='string'?msg.output:JSON.stringify(msg.output||'')).substring(0,60));
+    body='<span class="jk">call_id</span>: <span class="js">'+esc(msg.call_id||'')+'</span><br>';
+    body+='<span class="jk">output</span>:<br>'+jsonToHTML(msg.output,0);
+  }
+  const id='msg_'+rand();
+  let h='<div class="block">';
+  h+='<div class="block-hdr" onclick="toggleBlock(\''+id+'\')">';
+  h+='<span class="arrow" id="'+id+'_arr">▶</span>';
+  h+='<span class="role">'+esc(type)+'</span>';
+  h+='<span class="preview">'+preview+'</span>';
+  h+='</div>';
+  h+='<div class="block-body" id="'+id+'">'+body+'</div></div>';
+  return h;
+}
+
+function renderInstructionsBody(text) {
+  return expandableText(text,2000);
+}
+
+function sectionWrap(label, count, inner) {
+  const id='sec_'+rand();
+  let h='<div class="section-wrap">';
+  h+='<div class="sec-hdr" onclick="toggleBlock(\''+id+'\')">';
+  h+='<span class="arrow" id="'+id+'_arr">▶</span>';
+  h+='<span class="sec-label">'+esc(label)+'</span>';
+  h+='<span class="sec-count">('+count+')</span>';
+  h+='</div>';
+  h+='<div class="sec-body" id="'+id+'">'+inner+'</div>';
+  h+='</div>';
+  return h;
+}
+
+// ---- Upstream (Anthropic) Request rendering ----
+function renderUpstreamRequest(obj) {
+  const keys=Object.keys(obj);
+  let html='';
+  keys.forEach(k=>{
+    if(k==='messages'&&Array.isArray(obj.messages)){
+      let inner='';
+      obj.messages.forEach((m,i)=>{inner+=renderAnthropicMessage(m,i)});
+      html+=sectionWrap('messages',obj.messages.length+' messages',inner);
+    }else if(k==='system'&&Array.isArray(obj.system)){
+      let inner='';
+      obj.system.forEach((s,i)=>{inner+=renderSystemBlock(s,i)});
+      html+=sectionWrap('system',obj.system.length+' blocks',inner);
+    }else if(k==='tools'&&Array.isArray(obj.tools)){
+      let inner='';
+      obj.tools.forEach((t,i)=>{inner+=renderToolBlock(t,i)});
+      html+=sectionWrap('tools',obj.tools.length+' tools',inner);
+    }else{
+      html+='<span class="jk">"'+esc(k)+'"</span>: '+jsonToHTML(obj[k],0)+'<br>';
+    }
+  });
+  return html;
+}
+
+function renderAnthropicMessage(msg, i) {
+  const role=msg.role||'unknown';
+  const content=msg.content||[];
+  let preview='';
+  if(Array.isArray(content)){
+    const texts=content.filter(c=>c.text).map(c=>c.text).join(' ');
+    preview=texts.substring(0,80);
+  }
+  const id='anth_msg_'+rand();
+  let html='<div class="block">';
+  html+='<div class="block-hdr" onclick="toggleBlock(\''+id+'\')">';
+  html+='<span class="arrow" id="'+id+'_arr">▶</span>';
+  html+='<span class="role">'+esc(role)+'</span>';
+  html+='<span class="preview">'+esc(preview)+'</span>';
+  html+='</div>';
+  html+='<div class="block-body" id="'+id+'">';
+  if(Array.isArray(content)){
+    content.forEach((c,j)=>{
+      if(c.type==='text'&&c.text){
+        html+='<div class="content-block"><span class="ct">text:</span> '+expandableText(c.text,600)+'</div>';
+      }else if(c.type==='tool_use'){
+        html+='<div class="content-block"><span class="ct">tool_use:</span> '+esc(c.name||'?')+' <span class="jl">id='+esc(c.id||'')+'</span> '+jsonToHTML(c.input,0)+'</div>';
+      }else if(c.type==='tool_result'){
+        const txt=extractText(c.content);
+        const maxLen=5000;
+        html+='<div class="content-block"><span class="ct">tool_result:</span> id='+esc(c.tool_use_id||'');
+        if(c.is_error)html+=' <span style="color:#f38ba8">[error]</span>';
+        html+='<br>'+expandableText(txt,maxLen)+'</div>';
+      }else{
+        html+='<div class="content-block"><span class="ct">'+esc(c.type||'block')+':</span> '+jsonToHTML(c,0)+'</div>';
+      }
+    });
+  }else{
+    html+=jsonToHTML(content,0);
+  }
+  html+='</div></div>';
+  return html;
+}
+
+function renderSystemBlock(s, i) {
+  const text=s.text||'';
+  const id='sys_'+rand();
+  let html='<div class="sys-block">';
+  html+='<div class="sys-hdr" onclick="toggleBlock(\''+id+'\')">';
+  html+='<span class="arrow" id="'+id+'_arr">▶</span> system #'+i+' <span class="jl">('+text.length+' chars)</span>';
+  if(s.cache_control) html+=' <span style="color:#fab387">[cached]</span>';
+  html+='</div>';
+  html+='<div class="sys-body" id="'+id+'">'+expandableText(text,2000)+'</div>';
+  html+='</div>';
+  return html;
+}
+
+// ---- OpenAI Response rendering ----
+function renderOpenAIResponse(obj) {
+  const keys=Object.keys(obj);
+  // If it's an error response, render as a simple JSON block.
+  if (keys.length===1 && keys[0]==='error') {
+    return '<div class="block" style="border-color:#f38ba8"><div class="block-hdr" style="color:#f38ba8">Error</div><div class="block-body open">'+jsonToHTML(obj.error,0)+'</div></div>';
+  }
+  let html='';
+  keys.forEach(k=>{
+    if(k==='output'&&Array.isArray(obj.output)){
+      let inner='';
+      obj.output.forEach((item,i)=>{inner+=renderOutputItem(item,i)});
+      html+=sectionWrap('output',obj.output.length+' items',inner);
+    }else if(k==='usage'&&typeof obj.usage==='object'){
+      html+=sectionWrap('usage',fmtUsage(obj.usage),jsonToHTML(obj.usage,0));
+    }else if(k==='output_text'&&typeof obj.output_text==='string'&&obj.output_text){
+      html+=sectionWrap('output_text',obj.output_text.length+' chars',expandableText(obj.output_text,2000));
+    }else{
+      html+='<span class="jk">"'+esc(k)+'"</span>: '+jsonToHTML(obj[k],0)+'<br>';
+    }
+  });
+  return html;
+}
+
+function fmtUsage(u){return 'in: '+(u.input_tokens||0)+' out: '+(u.output_tokens||0)+' total: '+(u.total_tokens||0)}
+
+function renderOutputItem(item, i) {
+  const type=item.type||'unknown';
+  const status=item.status||'';
+  const id='out_'+rand();
+  let preview='', body='';
+  switch(type){
+    case 'message':
+      const role=item.role||'?';
+      const content=(item.content||[]).map(c=>c.text||'').join(' ');
+      preview=role+': '+content.substring(0,80);
+      body='<span class="jk">role</span>: <span class="js">'+esc(role)+'</span><br>';
+      body+='<span class="jk">status</span>: <span class="js">'+esc(status)+'</span><br>';
+      body+='<span class="jk">content</span>:<br>'+jsonToHTML(item.content,0);
+      break;
+    case 'function_call':
+      preview='fn: '+esc(item.name||'')+'('+(item.arguments||'').substring(0,60)+')';
+      body='<span class="jk">name</span>: <span class="js">'+esc(item.name||'')+'</span><br>';
+      body+='<span class="jk">call_id</span>: <span class="js">'+esc(item.call_id||'')+'</span><br>';
+      body+='<span class="jk">status</span>: <span class="js">'+esc(status)+'</span><br>';
+      body+='<span class="jk">arguments</span>:<br>'+jsonToHTML(tryParse(item.arguments),0);
+      break;
+    case 'custom_tool_call':
+      preview='custom: '+esc(item.name||'')+(item.namespace?'@'+esc(item.namespace):'');
+      body='<span class="jk">name</span>: <span class="js">'+esc(item.name||'')+'</span><br>';
+      if(item.namespace)body+='<span class="jk">namespace</span>: <span class="js">'+esc(item.namespace)+'</span><br>';
+      body+='<span class="jk">call_id</span>: <span class="js">'+esc(item.call_id||'')+'</span><br>';
+      body+='<span class="jk">status</span>: <span class="js">'+esc(status)+'</span><br>';
+      body+='<span class="jk">input</span>:<br>'+jsonToHTML(tryParse(item.input),0);
+      break;
+    case 'local_shell_call':
+      preview='shell: '+esc((item.input||'').substring(0,60));
+      body='<span class="jk">call_id</span>: <span class="js">'+esc(item.call_id||'')+'</span><br>';
+      body+='<span class="jk">status</span>: <span class="js">'+esc(status)+'</span><br>';
+      body+='<span class="jk">input</span>:<br>'+jsonToHTML(tryParse(item.input),0);
+      break;
+    default:
+      preview=esc(type);
+      body=jsonToHTML(item,0);
+  }
+  let h='<div class="block">';
+  h+='<div class="block-hdr" onclick="toggleBlock(\''+id+'\')">';
+  h+='<span class="arrow" id="'+id+'_arr">▶</span>';
+  h+='<span class="role">['+i+'] '+esc(type)+'</span>';
+  if(status) h+=' <span class="jl">'+esc(status)+'</span>';
+  h+='<span class="preview">'+preview+'</span>';
+  h+='</div>';
+  h+='<div class="block-body" id="'+id+'">'+body+'</div></div>';
+  return h;
+}
+
+function tryParse(s) {
+  if(!s) return s;
+  try{return JSON.parse(s)}catch(e){return s}
+}
+function renderToolBlock(tool, i) {
+  const name=tool.name||'<span class="empty-name">(empty)</span>';
+  const desc=(tool.description||'').substring(0,80);
+  const id='tool_'+rand();
+  let html='<div class="tool-section">';
+  html+='<summary onclick="toggleBlock(\''+id+'\')">['+i+'] '+name+' <span class="jl">'+esc(desc)+'</span></summary>';
+  html+='<div class="tool-body" id="'+id+'">';
+  Object.keys(tool).forEach(k=>{
+    html+='<span class="jk">"'+esc(k)+'"</span>: '+jsonToHTML(tool[k],0)+'<br>';
+  });
+  html+='</div></div>';
+  return html;
+}
+
+// ---- Generic JSON ----
+function jsonToHTML(obj,depth){
+  if(obj===null||obj===undefined) return '<span class="jl">null</span>';
+  if(typeof obj==='boolean')return '<span class="jb">'+obj+'</span>';
+  if(typeof obj==='number')return '<span class="jn">'+obj+'</span>';
+  if(typeof obj==='string'){
+    return expandableText(obj,500);
+  }
+  if(Array.isArray(obj)){
+    if(obj.length===0)return '<span class="jbr">[]</span>';
+    const id='arr_'+rand();
+    let h='<span class="toggle" onclick="toggle(\''+id+'\')">▼</span><span class="jbr">[</span>';
+    h+='<span id="'+id+'">';
+    obj.forEach((item,i)=>{h+=jsonToHTML(item,depth+1);if(i<obj.length-1)h+=', '});
+    h+='</span><span class="jbr">]</span>';
+    return h;
+  }
+  if(typeof obj==='object'){
+    const keys=Object.keys(obj);
+    if(keys.length===0)return '<span class="jbr">{}</span>';
+    const id='obj_'+rand();
+    let h='<span class="toggle" onclick="toggle(\''+id+'\')">▼</span><span class="jbr">{</span>';
+    h+='<span id="'+id+'"><br>';
+    const ind='  '.repeat(depth+1);
+    keys.forEach((k,i)=>{
+      h+=ind+'<span class="jk">"'+esc(k)+'"</span>: '+jsonToHTML(obj[k],depth+1);
+      if(i<keys.length-1)h+=',';
+      h+='<br>';
+    });
+    h+='  '.repeat(depth)+'</span><span class="jbr">}</span>';
+    return h;
+  }
+  return String(obj);
+}
+
+function toggle(id){const el=document.getElementById(id);if(el)el.classList.toggle('hide')}
+function toggleBlock(id){const body=document.getElementById(id);const arr=document.getElementById(id+'_arr');if(body){body.classList.toggle('open');if(arr)arr.classList.toggle('open')}}
+function toggleAllTools(panelIdx){
+  const body=document.getElementById('body'+panelIdx);
+  const all=body.querySelectorAll('.tool-body');
+  const anyOpen=body.querySelector('.tool-body.open');
+  all.forEach(b=>b.classList.toggle('open',!anyOpen));
+}
+
+function filterTools(panelIdx,query){
+  if(!currentTrace)return;
+  const keys=['openai_request','upstream_request',null,null];
+  const key=keys[panelIdx];
+  if(!key)return;
+  renderPanel('body'+panelIdx,currentTrace[key],key);
+}
+
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
+const textCache={};
+function expandableText(full,maxLen){if(!full||full.length<=maxLen)return esc(full||"");const id="exp_"+rand();textCache[id]=full;return"<span id=\""+id+"\">"+esc(full.substring(0,maxLen))+" <span class=\"expand-link\" onclick=\"expandText('"+id+"',"+maxLen+")\">[expand]</span></span>"}
+function expandText(id,maxLen){const full=textCache[id];if(!full)return;const el=document.getElementById(id);if(!el)return;el.innerHTML=esc(full)+" <span class=\"expand-link\" onclick=\"collapseText('"+id+"',"+maxLen+")\">[collapse]</span>"}
+function collapseText(id,maxLen){const full=textCache[id];if(!full)return;const el=document.getElementById(id);if(!el)return;el.innerHTML=esc(full.substring(0,maxLen))+" <span class=\"expand-link\" onclick=\"expandText('"+id+"',"+maxLen+")\">[expand]</span>"}
+function extractText(content){if(!content)return'';if(typeof content==='string')return content;if(Array.isArray(content))return content.filter(c=>c.text).map(c=>c.text).join('\n');return String(content)}
+function rand(){return Math.random().toString(36).slice(2,8)}
+
+// Panel resize
+document.querySelectorAll('.resizer').forEach(r=>{
+  r.addEventListener('mousedown',e=>{
+    e.preventDefault();
+    const pi=parseInt(r.dataset.panel);
+    const l=document.getElementById('panel'+pi),r_=document.getElementById('panel'+(pi+1));
+    const sx=e.clientX,lw=l.offsetWidth,rw=r_.offsetWidth;
+    function mv(ev){const dx=ev.clientX-sx;l.style.flex='none';l.style.width=Math.max(100,lw+dx)+'px';r_.style.flex='none';r_.style.width=Math.max(100,rw-dx)+'px'}
+    function up(){document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up)}
+    document.addEventListener('mousemove',mv);document.addEventListener('mouseup',up);
+  });
+});
+</script>
+</body>
+</html>

@@ -56,3 +56,7 @@ build/
 .dev.vars
 /moonbridge
 logs/
+build.ps1
+*.exe
+/traceview
+traceview.exe~
