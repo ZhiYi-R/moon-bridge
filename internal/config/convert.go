@@ -19,6 +19,7 @@ func (cfg Config) ToFileConfig() FileConfig {
 		Server: ServerFileConfig{
 			Addr:        cfg.Addr,
 			AuthToken:   cfg.AuthToken,
+			AuthType:    string(cfg.AuthType),
 			MaxSessions: cfg.MaxSessions,
 			SessionTTL:  cfg.SessionTTL,
 		},

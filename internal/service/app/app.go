@@ -326,6 +326,12 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 	if pm == nil {
 		return
 	}
+	// In transform auth mode, upstream probing is impossible (no api_key configured).
+	// Explicit configs (enabled/disabled/injected) are honored regardless.
+	// In transform mode, auto probing is deferred as "unknown" and lazily
+	// resolved on the first authenticated request carrying a user token.
+	isTransform := cfg.AuthType == config.AuthTypeTransform
+
 	// 1. Resolve provider-level defaults.
 	for _, key := range pm.ProviderKeys() {
 		protocol := pm.ProtocolForKey(key)
@@ -343,12 +349,17 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 				pm.SetResolvedWebSearch(key, "injected")
 				slog.Info("网页搜索注入模式已启用", "provider", key)
 			default:
-				resolved := probeProviderWebSearch(ctx, key, pm, errors)
-				if resolved == "disabled" && cfg.TavilyAPIKey != "" {
-					resolved = "injected"
-					slog.Info("网页搜索自动探测失败，回退到注入模式", "provider", key)
+				if isTransform {
+					pm.SetResolvedWebSearch(key, "unknown")
+					slog.Info("transform 模式推迟网页搜索探测", "provider", key)
+				} else {
+					resolved := probeProviderWebSearch(ctx, key, pm, errors)
+					if resolved == "disabled" && cfg.TavilyAPIKey != "" {
+						resolved = "injected"
+						slog.Info("网页搜索自动探测失败，回退到注入模式", "provider", key)
+					}
+					pm.SetResolvedWebSearch(key, resolved)
 				}
-				pm.SetResolvedWebSearch(key, resolved)
 			}
 		case config.ProtocolOpenAIResponse:
 			switch support {
@@ -433,9 +444,15 @@ func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamMode
 		pm.SetResolvedWebSearch(candidateKey, "injected")
 		slog.Info("模型配置启用网页搜索注入模式", "model", alias)
 	default:
-		resolved := resolveModelWebSearchWithProber(ctx, alias, providerKey, upstreamModel, modelWS, pm, cfg, errors, pm)
-		pm.SetResolvedWebSearch(modelKey, resolved)
-		pm.SetResolvedWebSearch(candidateKey, resolved)
+		if cfg.AuthType == config.AuthTypeTransform {
+			pm.SetResolvedWebSearch(modelKey, "unknown")
+			pm.SetResolvedWebSearch(candidateKey, "unknown")
+			slog.Info("transform 模式推迟模型级网页搜索探测", "model", alias)
+		} else {
+			resolved := resolveModelWebSearchWithProber(ctx, alias, providerKey, upstreamModel, modelWS, pm, cfg, errors, pm)
+			pm.SetResolvedWebSearch(modelKey, resolved)
+			pm.SetResolvedWebSearch(candidateKey, resolved)
+		}
 	}
 }
 

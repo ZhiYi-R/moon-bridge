@@ -5,6 +5,7 @@ package config
 type ServerConfig struct {
 	Addr        string
 	AuthToken   string
+	AuthType    AuthType
 	Mode        string
 	MaxSessions int
 	SessionTTL  string
@@ -15,6 +16,7 @@ func ServerFromGlobalConfig(cfg *Config) ServerConfig {
 	return ServerConfig{
 		Addr:        cfg.Addr,
 		AuthToken:   cfg.AuthToken,
+		AuthType:    cfg.AuthType,
 		Mode:        string(cfg.Mode),
 		MaxSessions: cfg.MaxSessions,
 		SessionTTL:  cfg.SessionTTL,

@@ -170,7 +170,7 @@ func (s *Server) handleWithAdapters(
 	// the upstream provider receives the correct model identifier.
 	coreReq.Model = preferred.UpstreamModel
 
-	wsMode := resolvedWebSearchMode(pm, openAIReq.Model, preferred)
+	wsMode := s.resolveWebSearchLazy(ctx, pm, preferred.ProviderKey, preferred.UpstreamModel, openAIReq.Model)
 
 	// Inject web search tools at Core level if mode is "injected".
 	// This replaces web_search/web_search_preview with tavily_search/firecrawl_fetch tools.
@@ -2147,7 +2147,6 @@ func normalizeAnthropicRequest(upstream any) (anthropic.MessageRequest, error) {
 	}
 }
 
-
 // injectCoreWebSearch replaces web_search tools in coreReq.Tools with injected
 // tavily_search/firecrawl_fetch tools when the resolved web search mode is "injected".
 // Returns true if injection was applied.
@@ -2194,6 +2193,50 @@ func resolvedWebSearchMode(pm *provider.ProviderManager, modelAlias string, pref
 		return pm.ResolvedWebSearchForModel(modelAlias)
 	}
 	return ""
+}
+
+// resolveWebSearchLazy probes web search support on-demand when the resolved
+// mode is "unknown" (startup state for transform auth mode). On success,
+// updates the provider manager cache and returns the final mode.
+func (s *Server) resolveWebSearchLazy(ctx context.Context, pm *provider.ProviderManager, providerKey, upstreamModel, modelAlias string) string {
+	// Resolve current mode using the same priority as resolvedWebSearchMode.
+	mode := ""
+	if providerKey != "" && upstreamModel != "" {
+		mode = pm.ResolvedWebSearchForCandidate(providerKey, upstreamModel)
+	}
+	if mode == "" && modelAlias != "" {
+		mode = pm.ResolvedWebSearchForModel(modelAlias)
+	}
+	if mode != "unknown" {
+		return mode
+	}
+
+	// Only probe if context carries a transform token (otherwise skip).
+	if _, ok := config.TransformAuthTokenFromContext(ctx); !ok {
+		return "disabled"
+	}
+
+	slog.Default().Info("lazy web search probe", "provider", providerKey, "model", upstreamModel)
+	supported, err := pm.ProbeWebSearchCandidate(ctx, providerKey, upstreamModel)
+	if err != nil || !supported {
+		slog.Default().Warn("lazy web search probe failed or unsupported", "provider", providerKey, "model", upstreamModel, "error", err)
+		if providerKey != "" && upstreamModel != "" {
+			pm.SetResolvedWebSearch(provider.WebSearchCandidateKey(providerKey, upstreamModel), "disabled")
+		}
+		if modelAlias != "" {
+			pm.SetResolvedWebSearch("model:"+modelAlias, "disabled")
+		}
+		return "disabled"
+	}
+
+	slog.Default().Info("lazy web search probe: enabled", "provider", providerKey, "model", upstreamModel)
+	if providerKey != "" && upstreamModel != "" {
+		pm.SetResolvedWebSearch(provider.WebSearchCandidateKey(providerKey, upstreamModel), "enabled")
+	}
+	if modelAlias != "" {
+		pm.SetResolvedWebSearch("model:"+modelAlias, "enabled")
+	}
+	return "enabled"
 }
 
 // searchProvider wraps the websearchinjected orchestrator's behavior.

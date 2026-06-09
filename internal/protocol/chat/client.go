@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"moonbridge/internal/config"
 )
 
 // ClientConfig configures the OpenAI Chat Completions HTTP client.
@@ -162,7 +164,7 @@ func (c *Client) newRequest(ctx context.Context, req *ChatRequest) (*http.Reques
 		return nil, fmt.Errorf("chat API request build: %w", err)
 	}
 	httpReq.Header.Set("content-type", "application/json")
-	httpReq.Header.Set("authorization", "Bearer "+c.apiKey)
+	httpReq.Header.Set("authorization", "Bearer "+c.effectiveAPIKey(ctx))
 	if c.userAgent != "" {
 		httpReq.Header.Set("user-agent", c.userAgent)
 	}
@@ -225,4 +227,13 @@ func safeUsage(u *Usage) Usage {
 		return Usage{}
 	}
 	return *u
+}
+
+// effectiveAPIKey returns the transformed auth token from context if available,
+// otherwise falls back to the client's configured API key.
+func (c *Client) effectiveAPIKey(ctx context.Context) string {
+	if token, ok := config.TransformAuthTokenFromContext(ctx); ok {
+		return token
+	}
+	return c.apiKey
 }

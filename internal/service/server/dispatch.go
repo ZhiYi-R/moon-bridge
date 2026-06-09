@@ -325,6 +325,14 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		return
 	}
 
+	// Resolve web search once before the loop (includes lazy probe for transform mode).
+	wsEnabled := false
+	if len(openaiCandidates) > 0 {
+		first := openaiCandidates[0]
+		wsMode := server.resolveWebSearchLazy(request.Context(), pm, first.ProviderKey, first.UpstreamModel, responsesRequest.Model)
+		wsEnabled = wsMode == "enabled"
+	}
+
 	for i, candidate := range openaiCandidates {
 		providerKey := candidate.ProviderKey
 		isLast := i == len(openaiCandidates)-1
@@ -337,6 +345,10 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 
 		baseURL := pm.ProviderBaseURL(providerKey)
 		apiKey := pm.ProviderAPIKey(providerKey)
+		// In transform mode, use the user's Bearer token instead of the provider's API key.
+		if token, ok := config.TransformAuthTokenFromContext(request.Context()); ok {
+			apiKey = token
+		}
 		if baseURL == "" {
 			if isLast {
 				log.Error("OpenAI 提供商缺少 base_url")
@@ -371,7 +383,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		actualModel = candidate.UpstreamModel
 
 		// Inject web_search tool if enabled for this model.
-		if pm.ResolvedWebSearchForModel(responsesRequest.Model) == "enabled" {
+		if wsEnabled {
 			upstreamRequest.Tools = InjectWebSearchTool(upstreamRequest.Tools)
 		}
 

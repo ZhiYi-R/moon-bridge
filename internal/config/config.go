@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"moonbridge/internal/modelref"
@@ -20,8 +21,8 @@ const (
 	ProtocolAnthropic      = "anthropic"
 	ProtocolOpenAIResponse = "openai-response"
 	// Phase 5: New protocol constants (D-08)
-	ProtocolGoogleGenAI    = "google-genai"
-	ProtocolOpenAIChat     = "openai-chat"
+	ProtocolGoogleGenAI = "google-genai"
+	ProtocolOpenAIChat  = "openai-chat"
 )
 
 type Mode string
@@ -31,6 +32,31 @@ const (
 	ModeCaptureResponse  Mode = "CaptureResponse"
 	ModeTransform        Mode = "Transform"
 )
+
+// AuthType controls how the server handles incoming Bearer tokens.
+type AuthType string
+
+const (
+	AuthTypeAuthentication AuthType = "authentication"
+	AuthTypeTransform      AuthType = "transform"
+)
+
+// contextKey is the type used for context keys in the config package.
+type contextKey string
+
+const transformAuthTokenKey contextKey = "transform_auth_token"
+
+// WithTransformAuthToken stores a transformed auth token in the context.
+func WithTransformAuthToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, transformAuthTokenKey, token)
+}
+
+// TransformAuthTokenFromContext retrieves the transformed auth token from the context.
+// Returns the token and true if present.
+func TransformAuthTokenFromContext(ctx context.Context) (string, bool) {
+	token, ok := ctx.Value(transformAuthTokenKey).(string)
+	return token, ok
+}
 
 type WebSearchSupport string
 
@@ -51,22 +77,23 @@ type WebSearchConfig struct {
 }
 
 type Config struct {
-	Mode              Mode
-	Addr              string
-	AuthToken         string
-	TraceRequests     bool
-	LogLevel          string
-	LogFormat         string
-	SystemPrompt      string
-	DefaultModel      string
-	WebSearchSupport  WebSearchSupport
-	WebSearchMaxUses  int
-	TavilyAPIKey      string
-	FirecrawlAPIKey   string
-	SearchMaxRounds   int
-	DefaultMaxTokens  int
-	MaxSessions int    `yaml:"max_sessions"`  // 0 = unlimited
-	SessionTTL  string `yaml:"session_ttl"`   // default "24h"
+	Mode             Mode
+	Addr             string
+	AuthToken        string
+	AuthType         AuthType
+	TraceRequests    bool
+	LogLevel         string
+	LogFormat        string
+	SystemPrompt     string
+	DefaultModel     string
+	WebSearchSupport WebSearchSupport
+	WebSearchMaxUses int
+	TavilyAPIKey     string
+	FirecrawlAPIKey  string
+	SearchMaxRounds  int
+	DefaultMaxTokens int
+	MaxSessions      int    `yaml:"max_sessions"` // 0 = unlimited
+	SessionTTL       string `yaml:"session_ttl"`  // default "24h"
 	// Defaults holds the default configuration values.
 	Defaults Defaults
 	// Models is the canonical model definition map (shared across providers).
@@ -115,11 +142,11 @@ type RouteEntry struct {
 
 // ProviderDef defines a single upstream provider.
 type ProviderDef struct {
-	BaseURL          string
-	APIKey           string
-	Version          string
-	UserAgent        string
-	Protocol         string // "anthropic" (default), "openai-response", "google-genai", or "openai-chat"
+	BaseURL   string
+	APIKey    string
+	Version   string
+	UserAgent string
+	Protocol  string // "anthropic" (default), "openai-response", "google-genai", or "openai-chat"
 	// Phase 5: Google GenAI flat fields (D-09).
 	// Only relevant when Protocol == ProtocolGoogleGenAI.
 	// project: Google Cloud project ID (Vertex AI).
@@ -129,7 +156,7 @@ type ProviderDef struct {
 	Location   string `yaml:"location,omitempty"`
 	APIVersion string `yaml:"api_version,omitempty"`
 	// Cache config for this provider. If nil, provider does not use caching.
-	Cache *CacheConfig `yaml:"cache,omitempty"`
+	Cache            *CacheConfig `yaml:"cache,omitempty"`
 	WebSearchSupport WebSearchSupport
 	WebSearchMaxUses int
 	TavilyAPIKey     string
@@ -204,11 +231,11 @@ type ModelDef struct {
 
 // OfferEntry declares that a provider offers a model defined in Models.
 type OfferEntry struct {
-	Model        string      // references models.<slug>
-	UpstreamName string      // optional, upstream model name (empty = same as slug)
-	Priority     int         // lower value = higher priority (0 is highest)
+	Model        string // references models.<slug>
+	UpstreamName string // optional, upstream model name (empty = same as slug)
+	Priority     int    // lower value = higher priority (0 is highest)
 	Pricing      ModelPricing
-	Overrides    *ModelDef   // optional provider-specific overrides
+	Overrides    *ModelDef // optional provider-specific overrides
 }
 
 type ResponseProxyConfig struct {
@@ -285,7 +312,7 @@ func (cfg Config) validateTransform() error {
 		if def.BaseURL == "" {
 			return fmt.Errorf("providers.%s.base_url is required", key)
 		}
-		if def.APIKey == "" {
+		if cfg.AuthType != AuthTypeTransform && def.APIKey == "" {
 			return fmt.Errorf("providers.%s.api_key is required", key)
 		}
 		switch def.Protocol {

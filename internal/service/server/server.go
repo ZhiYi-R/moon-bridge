@@ -162,16 +162,38 @@ func New(cfg Config) *Server {
 }
 
 func (s *Server) ServeHTTP(writer http.ResponseWriter, request *http.Request) {
-	if token := s.currentConfig().AuthToken; token != "" {
-		if !checkAuth(request, token) {
+	cfg := s.currentConfig()
+
+	switch cfg.AuthType {
+	case config.AuthTypeTransform:
+		// In transform mode, extract the user's Bearer token and forward it
+		// to the upstream provider instead of the configured api_key.
+		token := extractBearerToken(request)
+		if token == "" {
 			writer.Header().Set("Content-Type", "application/json")
 			writer.WriteHeader(http.StatusUnauthorized)
 			json.NewEncoder(writer).Encode(openai.ErrorResponse{Error: openai.ErrorObject{
-				Message: "未提供有效的认证令牌，请在 Authorization header 中使用 Bearer 方案",
+				Message: "在 transform 模式下需要提供 Authorization: Bearer <token>",
 				Type:    "authentication_error",
 				Code:    "invalid_auth",
 			}})
 			return
+		}
+		ctx := config.WithTransformAuthToken(request.Context(), token)
+		request = request.WithContext(ctx)
+	default:
+		// authentication mode (default): verify Bearer token against auth_token.
+		if cfg.AuthToken != "" {
+			if !checkAuth(request, cfg.AuthToken) {
+				writer.Header().Set("Content-Type", "application/json")
+				writer.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(writer).Encode(openai.ErrorResponse{Error: openai.ErrorObject{
+					Message: "未提供有效的认证令牌，请在 Authorization header 中使用 Bearer 方案",
+					Type:    "authentication_error",
+					Code:    "invalid_auth",
+				}})
+				return
+			}
 		}
 	}
 	s.mux.ServeHTTP(writer, request)
@@ -321,11 +343,17 @@ func slugDisplayName(slug string) string {
 }
 
 func checkAuth(r *http.Request, expectedToken string) bool {
+	return extractBearerToken(r) == expectedToken
+}
+
+// extractBearerToken extracts the Bearer token from an Authorization header.
+// Returns the token value, or an empty string if no Bearer token is present.
+func extractBearerToken(r *http.Request) string {
 	auth := r.Header.Get("Authorization")
 	if !strings.HasPrefix(auth, "Bearer ") {
-		return false
+		return ""
 	}
-	return strings.TrimSpace(auth[7:]) == expectedToken
+	return strings.TrimSpace(auth[7:])
 }
 
 func (s *Server) resolveModelOrFallback(modelName string) (*provider.ResolvedRoute, error) {

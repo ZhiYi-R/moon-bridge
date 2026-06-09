@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"moonbridge/internal/config"
 )
 
 type ClientConfig struct {
@@ -205,7 +207,7 @@ func (client *Client) newRequest(ctx context.Context, messageRequest MessageRequ
 		return nil, err
 	}
 	httpRequest.Header.Set("content-type", "application/json")
-	httpRequest.Header.Set("x-api-key", client.apiKey)
+	httpRequest.Header.Set("x-api-key", client.effectiveAPIKey(ctx))
 	if client.version != "" {
 		httpRequest.Header.Set("anthropic-version", client.version)
 	}
@@ -374,4 +376,13 @@ func (err *ProviderError) OpenAIType() string {
 
 func UnsupportedStreamEvent(event string) error {
 	return fmt.Errorf("unsupported stream event %q", event)
+}
+
+// effectiveAPIKey returns the transformed auth token from context if available,
+// otherwise falls back to the client's configured API key.
+func (client *Client) effectiveAPIKey(ctx context.Context) string {
+	if token, ok := config.TransformAuthTokenFromContext(ctx); ok {
+		return token
+	}
+	return client.apiKey
 }

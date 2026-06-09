@@ -14,15 +14,17 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"moonbridge/internal/config"
 )
 
 // ClientConfig configures the Gemini API HTTP client.
 type ClientConfig struct {
 	BaseURL   string
 	APIKey    string
-	Project   string  // Vertex AI project ID (optional, for Vertex AI endpoint)
-	Location  string  // Vertex AI location (optional, default "us-central1")
-	Version   string  // API version (default "v1")
+	Project   string // Vertex AI project ID (optional, for Vertex AI endpoint)
+	Location  string // Vertex AI location (optional, default "us-central1")
+	Version   string // API version (default "v1")
 	UserAgent string
 	Client    *http.Client
 }
@@ -146,6 +148,14 @@ func (c *Client) StreamGenerateContent(ctx context.Context, model string, req *G
 // to close (connections are managed by http.Client), so this is a no-op.
 func (c *Client) Close() error { return nil }
 
+// effectiveAPIKey returns the transformed auth token from context if available,
+// otherwise falls back to the client's configured API key.
+func (c *Client) effectiveAPIKey(ctx context.Context) string {
+	if token, ok := config.TransformAuthTokenFromContext(ctx); ok {
+		return token
+	}
+	return c.apiKey
+}
 
 // ============================================================================
 // CachedContent API methods
@@ -160,7 +170,7 @@ func (c *Client) CreateCachedContent(ctx context.Context, cc *CachedContent) (*C
 		return nil, fmt.Errorf("create cached content: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", c.apiKey)
+	req.Header.Set("x-goog-api-key", c.effectiveAPIKey(ctx))
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("create cached content: %w", err)
@@ -183,7 +193,7 @@ func (c *Client) GetCachedContent(ctx context.Context, name string) (*CachedCont
 	if err != nil {
 		return nil, fmt.Errorf("get cached content: %w", err)
 	}
-	req.Header.Set("x-goog-api-key", c.apiKey)
+	req.Header.Set("x-goog-api-key", c.effectiveAPIKey(ctx))
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("get cached content: %w", err)
@@ -209,7 +219,7 @@ func (c *Client) UpdateCachedContent(ctx context.Context, name, ttl string) (*Ca
 		return nil, fmt.Errorf("update cached content: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", c.apiKey)
+	req.Header.Set("x-goog-api-key", c.effectiveAPIKey(ctx))
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("update cached content: %w", err)
@@ -232,7 +242,7 @@ func (c *Client) DeleteCachedContent(ctx context.Context, name string) error {
 	if err != nil {
 		return fmt.Errorf("delete cached content: %w", err)
 	}
-	req.Header.Set("x-goog-api-key", c.apiKey)
+	req.Header.Set("x-goog-api-key", c.effectiveAPIKey(ctx))
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return fmt.Errorf("delete cached content: %w", err)
@@ -243,6 +253,7 @@ func (c *Client) DeleteCachedContent(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
 // ============================================================================
 // Internal helpers
 // ============================================================================
@@ -264,8 +275,9 @@ func (c *Client) newRequest(ctx context.Context, model, action string, req *Gene
 			c.baseURL, c.version, c.project, c.location, model, action)
 	} else {
 		// Gemini API: API key in query param
+		effectiveKey := c.effectiveAPIKey(ctx)
 		url = fmt.Sprintf("%s/%s/models/%s%s?key=%s",
-			c.baseURL, c.version, model, action, c.apiKey)
+			c.baseURL, c.version, model, action, effectiveKey)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(data))
@@ -276,9 +288,12 @@ func (c *Client) newRequest(ctx context.Context, model, action string, req *Gene
 	if c.userAgent != "" {
 		httpReq.Header.Set("user-agent", c.userAgent)
 	}
-	if c.project != "" && c.apiKey != "" {
+	if c.project != "" {
 		// Vertex AI uses Bearer token (APIKey field holds the OAuth token)
-		httpReq.Header.Set("authorization", "Bearer "+c.apiKey)
+		effectiveKey := c.effectiveAPIKey(ctx)
+		if effectiveKey != "" {
+			httpReq.Header.Set("authorization", "Bearer "+effectiveKey)
+		}
 	}
 	return httpReq, nil
 }

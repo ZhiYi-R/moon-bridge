@@ -44,6 +44,10 @@ cp config.example.yml config.yml
 mode: "Transform"
 server:
   addr: "127.0.0.1:38440"
+  # auth_type 默认为 "authentication"。auth_token 为空时不验证。
+  # 设为 "transform" 则转发用户的 Bearer token 给上游 Provider。
+  # auth_type: "authentication"
+  # auth_token: "your-secret-token"
 
 defaults:
   model: "deepseek-chat"

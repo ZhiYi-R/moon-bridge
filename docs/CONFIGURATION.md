@@ -37,8 +37,18 @@ defaults:
 ```yaml
 server:
   addr: "127.0.0.1:38440"    # 监听地址
-  auth_token: ""              # Bearer 认证 Token（空 = 不认证）
+  auth_type: "authentication" # authentication（默认）| transform
+  auth_token: ""              # Bearer 认证 Token（空 = 不认证；auth_type=transform 时忽略）
 ```
+
+### auth_type
+
+| 值 | 行为 |
+|-----|------|
+| `authentication`（默认） | 请求必须携带 `Authorization: Bearer <token>`，与 `auth_token` 比对。`auth_token` 为空时跳过认证。 |
+| `transform` | 提取请求中的 `Bearer <token>`，替换掉 `providers.<provider>.api_key` 转发给上游供应商。无需配置 `auth_token`。 |
+
+`transform` 模式适用于将 Moon Bridge 作为代理直接暴露给终端用户，由用户提供自己的 API Key 的场景。此时 `providers.<provider>.api_key` 可留空，用户的 token 会替代它在所有协议路径（Anthropic `x-api-key`、OpenAI Chat/Response `Bearer`、Google Gemini API key / Vertex AI `Bearer`）中生效。
 
 ## Models
 
