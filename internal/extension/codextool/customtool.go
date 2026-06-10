@@ -116,9 +116,25 @@ func OutputItemFromBlock(
 		return "custom_tool_call", spec.OpenAIName, "", InputFromRaw(toolInput), false, nil
 	case ToolFunction:
 		return "function_call", spec.OpenAIName, spec.Namespace, string(toolInput), false, nil
+	case ToolNestedNamespace:
+		subName, paramsStr := decodeNestedNamespaceArguments(toolInput)
+		return "function_call", subName, blockName, paramsStr, false, nil
 	default:
 		return "function_call", blockName, "", string(toolInput), false, nil
 	}
+}
+
+type nestedCall struct {
+	Action string          `json:"action"`
+	Params json.RawMessage `json:"params"`
+}
+
+func decodeNestedNamespaceArguments(input json.RawMessage) (string, string) {
+	var call nestedCall
+	if err := json.Unmarshal(input, &call); err != nil {
+		return "", string(input)
+	}
+	return call.Action, string(call.Params)
 }
 
 // Proxy schema builders (return map[string]any for format.CoreTool.InputSchema)

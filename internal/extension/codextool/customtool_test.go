@@ -85,3 +85,41 @@ func TestRebuildGrammarUsesRawInputForGenericCustomTools(t *testing.T) {
 		t.Fatalf("RebuildGrammar() = %q, want raw input", got)
 	}
 }
+
+func TestOutputItemFromBlockForToolNestedNamespace(t *testing.T) {
+	toolMap := ToolMap{
+		"mcp__filesystem": ToolSpec{
+			Kind:       ToolNestedNamespace,
+			OpenAIName: "mcp__filesystem",
+		},
+	}
+
+	input := json.RawMessage(`{
+		"action": "read_file",
+		"params": {
+			"path": "/Users/francesco.mosca/Work/explorations/README.md"
+		}
+	}`)
+
+	itemType, itemName, itemNamespace, toolInputStr, isLocalShell, _ := OutputItemFromBlock(
+		"mcp__filesystem",
+		input,
+		toolMap,
+	)
+
+	if itemType != "function_call" {
+		t.Errorf("expected itemType function_call, got %s", itemType)
+	}
+	if itemName != "read_file" {
+		t.Errorf("expected itemName read_file, got %s", itemName)
+	}
+	if itemNamespace != "mcp__filesystem" {
+		t.Errorf("expected itemNamespace mcp__filesystem, got %s", itemNamespace)
+	}
+	if !strings.Contains(toolInputStr, `"/Users/francesco.mosca/Work/explorations/README.md"`) {
+		t.Errorf("expected toolInputStr to contain path, got %s", toolInputStr)
+	}
+	if isLocalShell {
+		t.Errorf("expected isLocalShell false, got true")
+	}
+}

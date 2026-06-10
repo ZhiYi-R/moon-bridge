@@ -11,12 +11,13 @@ package codextool
 type ToolKind string
 
 const (
-	ToolApplyPatch ToolKind = "apply_patch"
-	ToolExec       ToolKind = "exec"
-	ToolRaw        ToolKind = "raw"
-	ToolFunction   ToolKind = "function"
-	ToolLocalShell ToolKind = "local_shell"
-	ToolUnknown    ToolKind = "unknown"
+	ToolApplyPatch      ToolKind = "apply_patch"
+	ToolExec            ToolKind = "exec"
+	ToolRaw             ToolKind = "raw"
+	ToolFunction        ToolKind = "function"
+	ToolLocalShell      ToolKind = "local_shell"
+	ToolNestedNamespace ToolKind = "nested_namespace"
+	ToolUnknown         ToolKind = "unknown"
 )
 
 // ToolSpec describes an expanded tool entry for reverse mapping.

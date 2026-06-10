@@ -373,6 +373,12 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 	reasonIndexes := make(map[int]bool)
 	toolCallFinalized := make(map[int]bool)
 
+	type nestedBufferState struct {
+		toolName  string
+		toolUseID string
+	}
+	nestedBuffers := make(map[int]*nestedBufferState)
+
 	for event := range events {
 		// Let hooks skip events.
 		if a.hooks.OnStreamEvent(ctx, event) {
@@ -468,6 +474,18 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 				}
 				itemIDs[index] = fmt.Sprintf("fc_item_%d", index)
 				toolBlockNames[index] = event.ContentBlock.ToolName
+
+				// Check if this is a nested namespace tool
+				toolMap := codextool.DecodeToolMapFromExtensions(coreReq.Extensions)
+				if spec, ok := toolMap.Lookup(event.ContentBlock.ToolName); ok && spec.Kind == codextool.ToolNestedNamespace {
+					nestedBuffers[index] = &nestedBufferState{
+						toolName:  event.ContentBlock.ToolName,
+						toolUseID: toolUseID,
+					}
+					// Buffering: do NOT emit response.output_item.added yet
+					break
+				}
+
 				item := buildToolOutputItemStreaming(event.ContentBlock, coreReq.Extensions, toolUseID)
 				outputIndexes[index] = len(response.Output)
 				response.Output = append(response.Output, item)
@@ -619,6 +637,12 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 		case format.CoreToolCallArgsDelta:
 			index := event.Index
 			toolCallArgs[index] += event.Delta
+
+			// If this is a buffered nested namespace call, we accumulate but do NOT stream delta to Codex
+			if _, isBuffered := nestedBuffers[index]; isBuffered {
+				break
+			}
+
 			send(StreamEvent{
 				Event: "response.function_call_arguments.delta",
 				Data: FunctionCallArgumentsDeltaEvent{
@@ -642,6 +666,73 @@ func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequ
 			if finalArgs == "" {
 				finalArgs = toolCallArgs[index]
 			}
+
+			// If this is a buffered nested namespace call, we resolve it now!
+			if nBuf, isBuffered := nestedBuffers[index]; isBuffered {
+				type nestedCall struct {
+					Action string          `json:"action"`
+					Params json.RawMessage `json:"params"`
+				}
+				var call nestedCall
+				_ = json.Unmarshal([]byte(finalArgs), &call)
+
+				// 1. Emit output_item.added with the clean action name as Name, and toolName as Namespace!
+				item := OutputItem{
+					Type:      "function_call",
+					ID:        nBuf.toolUseID,
+					CallID:    nBuf.toolUseID,
+					Name:      call.Action,
+					Namespace: nBuf.toolName,
+					Status:    "in_progress",
+				}
+				outIdx := len(response.Output)
+				outputIndexes[index] = outIdx
+				response.Output = append(response.Output, item)
+
+				send(StreamEvent{
+					Event: "response.output_item.added",
+					Data: OutputItemEvent{
+						Type:           "response.output_item.added",
+						SequenceNumber: next(),
+						OutputIndex:    outIdx,
+						Item:           item,
+					},
+				})
+
+				// 2. Override finalArgs with the clean, unescaped params!
+				finalArgs = string(call.Params)
+				response.Output[outIdx].Arguments = finalArgs
+				response.Output[outIdx].Status = "completed"
+
+				toolCallFinalized[index] = true
+
+				// 3. Emit function_call_arguments.done
+				send(StreamEvent{
+					Event: "response.function_call_arguments.done",
+					Data: FunctionCallArgumentsDoneEvent{
+						Type:           "response.function_call_arguments.done",
+						SequenceNumber: next(),
+						ItemID:         itemIDs[index],
+						OutputIndex:    outIdx,
+						Arguments:      finalArgs,
+					},
+				})
+
+				// 4. Emit output_item.done
+				send(StreamEvent{
+					Event: "response.output_item.done",
+					Data: OutputItemEvent{
+						Type:           "response.output_item.done",
+						SequenceNumber: next(),
+						OutputIndex:    outIdx,
+						Item:           response.Output[outIdx],
+					},
+				})
+
+				delete(nestedBuffers, index)
+				break
+			}
+
 			if idx, ok := outputIndexes[index]; ok && idx < len(response.Output) {
 				response.Output[idx].Arguments = finalArgs
 				response.Output[idx].Status = "completed"
@@ -933,6 +1024,7 @@ type inputItem struct {
 	Summary   json.RawMessage `json:"summary"`
 	CallID    string          `json:"call_id"`
 	Name      string          `json:"name"`
+	Namespace string          `json:"namespace"`
 	Arguments string          `json:"arguments"`
 	Output    json.RawMessage `json:"output"`
 	Input     string          `json:"input"`
@@ -1085,10 +1177,32 @@ func convertInput(raw json.RawMessage, model string) ([]format.CoreMessage, []fo
 			if !json.Valid([]byte(item.Arguments)) {
 				toolInput = json.RawMessage(`{}`)
 			}
+			toolName := item.Name
+			if item.Namespace != "" {
+				toolName = item.Namespace
+				var paramsObj any
+				if err := json.Unmarshal(toolInput, &paramsObj); err == nil {
+					nested := map[string]any{
+						"action": item.Name,
+						"params": paramsObj,
+					}
+					nestedBytes, err := json.Marshal(nested)
+					if err == nil {
+						toolInput = json.RawMessage(nestedBytes)
+					}
+				} else {
+					nested := map[string]any{
+						"action": item.Name,
+						"params": string(toolInput),
+					}
+					nestedBytes, _ := json.Marshal(nested)
+					toolInput = json.RawMessage(nestedBytes)
+				}
+			}
 			pendingFCBlocks = append(pendingFCBlocks, format.CoreContentBlock{
 				Type:      "tool_use",
 				ToolUseID: firstNonEmpty(item.CallID, item.ID),
-				ToolName:  item.Name,
+				ToolName:  toolName,
 				ToolInput: toolInput,
 			})
 
@@ -1477,13 +1591,17 @@ func buildToolOutputItem(block format.CoreContentBlock, extensions map[string]an
 			Action: localShellActionFromRaw(actionJSON),
 		}
 	}
+	arguments := toolInputString(block.ToolInput)
+	if itemT == "function_call" && itemInput != "" && itemInput != string(block.ToolInput) {
+		arguments = itemInput
+	}
 	return OutputItem{
 		Type:      itemT,
 		ID:        block.ToolUseID,
 		CallID:    block.ToolUseID,
 		Name:      itemN,
 		Namespace: itemNS,
-		Arguments: toolInputString(block.ToolInput),
+		Arguments: arguments,
 		Input:     itemInput,
 		Status:    "completed",
 	}
@@ -1494,7 +1612,6 @@ func buildToolOutputItem(block format.CoreContentBlock, extensions map[string]an
 func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map[string]any, toolUseID string) OutputItem {
 	toolMap := codextool.DecodeToolMapFromExtensions(extensions)
 	itemT, itemN, itemNS, itemInput, isLS, actionJSON := codextool.OutputItemFromBlock(block.ToolName, block.ToolInput, toolMap)
-	_ = itemInput
 	if isLS {
 		return OutputItem{
 			Type:   "local_shell_call",
@@ -1504,13 +1621,17 @@ func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map
 			Action: localShellActionFromRaw(actionJSON),
 		}
 	}
+	arguments := toolInputString(block.ToolInput)
+	if itemT == "function_call" && itemInput != "" && itemInput != string(block.ToolInput) {
+		arguments = itemInput
+	}
 	return OutputItem{
 		Type:      itemT,
 		ID:        toolUseID,
 		CallID:    toolUseID,
 		Name:      itemN,
 		Namespace: itemNS,
-		Arguments: toolInputString(block.ToolInput),
+		Arguments: arguments,
 		Status:    "in_progress",
 	}
 }
@@ -1572,8 +1693,7 @@ func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy fun
 		}}
 
 	case "namespace":
-		ns := namespacedToolName(namespace, tool.Name)
-		return flattenToolsWithNamespace(tool.Tools, ns, disablePatchProxy)
+		return []format.CoreTool{convertNamespaceToNestedTool(tool, namespace)}
 
 	case "custom":
 		grammar := codextool.CustomToolGrammar(tool.Format)
@@ -1639,6 +1759,9 @@ func flattenToolsWithNamespace(openaiTools []Tool, namespace string, disablePatc
 	seen := make(map[string]bool, len(result))
 	deduped := make([]format.CoreTool, 0, len(result))
 	for _, t := range result {
+		if t.Name == "" {
+			continue
+		}
 		if seen[t.Name] {
 			continue
 		}
@@ -1681,4 +1804,59 @@ func outputToContentBlocks(raw json.RawMessage) []format.CoreContentBlock {
 		return []format.CoreContentBlock{{Type: "text", Text: text}}
 	}
 	return nil
+}
+
+func convertNamespaceToNestedTool(tool Tool, namespace string) format.CoreTool {
+	actionEnum := []string{}
+	anyOfSchemas := []map[string]any{}
+
+	for _, sub := range tool.Tools {
+		actionEnum = append(actionEnum, sub.Name)
+
+		// Each anyOf option represents one schema
+		subSchema := map[string]any{
+			"type": "object",
+			"title": sub.Name + "_params",
+			"description": sub.Description,
+		}
+		if sub.Parameters != nil {
+			// Copy all fields from sub.Parameters
+			for k, v := range sub.Parameters {
+				if k != "title" && k != "description" {
+					subSchema[k] = v
+				}
+			}
+		} else {
+			subSchema["properties"] = map[string]any{}
+		}
+		anyOfSchemas = append(anyOfSchemas, subSchema)
+	}
+
+	nestedSchema := map[string]any{
+		"type": "object",
+		"required": []string{"action", "params"},
+		"properties": map[string]any{
+			"action": map[string]any{
+				"type": "string",
+				"description": "The specific tool operation to perform within this namespace.",
+				"enum": actionEnum,
+			},
+			"params": map[string]any{
+				"type": "object",
+				"description": "Specific parameters corresponding to the selected action.",
+				"anyOf": anyOfSchemas,
+			},
+		},
+	}
+
+	name := namespacedToolName(namespace, tool.Name)
+	ct := format.CoreTool{
+		Name:        name,
+		Description: tool.Description,
+		InputSchema: nestedSchema,
+	}
+
+	codextool.AnnotateCoreTool(&ct, codextool.ToolNestedNamespace, name, "")
+
+	return ct
 }

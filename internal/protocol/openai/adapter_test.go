@@ -365,3 +365,61 @@ func TestFromCoreStream_NoDuplicateDoneForToolUse(t *testing.T) {
 		t.Fatalf("output_item.done (tool) count=%d, want 1", itemDone)
 	}
 }
+
+// TestToCoreRequest_NamespacedToolCallReconstruction verifies that when Codex
+// sends a history item with a namespace (e.g. name="edit_file", namespace="mcp__filesystem"),
+// it is reconstructed as a nested call to the namespace tool mcp__filesystem with nested action and params.
+func TestToCoreRequest_NamespacedToolCallReconstruction(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+
+	arguments := `{"edits": [{"newText": "foo", "oldText": "bar"}], "path": "/Users/test/file"}`
+
+	req := &openai.ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{"type":"function_call","call_id":"call_namespaced","name":"edit_file","namespace":"mcp__filesystem","arguments":"` + strings.ReplaceAll(arguments, "\"", "\\\"") + `"}
+		]`),
+	}
+
+	result, err := adapter.ToCoreRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var toolUse *format.CoreContentBlock
+	for i := range result.Messages {
+		for j := range result.Messages[i].Content {
+			b := &result.Messages[i].Content[j]
+			if b.Type == "tool_use" && b.ToolUseID == "call_namespaced" {
+				toolUse = b
+			}
+		}
+	}
+	if toolUse == nil {
+		t.Fatal("expected tool_use block with call_id=call_namespaced")
+	}
+
+	// ToolName must be the namespace
+	if toolUse.ToolName != "mcp__filesystem" {
+		t.Errorf("expected ToolName to be 'mcp__filesystem', got: %s", toolUse.ToolName)
+	}
+
+	// ToolInput must contain action and params
+	parsed := map[string]any{}
+	if err := json.Unmarshal(toolUse.ToolInput, &parsed); err != nil {
+		t.Fatalf("tool_use ToolInput must be valid JSON, got: %s", string(toolUse.ToolInput))
+	}
+
+	if parsed["action"] != "edit_file" {
+		t.Errorf("expected action to be 'edit_file', got: %v", parsed["action"])
+	}
+
+	params, ok := parsed["params"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected params to be an object, got: %v", parsed["params"])
+	}
+
+	if params["path"] != "/Users/test/file" {
+		t.Errorf("expected path to be '/Users/test/file', got: %v", params["path"])
+	}
+}
