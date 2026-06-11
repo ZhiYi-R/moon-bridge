@@ -8,28 +8,46 @@ Moon Bridge 是一个 Go 语言编写的 HTTP 代理/协议转换服务器。对
 
 ## 四层架构
 
-```
-┌─────────────────────────────────────────────────┐
-│                  Service 层                       │
-│  server(路由/处理)  adapter_dispatch(协议分发)    │
-│  provider(路由)     stats(统计)      trace(跟踪)   │
-│  proxy(Capture代理)  api(管理 API)                │
-│  store(持久化)       runtime(运行时)              │
-├─────────────────────────────────────────────────┤
-│                  Protocol 层                      │
-│  format(核心类型/注册表)  anthropic(Anthropic 适配) │
-│  openai(OpenAI 适配)    google(GenAI 适配)        │
-│  chat(OpenAI Chat 适配) cache(缓存)               │
-├─────────────────────────────────────────────────┤
-│                  基础组件（直接位于 internal/ 下） │
-│  config(配置)  logger(日志)  openai_dto(共享 DTO) │
-│  modelref(模型引用)  session(会话)  db(数据库)    │
-├─────────────────────────────────────────────────┤
-│                  Extension 层                     │
-│  deepseek_v4  visual  websearch  websearchinjected│
-│  kimi_workaround  metrics  codex(Codex模型目录)   │
-│  plugin(插件注册/接口)  db(持久化后端: SQLite/D1) │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+  subgraph Service["Service 层"]
+    s1["server(路由/处理)"]
+    s2["adapter_dispatch(协议分发)"]
+    s3["provider(路由)"]
+    s4["stats(统计)"]
+    s5["trace(跟踪)"]
+    s6["proxy(Capture代理)"]
+    s7["api(管理 API)"]
+    s8["store(持久化)"]
+    s9["runtime(运行时)"]
+  end
+  subgraph Protocol["Protocol 层"]
+    p1["format(核心类型/注册表)"]
+    p2["anthropic(Anthropic 适配)"]
+    p3["openai(OpenAI 适配)"]
+    p4["google(GenAI 适配)"]
+    p5["chat(OpenAI Chat 适配)"]
+    p6["cache(缓存)"]
+  end
+  subgraph Base["基础组件"]
+    b1["config(配置)"]
+    b2["logger(日志)"]
+    b3["openai_dto(共享 DTO)"]
+    b4["modelref(模型引用)"]
+    b5["session(会话)"]
+    b6["db(数据库)"]
+  end
+  subgraph Extension["Extension 层"]
+    e1["deepseek_v4"]
+    e2["visual"]
+    e3["websearch"]
+    e4["websearchinjected"]
+    e5["kimi_workaround"]
+    e6["metrics"]
+    e7["codex(模型目录)"]
+    e8["plugin(插件注册/接口)"]
+    e9["db(SQLite/D1)"]
+  end
 ```
 
 ### 基础组件（internal/ 顶层包）
@@ -94,26 +112,22 @@ Moon Bridge 是一个 Go 语言编写的 HTTP 代理/协议转换服务器。对
 
 ## 请求生命周期数据流（Transform 模式）
 
-```
-客户端 (Codex CLI)
-    │ POST /v1/responses (OpenAI Responses 格式)
-    ▼
-server.handleResponses()
-    │ 认证 / 日志 / 统计初始化 / 路由解析
-    ▼
-adapter_dispatch.go (Adapter 分发)
-    │ preferred.Protocol 决定上游协议
-    │
-    ├── ProtocolAnthropic       → anthropic adapter
-    ├── ProtocolGoogleGenAI     → google adapter
-    ├── ProtocolOpenAIChat      → chat adapter
-    └── ProtocolOpenAIResponse  → 直通（无协议转换）
-    │
-    ├── 插件拦截 (PluginHooks)
-    │    MutateCoreRequest → [Adapter] → RememberContent → OnStreamEvent
-    │
-    ▼
-客户端 ←── OpenAI Responses 响应
+```mermaid
+flowchart TD
+  A["客户端 (Codex CLI)"]
+  A -->|"POST /v1/responses<br/>(OpenAI Responses 格式)"| B["server.handleResponses()"]
+  B -->|"认证 / 日志 / 统计初始化 / 路由解析"| C["adapter_dispatch.go (Adapter 分发)"]
+  C -->|"preferred.Protocol 决定上游协议"| D{"协议分支"}
+  D -->|"ProtocolAnthropic"| E["anthropic adapter"]
+  D -->|"ProtocolGoogleGenAI"| F["google adapter"]
+  D -->|"ProtocolOpenAIChat"| G["chat adapter"]
+  D -->|"ProtocolOpenAIResponse"| H["直通（无协议转换）"]
+  E --> I["插件拦截 (PluginHooks)"]
+  F --> I
+  G --> I
+  H --> I
+  I --> J["MutateCoreRequest → [Adapter] → RememberContent → OnStreamEvent"]
+  J --> K["客户端<br/>← OpenAI Responses 响应"]
 ```
 
 ## 模型路由
