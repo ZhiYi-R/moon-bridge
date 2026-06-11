@@ -43,8 +43,6 @@ type GeminiProviderAdapter struct {
 	toolUseIDMap map[string]string
 	toolUseIDMu  sync.Mutex
 
-	streamMu      sync.Mutex
-	streamEvents  []GenerateContentResponse
 	prevSnapshots map[int]string // candidate index → previous text for delta computation
 }
 
@@ -228,16 +226,13 @@ func (a *GeminiProviderAdapter) ToCoreResponse(ctx context.Context, resp any) (*
 // =========================================================================
 // bufferStreamEvent buffers raw GenerateContentResponse for trace capture.
 func (a *GeminiProviderAdapter) bufferStreamEvent(ev GenerateContentResponse) {
-	a.streamMu.Lock()
-	defer a.streamMu.Unlock()
-	a.streamEvents = append(a.streamEvents, ev)
+	// No-op: per-stream buffer is captured by goroutine closure.
 }
 
 // StreamBuffer returns the buffered stream events for trace capture.
 func (a *GeminiProviderAdapter) StreamBuffer() []GenerateContentResponse {
-	a.streamMu.Lock()
-	defer a.streamMu.Unlock()
-	return a.streamEvents
+	// Deprecated: use StreamResult.StreamBuffer instead.
+	return nil
 }
 
 // ToCoreStream — <-chan GenerateContentResponse → <-chan CoreStreamEvent
@@ -255,7 +250,7 @@ func (a *GeminiProviderAdapter) StreamBuffer() []GenerateContentResponse {
 //   - core.text.delta (each subsequent chunk with new text)
 //   - core.content_block.done (chunk with FinishReason set)
 //   - core.completed (final chunk with UsageMetadata)
-func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan format.CoreStreamEvent, error) {
+func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (*format.StreamResult, error) {
 	ch, ok := src.(<-chan GenerateContentResponse)
 	if !ok {
 		return nil, fmt.Errorf("google adapter: expected <-chan GenerateContentResponse, got %T", src)
@@ -263,13 +258,14 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-ch
 
 	events := make(chan format.CoreStreamEvent, 64)
 
-	// Initialize stream event buffer for trace capture.
-	a.streamMu.Lock()
-	a.streamEvents = make([]GenerateContentResponse, 0, 64)
-	a.streamMu.Unlock()
+	// Per-stream buffer — local to this call, not shared across concurrent requests.
+	var buf []GenerateContentResponse
+	var bufMu sync.Mutex
+	bufReady := make(chan struct{})
 
 	go func() {
 		defer close(events)
+		defer close(bufReady)
 
 		// Per-candidate state for delta computation.
 		type candidateState struct {
@@ -297,7 +293,12 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-ch
 			case <-ctx.Done():
 				return
 			case chunk, ok := <-ch:
-				a.bufferStreamEvent(chunk)
+				// Append to local per-stream buffer with size cap.
+				bufMu.Lock()
+				if len(buf) < 1024 {
+					buf = append(buf, chunk)
+				}
+				bufMu.Unlock()
 				if !ok {
 					// Channel closed — emit completion if not already done.
 					if !seenCompletion {
@@ -386,7 +387,19 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-ch
 		}
 	}()
 
-	return events, nil
+	return &format.StreamResult{
+		Events: events,
+		StreamBuffer: func() []any {
+			<-bufReady
+			bufMu.Lock()
+			defer bufMu.Unlock()
+			result := make([]any, len(buf))
+			for i, ev := range buf {
+				result[i] = ev
+			}
+			return result
+		},
+	}, nil
 }
 
 // =========================================================================

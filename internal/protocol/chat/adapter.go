@@ -28,9 +28,6 @@ type ChatProviderAdapter struct {
 	cfgMaxTokens int
 	client       *Client
 	hooks        format.CorePluginHooks
-
-	streamMu     sync.Mutex
-	streamEvents []ChatStreamChunk
 }
 
 // NewChatProviderAdapter creates a new ChatProviderAdapter.
@@ -198,16 +195,14 @@ func (a *ChatProviderAdapter) ToCoreResponse(ctx context.Context, resp any) (*fo
 // =========================================================================
 // bufferStreamEvent buffers raw ChatStreamChunk for trace capture.
 func (a *ChatProviderAdapter) bufferStreamEvent(ev ChatStreamChunk) {
-	a.streamMu.Lock()
-	defer a.streamMu.Unlock()
-	a.streamEvents = append(a.streamEvents, ev)
+	// No-op: per-stream buffer is captured by goroutine closure.
+	// Use the StreamResult.StreamBuffer to access captured events.
 }
 
 // StreamBuffer returns the buffered stream events for trace capture.
 func (a *ChatProviderAdapter) StreamBuffer() []ChatStreamChunk {
-	a.streamMu.Lock()
-	defer a.streamMu.Unlock()
-	return a.streamEvents
+	// Deprecated: use StreamResult.StreamBuffer instead.
+	return nil
 }
 
 // ToCoreStream — <-chan ChatStreamChunk → <-chan CoreStreamEvent
@@ -224,7 +219,7 @@ func (a *ChatProviderAdapter) StreamBuffer() []ChatStreamChunk {
 //   - core.text.delta (chunks with content delta)
 //   - core.content_block.done (chunk with finish_reason set)
 //   - core.completed (final chunk with Usage)
-func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan format.CoreStreamEvent, error) {
+func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (*format.StreamResult, error) {
 	ch, ok := src.(<-chan ChatStreamChunk)
 	if !ok {
 		return nil, fmt.Errorf("chat adapter: expected <-chan ChatStreamChunk, got %T", src)
@@ -232,13 +227,14 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 
 	events := make(chan format.CoreStreamEvent, 64)
 
-	// Initialize stream event buffer for trace capture.
-	a.streamMu.Lock()
-	a.streamEvents = make([]ChatStreamChunk, 0, 64)
-	a.streamMu.Unlock()
+	// Per-stream buffer — local to this call, not shared across concurrent requests.
+	var buf []ChatStreamChunk
+	var bufMu sync.Mutex
+	bufReady := make(chan struct{})
 
 	go func() {
 		defer close(events)
+		defer close(bufReady)
 
 		// Per-choice state for streaming.
 		type choiceState struct {
@@ -271,7 +267,12 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 			case <-ctx.Done():
 				return
 			case chunk, ok := <-ch:
-				a.bufferStreamEvent(chunk)
+				// Append to local per-stream buffer with size cap.
+				bufMu.Lock()
+				if len(buf) < 1024 {
+					buf = append(buf, chunk)
+				}
+				bufMu.Unlock()
 				if !ok {
 					// Channel closed — emit completion if not already done.
 					if !seenCompletion {
@@ -510,7 +511,19 @@ func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (<-chan
 		}
 	}()
 
-	return events, nil
+	return &format.StreamResult{
+		Events: events,
+		StreamBuffer: func() []any {
+			<-bufReady
+			bufMu.Lock()
+			defer bufMu.Unlock()
+			result := make([]any, len(buf))
+			for i, ev := range buf {
+				result[i] = ev
+			}
+			return result
+		},
+	}, nil
 }
 
 // =========================================================================

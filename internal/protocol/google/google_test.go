@@ -1381,7 +1381,7 @@ func TestToCoreStream_SingleCandidate(t *testing.T) {
 	}
 
 	var evts []format.CoreStreamEvent
-	for e := range events {
+	for e := range events.Events {
 		evts = append(evts, e)
 	}
 
@@ -1450,7 +1450,7 @@ func TestToCoreStream_MultiCandidate(t *testing.T) {
 	}
 
 	var evts []format.CoreStreamEvent
-	for e := range events {
+	for e := range events.Events {
 		evts = append(evts, e)
 	}
 
@@ -1496,7 +1496,7 @@ func TestToCoreStream_ContextCancel(t *testing.T) {
 	cancel()
 
 	// Channel should close cleanly
-	for range events {
+	for range events.Events {
 	}
 }
 
@@ -1511,7 +1511,7 @@ func TestToCoreStream_EmptyChannel(t *testing.T) {
 	}
 
 	var evts []format.CoreStreamEvent
-	for e := range events {
+	for e := range events.Events {
 		evts = append(evts, e)
 	}
 
@@ -1903,7 +1903,7 @@ func TestToCoreStream_ComputeDeltaNoChange(t *testing.T) {
 	}
 
 	var evts []format.CoreStreamEvent
-	for e := range events {
+	for e := range events.Events {
 		evts = append(evts, e)
 	}
 

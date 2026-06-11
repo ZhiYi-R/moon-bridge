@@ -345,7 +345,13 @@ func TestFromCoreStream_NoDuplicateDoneForToolUse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream := streamAny.(<-chan openai.StreamEvent)
+	var stream <-chan openai.StreamEvent
+	oaiResult, ok := streamAny.(*openai.OpenAIStreamResult)
+	if ok {
+		stream = oaiResult.Chan()
+	} else {
+		stream = streamAny.(<-chan openai.StreamEvent)
+	}
 	var argsDone int
 	var itemDone int
 	for ev := range stream {

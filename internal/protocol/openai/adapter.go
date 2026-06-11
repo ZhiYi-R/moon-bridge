@@ -34,8 +34,6 @@ type OpenAIAdapter struct {
 	hooks format.CorePluginHooks
 
 	disablePatchProxy func(string) bool
-	streamMu     sync.Mutex
-	streamEvents []StreamEvent
 }
 
 // NewOpenAIAdapter creates a new OpenAIAdapter with the given config and hooks.
@@ -318,39 +316,74 @@ func (a *OpenAIAdapter) FromCoreResponse(ctx context.Context, resp *format.CoreR
 // to produce correct OpenAI stream semantics.
 func (a *OpenAIAdapter) FromCoreStream(ctx context.Context, req *format.CoreRequest, events <-chan format.CoreStreamEvent) (any, error) {
 	out := make(chan StreamEvent)
+	bufReady := make(chan struct{})
 
-	go a.streamLoop(ctx, req, events, out)
+	var buf []StreamEvent
+	var bufMu sync.Mutex
 
-	return (<-chan StreamEvent)(out), nil
+	go func() {
+		defer close(bufReady)
+		a.streamLoopWithBuf(ctx, req, events, out, &buf, &bufMu)
+	}()
+
+	return &OpenAIStreamResult{
+		ch: out,
+		buf: func() []any {
+			<-bufReady
+			bufMu.Lock()
+			defer bufMu.Unlock()
+			result := make([]any, len(buf))
+			for i, ev := range buf {
+				result[i] = ev
+			}
+			return result
+		},
+	}, nil
 }
 
 // bufferStreamEvent buffers the OpenAI stream event for trace capture,
 // up to the 4MB limit. The event is JSON-marshalled to estimate its size.
 func (a *OpenAIAdapter) bufferStreamEvent(ev StreamEvent) {
-	a.streamMu.Lock()
-	defer a.streamMu.Unlock()
-	a.streamEvents = append(a.streamEvents, ev)
+	// No-op: per-stream buffer is captured by streamLoop's closure.
 }
 
 // StreamBuffer returns the buffered stream events for trace capture.
 func (a *OpenAIAdapter) StreamBuffer() []StreamEvent {
-	a.streamMu.Lock()
-	defer a.streamMu.Unlock()
-	return a.streamEvents
+	// Deprecated: use StreamResult.StreamBuffer instead.
+	return nil
+}
+
+
+// openaiStreamResult wraps the OpenAI stream channel with per-stream buffer access.
+type OpenAIStreamResult struct {
+	ch  <-chan StreamEvent
+	buf func() []any
+}
+
+// Chan returns the underlying channel of StreamEvents.
+func (r *OpenAIStreamResult) Chan() <-chan StreamEvent {
+	return r.ch
+}
+
+// Buffer returns the captured stream events for post-stream processing.
+func (r *OpenAIStreamResult) Buffer() []any {
+	if r.buf == nil {
+		return nil
+	}
+	return r.buf()
 }
 
 // streamLoop is the goroutine body for FromCoreStream.
-func (a *OpenAIAdapter) streamLoop(ctx context.Context, coreReq *format.CoreRequest, events <-chan format.CoreStreamEvent, out chan<- StreamEvent) {
+func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.CoreRequest, events <-chan format.CoreStreamEvent, out chan<- StreamEvent, buf *[]StreamEvent, bufMu *sync.Mutex) {
 	defer close(out)
-
-	// Reset stream event buffer for this request.
-	a.streamMu.Lock()
-	a.streamEvents = nil
-	a.streamMu.Unlock()
 
 	// send buffers the event for trace capture before writing to the output channel.
 	send := func(ev StreamEvent) {
-		a.bufferStreamEvent(ev)
+		bufMu.Lock()
+		if len(*buf) < 1024 {
+			*buf = append(*buf, ev)
+		}
+		bufMu.Unlock()
 		out <- ev
 	}
 

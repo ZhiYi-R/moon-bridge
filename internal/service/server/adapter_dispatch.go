@@ -903,6 +903,9 @@ func (s *Server) handleAdapterStream(
 	// Protocol-specific upstream streaming: get stream + convert to CoreStreamEvent.
 	var coreEvents <-chan format.CoreStreamEvent
 	var providerStream format.ProviderStreamAdapter
+	var sr *format.StreamResult // result from ToCoreStream, captures events + buffer
+	var providerBuf func() []any  // per-request provider stream buffer (from ToCoreStream StreamResult)
+	var clientBuf func() []any    // per-request client stream buffer (from OpenAI FromCoreStream)
 
 	switch candidate.Protocol {
 	case config.ProtocolAnthropic:
@@ -1037,7 +1040,7 @@ func (s *Server) handleAdapterStream(
 				writeOpenAIError(w, http.StatusInternalServerError, payload)
 				return
 			}
-			coreEvents, err = providerStream.ToCoreStream(ctx, stream)
+			sr, err = providerStream.ToCoreStream(ctx, stream)
 			if err != nil {
 				log.Error("adapter stream: ToCoreStream failed", "error", err)
 				payload := openai.ErrorResponse{
@@ -1051,6 +1054,10 @@ func (s *Server) handleAdapterStream(
 				streamRecord.OpenAIResponse = payload
 				writeOpenAIError(w, http.StatusInternalServerError, payload)
 				return
+			}
+			coreEvents = sr.Events
+			if sr.StreamBuffer != nil {
+				providerBuf = sr.StreamBuffer
 			}
 		}
 
@@ -1160,7 +1167,7 @@ func (s *Server) handleAdapterStream(
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
-		coreEvents, err = providerStream.ToCoreStream(ctx, chatStream)
+		sr, err = providerStream.ToCoreStream(ctx, chatStream)
 		if err != nil {
 			log.Error("adapter stream: Chat ToCoreStream failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -1174,6 +1181,10 @@ func (s *Server) handleAdapterStream(
 			streamRecord.OpenAIResponse = payload
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
+		}
+		coreEvents = sr.Events
+		if sr.StreamBuffer != nil {
+			providerBuf = sr.StreamBuffer
 		}
 
 	case config.ProtocolGoogleGenAI:
@@ -1324,7 +1335,7 @@ func (s *Server) handleAdapterStream(
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
-		coreEvents, err = providerStream.ToCoreStream(ctx, googleStream)
+		sr, err = providerStream.ToCoreStream(ctx, googleStream)
 		if err != nil {
 			log.Error("adapter stream: Google ToCoreStream failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -1338,6 +1349,10 @@ func (s *Server) handleAdapterStream(
 			streamRecord.OpenAIResponse = payload
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
+		}
+		coreEvents = sr.Events
+		if sr.StreamBuffer != nil {
+			providerBuf = sr.StreamBuffer
 		}
 
 	default:
@@ -1389,8 +1404,13 @@ func (s *Server) handleAdapterStream(
 		return
 	}
 
-	streamChan, ok := streamChanAny.(<-chan openai.StreamEvent)
-	if !ok {
+	var streamChan <-chan openai.StreamEvent
+	if oaiResult, ok := streamChanAny.(*openai.OpenAIStreamResult); ok {
+		streamChan = oaiResult.Chan()
+		clientBuf = oaiResult.Buffer
+	} else if ch, ok := streamChanAny.(<-chan openai.StreamEvent); ok {
+		streamChan = ch
+	} else {
 		log.Error("adapter stream: unexpected stream channel type", "type", fmt.Sprintf("%T", streamChanAny))
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
@@ -1435,8 +1455,15 @@ func (s *Server) handleAdapterStream(
 		remembered := rememberStreamResponseContent(s.pluginRegistry, sess, openAIReq.Model, finalResp)
 		if !remembered {
 			if anthProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolAnthropic); ok {
-				if anthAdapter, ok := anthProvider.(*anthropic.AnthropicProviderAdapter); ok {
-					events := anthAdapter.StreamBuffer()
+				if _, ok := anthProvider.(*anthropic.AnthropicProviderAdapter); ok {
+					var events []anthropic.StreamEvent
+					if providerBuf != nil {
+						raw := providerBuf()
+						events = make([]anthropic.StreamEvent, len(raw))
+						for i, r := range raw {
+							events[i], _ = r.(anthropic.StreamEvent)
+						}
+					}
 					if len(events) > 0 {
 						states := s.pluginRegistry.NewStreamStates(openAIReq.Model)
 						for _, ev := range events {
@@ -1474,8 +1501,19 @@ func (s *Server) handleAdapterStream(
 	// This must not depend on trace being enabled.
 	if sess != nil {
 		if chatProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolOpenAIChat); ok {
-			if chatAdapter, ok := chatProvider.(*chat.ChatProviderAdapter); ok {
-				if events := chatAdapter.StreamBuffer(); len(events) > 0 {
+			if _, ok := chatProvider.(*chat.ChatProviderAdapter); ok {
+				var chatEvents []chat.ChatStreamChunk
+				if providerBuf != nil {
+					raw := providerBuf()
+					chatEvents = make([]chat.ChatStreamChunk, 0, len(raw))
+					for _, r := range raw {
+						if ev, ok := r.(chat.ChatStreamChunk); ok {
+							chatEvents = append(chatEvents, ev)
+						}
+					}
+				}
+				events := chatEvents
+				if len(events) > 0 {
 					var streamReasoning string
 					seenToolCallIDs := make(map[string]struct{})
 					streamToolCallIDs := make([]string, 0, 4)
@@ -1506,29 +1544,39 @@ func (s *Server) handleAdapterStream(
 
 	// Capture stream events for trace.
 	if s.tracer != nil && s.tracer.Enabled() {
-		// OpenAI stream events from client adapter
-		if oaiClient, ok := s.adapterRegistry.GetClient(config.ProtocolOpenAIResponse); ok {
-			if oaiAdapter, ok := oaiClient.(*openai.OpenAIAdapter); ok {
-				if events := oaiAdapter.StreamBuffer(); len(events) > 0 {
-					streamRecord.OpenAIStreamEvents = events
+		// Provider stream buffer (anthropic/chat/google raw events)
+		if providerBuf != nil {
+			raw := providerBuf()
+			var anthBuf []anthropic.StreamEvent
+			for _, r := range raw {
+				if ev, ok := r.(anthropic.StreamEvent); ok {
+					anthBuf = append(anthBuf, ev)
 				}
 			}
+			if len(anthBuf) > 0 {
+				streamRecord.AnthropicStreamEvents = anthBuf
+			}
+			var chatBuf []chat.ChatStreamChunk
+			for _, r := range raw {
+				if ev, ok := r.(chat.ChatStreamChunk); ok {
+					chatBuf = append(chatBuf, ev)
+				}
+			}
+			if len(chatBuf) > 0 {
+				streamRecord.ChatStreamEvents = chatBuf
+			}
 		}
-		// Anthropic stream events from provider adapter
-		if anthProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolAnthropic); ok {
-			if anthAdapter, ok := anthProvider.(*anthropic.AnthropicProviderAdapter); ok {
-				if events := anthAdapter.StreamBuffer(); len(events) > 0 {
-					streamRecord.AnthropicStreamEvents = events
+		// Client stream buffer (OpenAI stream events)
+		if clientBuf != nil {
+			raw := clientBuf()
+			var openAIBuf []openai.StreamEvent
+			for _, r := range raw {
+				if ev, ok := r.(openai.StreamEvent); ok {
+					openAIBuf = append(openAIBuf, ev)
 				}
-
-				// Chat stream events from provider adapter
-				if chatProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolOpenAIChat); ok {
-					if chatAdapter, ok := chatProvider.(*chat.ChatProviderAdapter); ok {
-						if events := chatAdapter.StreamBuffer(); len(events) > 0 {
-							streamRecord.ChatStreamEvents = events
-						}
-					}
-				}
+			}
+			if len(openAIBuf) > 0 {
+				streamRecord.OpenAIStreamEvents = openAIBuf
 			}
 		}
 	}
@@ -1635,7 +1683,7 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 		return
 	}
 
-	streamChanAny, err := clientStream.FromCoreStream(ctx, coreReq, coreResponseToStreamEvents(coreResp))
+	streamChanAny, err := clientStream.FromCoreStream(ctx, coreReq, coreResponseToStreamEvents(ctx, coreResp))
 	if err != nil {
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
@@ -1649,8 +1697,12 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
-	streamChan, ok := streamChanAny.(<-chan openai.StreamEvent)
-	if !ok {
+	var streamChan <-chan openai.StreamEvent
+	if oaiResult, ok := streamChanAny.(*openai.OpenAIStreamResult); ok {
+		streamChan = oaiResult.Chan()
+	} else if ch, ok := streamChanAny.(<-chan openai.StreamEvent); ok {
+		streamChan = ch
+	} else {
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
 				Message: "unexpected stream channel type",
@@ -1710,21 +1762,33 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 	}
 }
 
-func coreResponseToStreamEvents(resp *format.CoreResponse) <-chan format.CoreStreamEvent {
+func coreResponseToStreamEvents(ctx context.Context, resp *format.CoreResponse) <-chan format.CoreStreamEvent {
 	out := make(chan format.CoreStreamEvent, 16)
 	go func() {
 		defer close(out)
+
+		send := func(ev format.CoreStreamEvent) bool {
+			select {
+			case <-ctx.Done():
+				return false
+			case out <- ev:
+				return true
+			}
+		}
+
 		if resp == nil {
-			out <- format.CoreStreamEvent{
+			send(format.CoreStreamEvent{
 				Type: format.CoreEventFailed,
 				Error: &format.CoreError{
 					Message: "core response is nil",
 					Type:    "server_error",
 				},
-			}
+			})
 			return
 		}
-		out <- format.CoreStreamEvent{Type: format.CoreEventCreated, ItemID: resp.ID, Model: resp.Model}
+		if !send(format.CoreStreamEvent{Type: format.CoreEventCreated, ItemID: resp.ID, Model: resp.Model}) {
+			return
+		}
 		index := 0
 		for _, msg := range resp.Messages {
 			if msg.Role != "assistant" {
@@ -1733,21 +1797,33 @@ func coreResponseToStreamEvents(resp *format.CoreResponse) <-chan format.CoreStr
 			for _, block := range msg.Content {
 				switch block.Type {
 				case "reasoning":
-					out <- format.CoreStreamEvent{Type: format.CoreContentBlockStarted, Index: index, ContentBlock: &format.CoreContentBlock{Type: "reasoning"}}
-					if block.ReasoningText != "" {
-						out <- format.CoreStreamEvent{Type: format.CoreTextDelta, Index: index, Delta: block.ReasoningText}
+					if !send(format.CoreStreamEvent{Type: format.CoreContentBlockStarted, Index: index, ContentBlock: &format.CoreContentBlock{Type: "reasoning"}}) {
+						return
 					}
-					out <- format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: index, ContentBlock: &format.CoreContentBlock{
+					if block.ReasoningText != "" {
+						if !send(format.CoreStreamEvent{Type: format.CoreTextDelta, Index: index, Delta: block.ReasoningText}) {
+							return
+						}
+					}
+					if !send(format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: index, ContentBlock: &format.CoreContentBlock{
 						Type:               "reasoning",
 						ReasoningSignature: block.ReasoningSignature,
-					}}
+					}}) {
+						return
+					}
 					index++
 				case "text":
-					out <- format.CoreStreamEvent{Type: format.CoreContentBlockStarted, Index: index, ContentBlock: &format.CoreContentBlock{Type: "text"}}
-					if block.Text != "" {
-						out <- format.CoreStreamEvent{Type: format.CoreTextDelta, Index: index, Delta: block.Text}
+					if !send(format.CoreStreamEvent{Type: format.CoreContentBlockStarted, Index: index, ContentBlock: &format.CoreContentBlock{Type: "text"}}) {
+						return
 					}
-					out <- format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: index}
+					if block.Text != "" {
+						if !send(format.CoreStreamEvent{Type: format.CoreTextDelta, Index: index, Delta: block.Text}) {
+							return
+						}
+					}
+					if !send(format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: index}) {
+						return
+					}
 					index++
 				}
 			}
@@ -1762,13 +1838,13 @@ func coreResponseToStreamEvents(resp *format.CoreResponse) <-chan format.CoreStr
 		} else if status == "incomplete" {
 			eventType = format.CoreEventIncomplete
 		}
-		out <- format.CoreStreamEvent{
+		send(format.CoreStreamEvent{
 			Type:   eventType,
 			Status: status,
 			Model:  resp.Model,
 			Usage:  &resp.Usage,
 			Error:  resp.Error,
-		}
+		})
 	}()
 	return out
 }
@@ -2123,7 +2199,16 @@ func (p *chatProviderClient) StreamMessage(ctx context.Context, req any) (<-chan
 	go func() {
 		defer close(out)
 		for chunk := range stream {
-			out <- chunk
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 	return out, nil
@@ -2142,8 +2227,6 @@ func normalizeAnthropicRequest(upstream any) (anthropic.MessageRequest, error) {
 		return anthropic.MessageRequest{}, fmt.Errorf("expected anthropic.MessageRequest, got %T", upstream)
 	}
 }
-
-
 // injectCoreWebSearch replaces web_search tools in coreReq.Tools with injected
 // tavily_search/firecrawl_fetch tools when the resolved web search mode is "injected".
 // Returns true if injection was applied.
@@ -2233,6 +2316,11 @@ func (a *searchProviderAdapter) StreamMessage(ctx context.Context, req any) (<-c
 		defer close(out)
 		defer stream.Close()
 		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
 			ev, err := stream.Next()
 			if err != nil {
 				if err == io.EOF {
@@ -2240,7 +2328,11 @@ func (a *searchProviderAdapter) StreamMessage(ctx context.Context, req any) (<-c
 				}
 				return
 			}
-			out <- ev
+			select {
+			case out <- ev:
+			case <-ctx.Done():
+				return
+			}
 		}
 	}()
 	return out, nil

@@ -27,7 +27,7 @@ func TestCoreResponseToStreamEventsEmitsTextAndUsage(t *testing.T) {
 		Usage: format.CoreUsage{InputTokens: 11, OutputTokens: 7, CachedInputTokens: 3},
 	}
 
-	events := collectCoreStreamEvents(coreResponseToStreamEvents(resp))
+	events := collectCoreStreamEvents(coreResponseToStreamEvents(context.Background(), resp))
 	if len(events) == 0 {
 		t.Fatal("no stream events emitted")
 	}

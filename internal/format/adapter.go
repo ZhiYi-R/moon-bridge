@@ -101,10 +101,27 @@ type ProviderStreamAdapter interface {
 	// ToCoreStream consumes an upstream stream source (e.g. anthropic.Stream)
 	// and returns a channel of CoreStreamEvent. The adapter is responsible for
 	// the read-loop inside a goroutine.
-	ToCoreStream(ctx context.Context, src any) (<-chan CoreStreamEvent, error)
+	ToCoreStream(ctx context.Context, src any) (*StreamResult, error)
 }
 
 // ============================================================================
+
+// StreamResult wraps the output of a streaming invocation with per-stream
+// buffer access for trace capture and plugin state tracking.
+//
+// Using a concrete return type (rather than a bare channel) keeps the
+// buffer local to each streaming call, eliminating the data race that
+// occurred when buffers were stored on the shared adapter instance.
+type StreamResult struct {
+	// Events is the channel of CoreStreamEvent from the upstream stream.
+	Events <-chan CoreStreamEvent
+
+	// StreamBuffer returns the captured raw upstream events for trace,
+	// plugin reasoning replay, and other post-stream processing.
+	// Must only be called after the Events channel is fully consumed.
+	StreamBuffer func() []any
+}
+
 // CorePluginHooks — protocol-agnostic plugin hooks operating on Core format
 // ============================================================================
 

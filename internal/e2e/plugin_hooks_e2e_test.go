@@ -616,11 +616,17 @@ func TestPluginHooks_OnStreamEvent(t *testing.T) {
 		t.Fatalf("ToCoreStream: %v", err)
 	}
 
-	streamOutAny, err := clientStream.FromCoreStream(ctx, coreReq, coreEvents)
+	streamOutAny, err := clientStream.FromCoreStream(ctx, coreReq, coreEvents.Events)
 	if err != nil {
 		t.Fatalf("FromCoreStream: %v", err)
 	}
-	openAIStream := streamOutAny.(<-chan openai.StreamEvent)
+	var openAIStream <-chan openai.StreamEvent
+	oaiResult, ok := streamOutAny.(*openai.OpenAIStreamResult)
+	if ok {
+		openAIStream = oaiResult.Chan()
+	} else {
+		openAIStream = streamOutAny.(<-chan openai.StreamEvent)
+	}
 
 	var seenEvents []string
 	for ev := range openAIStream {
@@ -769,11 +775,17 @@ func TestPluginHooks_OnStreamComplete(t *testing.T) {
 		t.Fatalf("ToCoreStream: %v", err)
 	}
 
-	streamOutAny, err := clientStream.FromCoreStream(ctx, coreReq, coreEvents)
+	streamOutAny, err := clientStream.FromCoreStream(ctx, coreReq, coreEvents.Events)
 	if err != nil {
 		t.Fatalf("FromCoreStream: %v", err)
 	}
-	openAIStream := streamOutAny.(<-chan openai.StreamEvent)
+	var openAIStream <-chan openai.StreamEvent
+	oaiResult, ok := streamOutAny.(*openai.OpenAIStreamResult)
+	if ok {
+		openAIStream = oaiResult.Chan()
+	} else {
+		openAIStream = streamOutAny.(<-chan openai.StreamEvent)
+	}
 
 	// Consume all stream events to trigger completion.
 	for ev := range openAIStream {

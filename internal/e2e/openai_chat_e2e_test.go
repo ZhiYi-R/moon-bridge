@@ -454,11 +454,17 @@ func TestOpenAIChatE2E_Streaming(t *testing.T) {
 	}
 
 	// Step 5: ClientStreamAdapter.FromCoreStream.
-	streamOutAny, err := clientStream.FromCoreStream(ctx, coreReq, coreEvents)
+	streamOutAny, err := clientStream.FromCoreStream(ctx, coreReq, coreEvents.Events)
 	if err != nil {
 		t.Fatalf("FromCoreStream: %v", err)
 	}
-	openAIStream := streamOutAny.(<-chan openai.StreamEvent)
+	var openAIStream <-chan openai.StreamEvent
+	oaiResult, ok := streamOutAny.(*openai.OpenAIStreamResult)
+	if ok {
+		openAIStream = oaiResult.Chan()
+	} else {
+		openAIStream = streamOutAny.(<-chan openai.StreamEvent)
+	}
 
 	// Consume the OpenAI stream and verify expected events.
 	var seenEvents []string

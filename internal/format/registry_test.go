@@ -31,7 +31,7 @@ func (m *mockClientStream) FromCoreStream(_ context.Context, _ *CoreRequest, _ <
 type mockProviderStream struct{ protocol string }
 
 func (m *mockProviderStream) ProviderProtocol() string { return m.protocol }
-func (m *mockProviderStream) ToCoreStream(_ context.Context, _ any) (<-chan CoreStreamEvent, error) {
+func (m *mockProviderStream) ToCoreStream(_ context.Context, _ any) (*StreamResult, error) {
 	return nil, nil
 }
 

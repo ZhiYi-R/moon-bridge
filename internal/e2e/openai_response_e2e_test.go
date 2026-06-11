@@ -347,7 +347,13 @@ func TestOpenAIResponsePassthroughE2E_Streaming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FromCoreStream: %v", err)
 	}
-	openAIStream := streamOutAny.(<-chan openai.StreamEvent)
+	var openAIStream <-chan openai.StreamEvent
+	oaiResult, ok := streamOutAny.(*openai.OpenAIStreamResult)
+	if ok {
+		openAIStream = oaiResult.Chan()
+	} else {
+		openAIStream = streamOutAny.(<-chan openai.StreamEvent)
+	}
 
 	// Step 3: Consume and verify.
 	var seenEvents []string
