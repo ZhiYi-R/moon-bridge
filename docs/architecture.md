@@ -58,7 +58,7 @@ Moon Bridge 是一个 Go 语言编写的 HTTP 代理/协议转换服务器。对
 
 业务编排层，组合基础层和 Protocol 组件：
 
-- `internal/service/server` — HTTP 服务器、路由（`/v1/responses`、`/v1/models`、`/health` 等）、认证
+- `internal/service/server` — HTTP 服务器、路由（`/v1/responses`、`/v1/models` 等）、认证
 - `internal/service/server/adapter_dispatch.go` — Adapter 分发路径（switch 协议类型 → 调用对应 Adapter）
 - `internal/service/provider` — Provider 管理器（多 Provider 路由、配置热重载）
 - `internal/service/proxy` — Capture 模式下的透明代理
@@ -68,7 +68,6 @@ Moon Bridge 是一个 Go 语言编写的 HTTP 代理/协议转换服务器。对
 - `internal/service/trace` — 请求跟踪（捕获请求/响应的完整链路，持久化到 `data/trace/`）
 - `internal/service/store` — 配置持久化存储（SQLite / D1）
 - `internal/service/runtime` — 运行时上下文
-- `internal/service/bridge` — 备用桥接层
 
 ### Extension 层
 
@@ -81,6 +80,8 @@ Moon Bridge 是一个 Go 语言编写的 HTTP 代理/协议转换服务器。对
 - `internal/extension/metrics` — 请求指标采集与查询
 - `internal/extension/plugin` — 三方插件注册管理（`PluginRegistry` + `CorePluginHooks`）
 - `internal/extension/codex` — Codex 模型目录
+- `internal/extension/codex_tool_proxy` — apply_patch 代理扩展
+- `internal/extension/kimi_workaround` — Kimi 工具调用轮次限制
 - `internal/extension/db` — 持久化 Provider（SQLite 本地 / Cloudflare D1 Worker）
 
 ## 三种运行模式
@@ -141,9 +142,9 @@ adapter_dispatch.go (Adapter 分发)
 ```go
 
 type ClientAdapter interface {
-    Protocol() string
-    ToCoreRequest(context.Context, []byte) (*CoreRequest, error)
-    FromCoreResponse(context.Context, *CoreResponse) ([]byte, error)
+    ClientProtocol() string
+    ToCoreRequest(context.Context, any) (*CoreRequest, error)
+    FromCoreResponse(context.Context, *CoreResponse) (any, error)
 }
 
 type ProviderAdapter interface {

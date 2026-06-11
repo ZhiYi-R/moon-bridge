@@ -93,7 +93,6 @@ docker run -p 38440:38440 -v $(pwd)/config.yml:/config/config.yml moonbridge
 | `/v1/models` | GET | 列出可用模型 |
 | `/models` | GET | 同上 |
 | `/api/v1/` | — | 管理 API（需启用持久化） |
-| `/health` | GET | 健康检查 |
 
 详细 API 文档见 [API.md](docs/api.md)。
 

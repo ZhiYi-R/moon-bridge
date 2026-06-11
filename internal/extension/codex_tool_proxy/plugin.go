@@ -54,7 +54,7 @@ func DisablePatchProxyForModel(cfg config.Config, model string) bool {
 func ConfigSpecs() []config.ExtensionConfigSpec {
 	return []config.ExtensionConfigSpec{{
 		Name:           PluginName,
-		DefaultEnabled: true,
+		DefaultEnabled: false,
 		Scopes: []config.ExtensionScope{
 			config.ExtensionScopeGlobal,
 			config.ExtensionScopeProvider,

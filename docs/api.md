@@ -66,10 +66,32 @@ data: {"response": {...}}
 
 | 端点 | 方法 | 功能 |
 |------|------|------|
-| `/api/v1/config` | GET/PUT | 获取/更新运行时配置 |
-| `/api/v1/codex/config` | GET | 生成 Codex TOML 配置 |
-| `/api/v1/providers` | GET/POST/DELETE | 管理 Provider |
-| `/api/v1/sessions/{id}` | GET | 获取会话用量统计 |
+| `/api/v1/providers` | GET/POST/PUT/PATCH/DELETE | 管理 Provider CRUD |
+| `/api/v1/providers/{key}/offers` | POST | 创建 Offer |
+| `/api/v1/providers/{key}/offers/{model}` | PATCH/DELETE | 更新/删除 Offer |
+| `/api/v1/providers/{key}/test` | POST | 测试 Provider 连通性 |
+| `/api/v1/models` | GET | 列出模型定义 |
+| `/api/v1/models/{slug}` | GET/PUT/DELETE | 管理单个模型定义 |
+| `/api/v1/routes` | GET | 列出路由 |
+| `/api/v1/routes/{alias}` | GET/PUT/DELETE | 管理单个路由 |
+| `/api/v1/defaults` | GET/PUT | 管理默认配置（model/max_tokens/system_prompt） |
+| `/api/v1/web-search` | GET/PUT | 管理全局 Web Search 设置 |
+| `/api/v1/extensions` | GET | 列出扩展 |
+| `/api/v1/extensions/{name}` | GET/PUT | 管理扩展设置 |
+| `/api/v1/config/effective` | GET | 获取生效配置 |
+| `/api/v1/config/export` | GET | 导出配置 YAML |
+| `/api/v1/config/import` | POST | 导入配置 YAML |
+| `/api/v1/config/validate` | POST | 校验配置 |
+| `/api/v1/changes` | GET | 列出未提交的配置变更 |
+| `/api/v1/changes/apply` | POST | 应用配置变更 |
+| `/api/v1/changes/discard` | POST | 放弃配置变更 |
+| `/api/v1/status` | GET | 系统状态 |
+| `/api/v1/status/providers` | GET | Provider 运行状态 |
+| `/api/v1/sessions` | GET | 列出活跃会话 |
+| `/api/v1/stats` | GET | 用量统计 |
+| `/api/v1/stats/summary` | GET | 用量统计摘要 |
+| `/api/v1/logs` | GET | 日志查询 |
+| `/api/v1/version` | GET | 版本信息 |
 
 ## 错误处理
 

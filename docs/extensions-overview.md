@@ -250,6 +250,46 @@ moonbridge -config config.yml -print-codex-config my-model
 
 ---
 
+
+---
+
+## codex_tool_proxy（apply_patch 代理扩展）
+
+控制 Codex 的 `apply_patch` 自定义工具是否被展开为 5 个结构化代理工具（`add_file`、`delete_file`、`update_file`、`replace_file`、`batch`）发送给上游模型。
+
+**位置**：`internal/extension/codex_tool_proxy/`
+
+**文件清单**：
+
+| 文件 | 用途 |
+|------|------|
+| `plugin.go` | Plugin 实现 + PatchProxyDecider |
+
+**行为**：
+
+- **默认关闭**（`DefaultEnabled: false`）：`apply_patch` 以 raw grammar 形态原样透传给上游模型
+- **开启后**：展开为 5 个独立的结构化工具，让上游模型以 JSON schema 方式调用
+
+**实现的能力**：
+
+```go
+var (
+    _ plugin.Plugin             = (*ProxyPlugin)(nil)
+    _ plugin.ConfigSpecProvider = (*ProxyPlugin)(nil)
+    _ plugin.PatchProxyDecider  = (*ProxyPlugin)(nil)
+)
+```
+
+**启用方式**：
+
+```yaml
+extensions:
+  codex_tool_proxy:
+    enabled: true
+```
+
+支持 route / model / provider 级别覆盖。
+
 ## visual（视觉扩展）
 
 

@@ -23,7 +23,6 @@ internal/
 ├── service/         # 业务编排层
 │   ├── api/         # 管理 REST API（路由在 router.go）
 │   ├── app/         # 应用生命周期管理、Extension 目录
-│   ├── bridge/      # （空目录，保留以备将来使用）
 │   ├── e2e/         # 服务层 E2E 测试
 │   ├── provider/    # Provider 管理器
 │   ├── proxy/       # Capture 模式代理
@@ -44,6 +43,8 @@ internal/
 │   ├── visual/      # 视觉模型分发（CoreProvider 模式）
 │   ├── websearch/   # Web Search 编排器
 │   └── websearchinjected/  # 注入式搜索插件
+│   ├── codex_tool_proxy/  # apply_patch 代理扩展
+│   ├── codextool/         # 工具类型定义与工具映射
 └── e2e/             # 端到端集成测试（协议转换）
 ```
 

@@ -67,6 +67,11 @@ extensions:
   #     binding: MOONBRIDGE_DB
 
   # Persistence consumer: request metrics
+  # apply_patch 代理扩展：控制 Codex 文件编辑工具是否展开为结构化代理工具。
+  # 默认关闭，开启后 apply_patch 被拆分为 add_file/delete_file/update_file/replace_file/batch
+  # codex_tool_proxy:
+  #   enabled: true
+
   metrics:
     enabled: true
     config:

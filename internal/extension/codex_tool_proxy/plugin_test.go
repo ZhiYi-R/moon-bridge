@@ -11,8 +11,8 @@ func TestDisablePatchProxyForModelDefaultEnabled(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if DisablePatchProxyForModel(cfg, "test-model") {
-		t.Fatal("expected proxy enabled by default")
+	if !DisablePatchProxyForModel(cfg, "test-model") {
+		t.Fatal("expected proxy disabled by default")
 	}
 }
 
@@ -34,8 +34,8 @@ func TestDisablePatchProxyForModelRouteOverride(t *testing.T) {
 	if !DisablePatchProxyForModel(cfg, "specific") {
 		t.Fatal("expected proxy disabled via specific route override")
 	}
-	if DisablePatchProxyForModel(cfg, "unmatched-model") {
-		t.Fatal("expected proxy enabled for unmatched model")
+	if !DisablePatchProxyForModel(cfg, "unmatched-model") {
+		t.Fatal("expected proxy disabled for unmatched model (default)")
 	}
 }
 
