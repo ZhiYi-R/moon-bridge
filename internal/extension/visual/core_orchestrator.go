@@ -106,7 +106,7 @@ func (o *CoreOrchestrator) CreateCore(ctx context.Context, req *format.CoreReque
 			}
 			req.Messages = append(req.Messages, *lastAssistant)
 			req.Messages = append(req.Messages, format.CoreMessage{
-				Role:    "user",
+				Role:    "tool",
 				Content: toolResults,
 			})
 			if req.ToolChoice != nil && req.ToolChoice.Mode != "auto" {
@@ -130,7 +130,7 @@ func (o *CoreOrchestrator) CreateCore(ctx context.Context, req *format.CoreReque
 		// Append assistant message and tool_result message for next round.
 		req.Messages = append(req.Messages, *lastAssistant)
 		req.Messages = append(req.Messages, format.CoreMessage{
-			Role:    "user",
+			Role:    "tool",
 			Content: toolResults,
 		})
 

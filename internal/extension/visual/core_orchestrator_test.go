@@ -899,7 +899,7 @@ func TestCoreOrchestratorIsolatesRequestsAcrossRounds(t *testing.T) {
 	}
 
 	toolResultMsg := secondReq.Messages[2]
-	if toolResultMsg.Role != "user" {
+	if toolResultMsg.Role != "tool" {
 		t.Fatalf("tool_result message role = %q", toolResultMsg.Role)
 	}
 	if len(toolResultMsg.Content) != 1 || toolResultMsg.Content[0].Type != "tool_result" || toolResultMsg.Content[0].ToolUseID != "toolu_1" {
