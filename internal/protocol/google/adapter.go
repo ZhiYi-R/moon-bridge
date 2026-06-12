@@ -38,11 +38,6 @@ type GeminiProviderAdapter struct {
 	// currentModel tracks the model for the current request (used by cache).
 	currentModel string
 
-	// toolUseIDMap maps ToolUseID → ToolName for FunctionResponse name resolution.
-	// Only valid during a single FromCoreRequest call.
-	toolUseIDMap map[string]string
-	toolUseIDMu  sync.Mutex
-
 	prevSnapshots map[int]string // candidate index → previous text for delta computation
 }
 
@@ -82,10 +77,6 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 		return nil, fmt.Errorf("google adapter: core request is nil")
 	}
 
-	// Initialize per-request state.
-	a.toolUseIDMu.Lock()
-	a.toolUseIDMap = make(map[string]string)
-	a.toolUseIDMu.Unlock()
 	a.currentModel = req.Model
 
 	// Step 1: Allow plugins to mutate the CoreRequest before conversion.
@@ -103,9 +94,11 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 		Contents: make([]Content, 0, len(req.Messages)),
 	}
 
+	toolUseIDMap := make(map[string]string)
+
 	// System instruction (D-01): CoreRequest.System → Gemini system_instruction
 	if len(req.System) > 0 {
-		sysContent := a.blocksToContent(req.System)
+		sysContent := a.blocksToContent(req.System, toolUseIDMap)
 		if len(sysContent.Parts) > 0 {
 			geminiReq.SystemInstruction = &sysContent
 		}
@@ -116,13 +109,26 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 	// with the same role (e.g. tool_result after user text) are merged.
 	mergedContents := make([]Content, 0, len(req.Messages))
 	for _, msg := range req.Messages {
-		content := a.blocksToContent(msg.Content)
+		content := a.blocksToContent(msg.Content, toolUseIDMap)
+		// Skip messages with no content parts — they contribute no semantic value
+		// and may cause SDK role-alternating contract violations.
+		if len(content.Parts) == 0 {
+			continue
+		}
 		content.Role = a.mapRoleToGemini(msg.Role)
 		if len(mergedContents) > 0 && mergedContents[len(mergedContents)-1].Role == content.Role {
 			mergedContents[len(mergedContents)-1].Parts = append(mergedContents[len(mergedContents)-1].Parts, content.Parts...)
 		} else {
 			mergedContents = append(mergedContents, content)
 		}
+	}
+	// Ensure first Content has role "user" — Gemini API requires alternating
+	// user/model roles starting with user. Insert a placeholder if needed.
+	if len(mergedContents) > 0 && mergedContents[0].Role == "model" {
+		mergedContents = append(
+			[]Content{{Role: "user", Parts: []Part{{Text: "_"}}}},
+			mergedContents...,
+		)
 	}
 	geminiReq.Contents = mergedContents
 
@@ -153,10 +159,6 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 	// Cache integration — look up or create CachedContent.
 	a.prepareCache(ctx, geminiReq)
 
-	// Clean up per-request state.
-	a.toolUseIDMu.Lock()
-	a.toolUseIDMap = nil
-	a.toolUseIDMu.Unlock()
 	a.currentModel = ""
 
 	return geminiReq, nil
@@ -407,7 +409,7 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (*for
 // =========================================================================
 
 // blocksToContent converts []CoreContentBlock to Content (Gemini format).
-func (a *GeminiProviderAdapter) blocksToContent(blocks []format.CoreContentBlock) Content {
+func (a *GeminiProviderAdapter) blocksToContent(blocks []format.CoreContentBlock, toolUseIDMap map[string]string) Content {
 	parts := make([]Part, 0, len(blocks))
 	for _, b := range blocks {
 		switch b.Type {
@@ -422,9 +424,9 @@ func (a *GeminiProviderAdapter) blocksToContent(blocks []format.CoreContentBlock
 			})
 		case "tool_use":
 			// Store ToolUseID -> ToolName mapping for later FunctionResponse resolution (G-01).
-			a.toolUseIDMu.Lock()
-			a.toolUseIDMap[b.ToolUseID] = b.ToolName
-			a.toolUseIDMu.Unlock()
+			if toolUseIDMap != nil {
+				toolUseIDMap[b.ToolUseID] = b.ToolName
+			}
 			parts = append(parts, Part{
 				FunctionCall: &FunctionCall{
 					Name: b.ToolName,
@@ -434,11 +436,11 @@ func (a *GeminiProviderAdapter) blocksToContent(blocks []format.CoreContentBlock
 		case "tool_result":
 			// Look up the function name from ToolUseID (G-01).
 			funcName := b.ToolUseID
-			a.toolUseIDMu.Lock()
-			if fn, ok := a.toolUseIDMap[b.ToolUseID]; ok {
-				funcName = fn
+			if toolUseIDMap != nil {
+				if fn, ok := toolUseIDMap[b.ToolUseID]; ok {
+					funcName = fn
+				}
 			}
-			a.toolUseIDMu.Unlock()
 
 			// Combine tool result content into a single text for the response.
 			var respText string
@@ -567,45 +569,59 @@ func (a *GeminiProviderAdapter) applyGenerationConfigMap(gc *GenerationConfig, c
 func (a *GeminiProviderAdapter) fromParts(parts []Part) []format.CoreContentBlock {
 	result := make([]format.CoreContentBlock, 0, len(parts))
 	funcCallSeq := make(map[string]int)
+	callIDStacks := make(map[string][]string) // per-function-name call ID stack for FunctionResponse matching
 	for _, p := range parts {
-		result = append(result, a.fromPartWithSeq(p, funcCallSeq))
+		block, stacks := a.fromPartWithSeq(p, funcCallSeq, callIDStacks)
+		if stacks != nil {
+			callIDStacks = stacks
+		}
+		result = append(result, block)
 	}
 	return result
 }
 
 // fromPartWithSeq converts a single Gemini Part to CoreContentBlock.
-func (a *GeminiProviderAdapter) fromPartWithSeq(p Part, funcCallSeq map[string]int) format.CoreContentBlock {
+// Returns the block and optionally an updated callIDStacks for FunctionCall tracking.
+func (a *GeminiProviderAdapter) fromPartWithSeq(p Part, funcCallSeq map[string]int, callIDStacks map[string][]string) (format.CoreContentBlock, map[string][]string) {
 	switch {
 	case p.Text != "":
 		return format.CoreContentBlock{
 			Type: "text",
 			Text: p.Text,
-		}
+		}, nil
 	case p.FunctionCall != nil:
 		callName := p.FunctionCall.Name
 		funcCallSeq[callName]++
 		callID := callName + "__call_" + strconv.Itoa(funcCallSeq[callName])
+		callIDStacks[callName] = append(callIDStacks[callName], callID)
 		return format.CoreContentBlock{
 			Type:      "tool_use",
 			ToolUseID: callID,
 			ToolName:  callName,
 			ToolInput: p.FunctionCall.Args,
-		}
+		}, callIDStacks
 	case p.FunctionResponse != nil:
+		respName := p.FunctionResponse.Name
+		callID := ""
+		if stack := callIDStacks[respName]; len(stack) > 0 {
+			callID = stack[len(stack)-1]
+		} else {
+			callID = respName + "__call_1"
+		}
 		return format.CoreContentBlock{
 			Type:      "tool_result",
-			ToolUseID: p.FunctionResponse.Name,
-		}
+			ToolUseID: callID,
+		}, nil
 	case p.InlineData != nil:
 		return format.CoreContentBlock{
 			Type:      "image",
 			ImageData: p.InlineData.Data,
 			MediaType: p.InlineData.MimeType,
-		}
+		}, nil
 	default:
 		return format.CoreContentBlock{
 			Type: "text",
-		}
+		}, nil
 	}
 }
 

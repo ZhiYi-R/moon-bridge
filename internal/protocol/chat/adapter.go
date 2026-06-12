@@ -92,6 +92,11 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 	// Messages.
 	for _, msg := range req.Messages {
 		chatMsg := a.toChatMessage(msg)
+		// Skip messages with neither text content nor tool calls — empty messages
+		// contribute no semantic value and may be rejected by some upstreams.
+		if chatMsg.Content == nil && len(chatMsg.ToolCalls) == 0 {
+			continue
+		}
 		chatReq.Messages = append(chatReq.Messages, chatMsg)
 	}
 

@@ -816,12 +816,17 @@ func TestFromCoreRequest_ToolUseAndToolResult(t *testing.T) {
 	}
 	geminiReq := result.(*google.GenerateContentRequest)
 
-	if len(geminiReq.Contents) != 2 {
-		t.Fatalf("Contents: got %d, want 2", len(geminiReq.Contents))
+	if len(geminiReq.Contents) != 3 {
+		t.Fatalf("Contents: got %d, want 3 (placeholder + assistant + user)", len(geminiReq.Contents))
+	}
+
+	// First Content is the inserted user placeholder.
+	if geminiReq.Contents[0].Role != "user" || len(geminiReq.Contents[0].Parts) != 1 || geminiReq.Contents[0].Parts[0].Text != "_" {
+		t.Fatalf("expected user placeholder as first Content, got role=%q parts=%v", geminiReq.Contents[0].Role, geminiReq.Contents[0].Parts)
 	}
 
 	// Assistant message: FunctionCall
-	astParts := geminiReq.Contents[0].Parts
+	astParts := geminiReq.Contents[1].Parts
 	if len(astParts) != 1 {
 		t.Fatalf("assistant Parts: got %d, want 1", len(astParts))
 	}
@@ -836,7 +841,7 @@ func TestFromCoreRequest_ToolUseAndToolResult(t *testing.T) {
 	}
 
 	// User message: FunctionResponse
-	userParts := geminiReq.Contents[1].Parts
+	userParts := geminiReq.Contents[2].Parts
 	if len(userParts) != 1 {
 		t.Fatalf("user Parts: got %d, want 1", len(userParts))
 	}
@@ -1081,15 +1086,23 @@ func TestFromCoreRequest_ReasoningBlock(t *testing.T) {
 	}
 	geminiReq := result.(*google.GenerateContentRequest)
 
+	// First Content is the inserted user placeholder.
+	if len(geminiReq.Contents) != 3 {
+		t.Fatalf("Contents: got %d, want 3 (placeholder + assistant + user)", len(geminiReq.Contents))
+	}
+	if geminiReq.Contents[0].Role != "user" || len(geminiReq.Contents[0].Parts) != 1 || geminiReq.Contents[0].Parts[0].Text != "_" {
+		t.Fatalf("expected user placeholder as first Content, got role=%q", geminiReq.Contents[0].Role)
+	}
+
 	// Assistant message should have 2 parts (reasoning converted to text).
-	if len(geminiReq.Contents[0].Parts) != 2 {
-		t.Fatalf("assistant Parts: got %d, want 2 (reasoning block converted to text)", len(geminiReq.Contents[0].Parts))
+	if len(geminiReq.Contents[1].Parts) != 2 {
+		t.Fatalf("assistant Parts: got %d, want 2 (reasoning block converted to text)", len(geminiReq.Contents[1].Parts))
 	}
-	if geminiReq.Contents[0].Parts[0].Text != "thinking step by step" {
-		t.Errorf("assistant parts[0] reasoning text = %q, want thinking step by step", geminiReq.Contents[0].Parts[0].Text)
+	if geminiReq.Contents[1].Parts[0].Text != "thinking step by step" {
+		t.Errorf("assistant parts[0] reasoning text = %q, want thinking step by step", geminiReq.Contents[1].Parts[0].Text)
 	}
-	if geminiReq.Contents[0].Parts[1].Text != "final answer" {
-		t.Errorf("assistant parts[1] text = %q, want final answer", geminiReq.Contents[0].Parts[1].Text)
+	if geminiReq.Contents[1].Parts[1].Text != "final answer" {
+		t.Errorf("assistant parts[1] text = %q, want final answer", geminiReq.Contents[1].Parts[1].Text)
 	}
 }
 
@@ -1794,8 +1807,10 @@ func TestFromCoreRequest_DefaultContentBlockNoText(t *testing.T) {
 	}
 	geminiReq := result.(*google.GenerateContentRequest)
 	// Unknown type with no text produces no Part (default falls through without appending)
-	if len(geminiReq.Contents[0].Parts) != 0 {
-		t.Errorf("Parts: got %d, want 0 (unknown type with no text should be skipped)", len(geminiReq.Contents[0].Parts))
+	if len(geminiReq.Contents) == 0 {
+		t.Logf("Contents empty (all blocks filtered)")
+	} else if len(geminiReq.Contents[0].Parts) != 0 {
+		t.Errorf("Parts: got %d, want 0 (unknown type should be skipped)", len(geminiReq.Contents[0].Parts))
 	}
 }
 
@@ -1822,7 +1837,7 @@ func TestToCoreResponse_FromPartFunctionResponse(t *testing.T) {
 	if blocks[0].Type != "tool_result" {
 		t.Errorf("Type = %q, want tool_result", blocks[0].Type)
 	}
-	if blocks[0].ToolUseID != "get_weather" {
+	if blocks[0].ToolUseID != "get_weather__call_1" {
 		t.Errorf("ToolUseID = %q", blocks[0].ToolUseID)
 	}
 }

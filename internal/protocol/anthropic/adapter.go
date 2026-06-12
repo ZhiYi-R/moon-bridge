@@ -123,6 +123,7 @@ func (a *AnthropicProviderAdapter) anthropicToCoreRequest(req *MessageRequest) *
 		})
 	}
 
+
 	// Tools
 	if len(req.Tools) > 0 {
 		coreReq.Tools = make([]format.CoreTool, 0, len(req.Tools))
@@ -301,6 +302,11 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 			Role:    a.mapRole(msg.Role),
 			Content: a.toContentBlocks(msg.Content),
 		}
+		// Skip messages with no content blocks — they are empty and contribute
+		// no semantic value to the upstream API.
+		if len(anthroMsg.Content) == 0 {
+			continue
+		}
 		last := len(anthropicReq.Messages) - 1
 		if last >= 0 && anthroMsg.Role == "user" &&
 			anthropicReq.Messages[last].Role == "user" &&
@@ -311,6 +317,15 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 		} else {
 			anthropicReq.Messages = append(anthropicReq.Messages, anthroMsg)
 		}
+	}
+
+	// Ensure first message has role "user" — Anthropic API rejects requests
+	// where the first message is assistant, tool, or any non-user role.
+	if len(anthropicReq.Messages) > 0 && anthropicReq.Messages[0].Role != "user" {
+		anthropicReq.Messages = append(
+			[]Message{{Role: "user", Content: []ContentBlock{{Type: "text", Text: "_"}}}},
+			anthropicReq.Messages...,
+		)
 	}
 
 	// Tools
@@ -798,7 +813,7 @@ func (a *AnthropicProviderAdapter) toContentBlock(b format.CoreContentBlock) Con
 		}
 
 	case "tool_result":
-		var content any
+		var content any = ""
 		if len(b.ToolResultContent) > 0 {
 			content = a.toContentBlocks(b.ToolResultContent)
 		}

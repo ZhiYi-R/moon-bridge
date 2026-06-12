@@ -261,12 +261,17 @@ func TestFromCoreRequest_ToolUseContent(t *testing.T) {
 	}
 	msgReq := result.(*anthropic.MessageRequest)
 
-	if len(msgReq.Messages) != 2 {
-		t.Fatalf("got %d messages, want 2", len(msgReq.Messages))
+	if len(msgReq.Messages) != 3 {
+		t.Fatalf("got %d messages, want 3", len(msgReq.Messages))
+	}
+
+	// First message is the inserted user placeholder.
+	if msgReq.Messages[0].Role != "user" || len(msgReq.Messages[0].Content) != 1 || msgReq.Messages[0].Content[0].Text != "_" {
+		t.Fatalf("expected user placeholder as first message")
 	}
 
 	// assistant tool_use block
-	blocks0 := msgReq.Messages[0].Content
+	blocks0 := msgReq.Messages[1].Content
 	if len(blocks0) != 1 || blocks0[0].Type != "tool_use" {
 		t.Fatalf("expected tool_use block in assistant message")
 	}
@@ -277,8 +282,8 @@ func TestFromCoreRequest_ToolUseContent(t *testing.T) {
 		t.Errorf("tool_use name = %q", blocks0[0].Name)
 	}
 
-	// user tool_result block
-	blocks1 := msgReq.Messages[1].Content
+	// user tool_result block (index 2 because placeholder is at 0)
+	blocks1 := msgReq.Messages[2].Content
 	if len(blocks1) != 1 || blocks1[0].Type != "tool_result" {
 		t.Fatalf("expected tool_result block in user message")
 	}
@@ -313,7 +318,14 @@ func TestFromCoreRequest_Reasoning(t *testing.T) {
 		t.Fatal(err)
 	}
 	msgReq := result.(*anthropic.MessageRequest)
-	blocks := msgReq.Messages[0].Content
+	// First message is the inserted user placeholder.
+	if len(msgReq.Messages) != 3 {
+		t.Fatalf("got %d messages, want 3", len(msgReq.Messages))
+	}
+	if msgReq.Messages[0].Role != "user" || len(msgReq.Messages[0].Content) != 1 || msgReq.Messages[0].Content[0].Text != "_" {
+		t.Fatalf("expected user placeholder as first message, got role=%q content=%v", msgReq.Messages[0].Role, msgReq.Messages[0].Content)
+	}
+	blocks := msgReq.Messages[1].Content
 
 	if len(blocks) != 2 {
 		t.Fatalf("got %d blocks, want 2", len(blocks))
@@ -684,18 +696,23 @@ func TestFromCoreRequest_MergesConsecutiveToolResultMessages(t *testing.T) {
 		t.Fatalf("expected *MessageRequest, got %T", result)
 	}
 
-	// We should have: assistant + user (merged from 2 tool_result messages)
-	if len(msgReq.Messages) != 2 {
-		t.Fatalf("expected 2 messages (assistant + merged user), got %d", len(msgReq.Messages))
+	// We should have: placeholder user + assistant + merged user
+	if len(msgReq.Messages) != 3 {
+		t.Fatalf("expected 3 messages (placeholder + assistant + merged user), got %d", len(msgReq.Messages))
 	}
 
-	// First message should be assistant with tool_use
-	if msgReq.Messages[0].Role != "assistant" {
-		t.Errorf("messages[0].Role = %q, want assistant", msgReq.Messages[0].Role)
+	// First message is the inserted user placeholder.
+	if msgReq.Messages[0].Role != "user" || len(msgReq.Messages[0].Content) != 1 || msgReq.Messages[0].Content[0].Text != "_" {
+		t.Fatalf("expected user placeholder as first message, got role=%q", msgReq.Messages[0].Role)
 	}
 
-	// Second message should be user with 2 tool_result blocks (merged)
-	merged := msgReq.Messages[1]
+	// Second message should be assistant with tool_use
+	if msgReq.Messages[1].Role != "assistant" {
+		t.Errorf("messages[1].Role = %q, want assistant", msgReq.Messages[1].Role)
+	}
+
+	// Third message should be user with 2 tool_result blocks (merged)
+	merged := msgReq.Messages[2]
 	if merged.Role != "user" {
 		t.Errorf("merged message role = %q, want user", merged.Role)
 	}
