@@ -88,8 +88,32 @@ func (o *CoreOrchestrator) CreateCore(ctx context.Context, req *format.CoreReque
 		}
 
 		toolUses, nonVisual := coreSplitVisualToolUses(lastAssistant.Content)
-		if len(nonVisual) > 0 || len(toolUses) == 0 {
+		if len(toolUses) == 0 {
 			return applyCoreUsageAggregation(resp, aggregatedUsage, hasAggregatedUsage), nil
+		}
+		if len(nonVisual) > 0 {
+			// Execute visual tools, feed results back to model, and continue.
+			// Non-visual tool_uses remain in the assistant message so the Bridge
+			// can process them on the next round.
+			toolResults := make([]format.CoreContentBlock, 0, len(toolUses))
+			for _, toolUse := range toolUses {
+				result := o.executeCoreVisualTool(ctx, toolUse, availableImages)
+				toolResults = append(toolResults, format.CoreContentBlock{
+					Type:              "tool_result",
+					ToolUseID:         toolUse.ToolUseID,
+					ToolResultContent: []format.CoreContentBlock{{Type: "text", Text: result}},
+				})
+			}
+			req.Messages = append(req.Messages, *lastAssistant)
+			req.Messages = append(req.Messages, format.CoreMessage{
+				Role:    "user",
+				Content: toolResults,
+			})
+			if req.ToolChoice != nil && req.ToolChoice.Mode != "auto" {
+				req.ToolChoice = &format.CoreToolChoice{Mode: "auto"}
+			}
+			log.Debug("Core visual mixed tool loop", "round", round+1, "visual_tools", len(toolUses), "non_visual", len(nonVisual))
+			continue
 		}
 
 		// Execute each visual tool via the vision client.
@@ -174,26 +198,50 @@ func imageInputFromCoreBlock(block format.CoreContentBlock) (ImageInput, bool) {
 	if block.ImageData == "" {
 		return ImageInput{}, false
 	}
+	// If MediaType is explicitly set, treat as base64.
 	if block.MediaType != "" {
-		// base64-encoded image
 		return ImageInput{Data: block.ImageData, MimeType: block.MediaType}, true
 	}
-	// URL-based image (ImageData holds the URL when MediaType is empty)
-	url := strings.TrimSpace(block.ImageData)
-	if !isSupportedImageURL(url) {
-		return ImageInput{}, false
+	// Check for data: URL (contains embedded MIME type).
+	if strings.HasPrefix(block.ImageData, "data:") {
+		mediaType, raw := splitDataURL(block.ImageData)
+		return ImageInput{Data: raw, MimeType: mediaType}, true
 	}
-	return ImageInput{URL: url}, true
+	// URL-based image (ImageData holds the URL when MediaType is empty).
+	url := strings.TrimSpace(block.ImageData)
+	if isSupportedImageURL(url) {
+		return ImageInput{URL: url}, true
+	}
+	// Fallback: treat as base64 with default MIME type rather than silently dropping.
+	return ImageInput{Data: block.ImageData, MimeType: "image/png"}, true
 }
 
 // findLastAssistantMessage finds the last assistant message in a slice.
+// Prefers assistant messages that contain tool_use blocks, searching backward
+// so the most recent tool-use-bearing assistant message is returned.
 func findLastAssistantMessage(messages []format.CoreMessage) *format.CoreMessage {
+	var candidate *format.CoreMessage
 	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "assistant" {
+		if messages[i].Role != "assistant" {
+			continue
+		}
+		// Check if this assistant message has any tool_use content blocks.
+		hasToolUse := false
+		for _, block := range messages[i].Content {
+			if block.Type == "tool_use" {
+				hasToolUse = true
+				break
+			}
+		}
+		if hasToolUse {
 			return &messages[i]
 		}
+		// Fallback: remember the last assistant message if we don't find a better one.
+		if candidate == nil {
+			candidate = &messages[i]
+		}
 	}
-	return nil
+	return candidate
 }
 
 // coreSplitVisualToolUses separates visual tool_use blocks from non-visual ones.

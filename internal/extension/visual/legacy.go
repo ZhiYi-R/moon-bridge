@@ -101,6 +101,7 @@ func textFromContent(blocks []anthropic.ContentBlock) string {
 }
 
 // HasAnthropicSource checks if ImageInput can produce a valid Anthropic source.
+// Deprecated: use image.AnthropicSource() != nil directly.
 func (image ImageInput) HasAnthropicSource() bool {
 	return image.AnthropicSource() != nil
 }
@@ -132,17 +133,7 @@ func (image ImageInput) AnthropicSource() *anthropic.ImageSource {
 }
 
 func dataURLSource(value string) *anthropic.ImageSource {
-	header, data, ok := strings.Cut(value, ",")
-	if !ok {
-		return nil
-	}
-	mediaType := strings.TrimPrefix(header, "data:")
-	if semicolon := strings.IndexByte(mediaType, ';'); semicolon >= 0 {
-		mediaType = mediaType[:semicolon]
-	}
-	if mediaType == "" {
-		mediaType = "image/png"
-	}
+	mediaType, data := splitDataURL(value)
 	return &anthropic.ImageSource{Type: "base64", MediaType: mediaType, Data: data}
 }
 

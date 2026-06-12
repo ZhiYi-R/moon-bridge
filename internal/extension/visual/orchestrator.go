@@ -71,8 +71,31 @@ func (o *Orchestrator) CreateMessage(ctx context.Context, req anthropic.MessageR
 		}
 
 		toolUses, nonVisual := splitVisualToolUses(resp.Content)
-		if len(nonVisual) > 0 || len(toolUses) == 0 {
+		if len(toolUses) == 0 {
 			return resp, nil
+		}
+		if len(nonVisual) > 0 {
+			// Execute visual tools, feed results to model.
+			toolResults := make([]anthropic.ContentBlock, 0, len(toolUses))
+			for _, toolUse := range toolUses {
+				result := o.executeVisualTool(ctx, toolUse, availableImages)
+				toolResults = append(toolResults, anthropic.ContentBlock{
+					Type:      "tool_result",
+					ToolUseID: toolUse.ID,
+					Content:   result,
+				})
+			}
+			req.Messages = append(req.Messages, anthropic.Message{
+				Role:    "assistant",
+				Content: resp.Content,
+			})
+			req.Messages = append(req.Messages, anthropic.Message{
+				Role:    "user",
+				Content: toolResults,
+			})
+			req.ToolChoice = &anthropic.ToolChoice{Type: "auto"}
+			log.Debug("Visual mixed tool loop", "round", round+1, "visual_tools", len(toolUses), "non_visual", len(nonVisual))
+			continue
 		}
 
 		toolResults := make([]anthropic.ContentBlock, 0, len(toolUses))
@@ -128,11 +151,34 @@ func (o *Orchestrator) StreamMessage(ctx context.Context, req anthropic.MessageR
 
 		assistantContent := collectContentFromEvents(events)
 		toolUses, nonVisual := splitVisualToolUses(assistantContent)
-		if len(nonVisual) > 0 || len(toolUses) == 0 {
+		if len(toolUses) == 0 {
 			if lastUsage != nil {
 				allEvents = injectUsageIntoStart(allEvents, *lastUsage)
 			}
 			return &staticStream{events: allEvents}, nil
+		}
+		if len(nonVisual) > 0 {
+			// Execute visual tools, feed results to model.
+			toolResults := make([]anthropic.ContentBlock, 0, len(toolUses))
+			for _, toolUse := range toolUses {
+				result := o.executeVisualTool(ctx, toolUse, availableImages)
+				toolResults = append(toolResults, anthropic.ContentBlock{
+					Type:      "tool_result",
+					ToolUseID: toolUse.ID,
+					Content:   result,
+				})
+			}
+			req.Messages = append(req.Messages, anthropic.Message{
+				Role:    "assistant",
+				Content: assistantContent,
+			})
+			req.Messages = append(req.Messages, anthropic.Message{
+				Role:    "user",
+				Content: toolResults,
+			})
+			req.ToolChoice = &anthropic.ToolChoice{Type: "auto"}
+			log.Debug("Visual stream mixed tool loop", "round", round+1, "visual_tools", len(toolUses), "non_visual", len(nonVisual))
+			continue
 		}
 
 		toolResults := make([]anthropic.ContentBlock, 0, len(toolUses))
@@ -384,7 +430,7 @@ func normalizeImages(single string, urls []string, images []ImageInput, refs []s
 			}
 			continue
 		}
-		if !image.HasAnthropicSource() {
+		if image.AnthropicSource() == nil {
 			continue
 		}
 		normalized = append(normalized, image)

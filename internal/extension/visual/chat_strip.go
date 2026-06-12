@@ -23,8 +23,17 @@ func StripImagesFromChat(req chat.ChatRequest) (chat.ChatRequest, bool) {
 
 	for mi := range out.Messages {
 		msg := &out.Messages[mi]
-		parts, ok := msg.Content.([]chat.ContentPart)
-		if !ok {
+		var originalIsString bool
+		var parts []chat.ContentPart
+		switch v := msg.Content.(type) {
+		case string:
+			originalIsString = true
+			if v != "" {
+				parts = []chat.ContentPart{{Type: "text", Text: v}}
+			}
+		case []chat.ContentPart:
+			parts = v
+		default:
 			continue
 		}
 		newParts := make([]chat.ContentPart, 0, len(parts))
@@ -40,7 +49,11 @@ func StripImagesFromChat(req chat.ChatRequest) (chat.ChatRequest, bool) {
 			}
 			newParts = append(newParts, part)
 		}
-		msg.Content = newParts
+		if originalIsString && !modified && len(newParts) == 1 && newParts[0].Type == "text" {
+			msg.Content = newParts[0].Text
+		} else {
+			msg.Content = newParts
+		}
 	}
 	return out, modified
 }
