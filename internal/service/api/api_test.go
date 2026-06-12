@@ -130,9 +130,9 @@ func buildTableNameMap(tables []db.TableSpec) map[string]string {
 
 // testAPIDB implements db.Store backed by an in-memory SQLite database for API tests.
 type testAPIDB struct {
-	t         *testing.T
-	db        *sql.DB
-	consumer  string
+	t          *testing.T
+	db         *sql.DB
+	consumer   string
 	tableNames map[string]string
 }
 

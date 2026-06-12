@@ -19,9 +19,9 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/config"
 	"moonbridge/internal/db"
+	"moonbridge/internal/extension/plugin"
 )
 
 const PluginName = "db_sqlite"

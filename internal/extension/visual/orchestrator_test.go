@@ -429,4 +429,3 @@ func TestStripImagesFromAnthropic_MultiTurnDoesNotRestoreImages(t *testing.T) {
 		t.Fatal("second user message was modified")
 	}
 }
-

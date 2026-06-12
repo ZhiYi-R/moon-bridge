@@ -903,9 +903,9 @@ func (s *Server) handleAdapterStream(
 	// Protocol-specific upstream streaming: get stream + convert to CoreStreamEvent.
 	var coreEvents <-chan format.CoreStreamEvent
 	var providerStream format.ProviderStreamAdapter
-	var sr *format.StreamResult // result from ToCoreStream, captures events + buffer
-	var providerBuf func() []any  // per-request provider stream buffer (from ToCoreStream StreamResult)
-	var clientBuf func() []any    // per-request client stream buffer (from OpenAI FromCoreStream)
+	var sr *format.StreamResult  // result from ToCoreStream, captures events + buffer
+	var providerBuf func() []any // per-request provider stream buffer (from ToCoreStream StreamResult)
+	var clientBuf func() []any   // per-request client stream buffer (from OpenAI FromCoreStream)
 
 	switch candidate.Protocol {
 	case config.ProtocolAnthropic:
@@ -2227,6 +2227,7 @@ func normalizeAnthropicRequest(upstream any) (anthropic.MessageRequest, error) {
 		return anthropic.MessageRequest{}, fmt.Errorf("expected anthropic.MessageRequest, got %T", upstream)
 	}
 }
+
 // injectCoreWebSearch replaces web_search tools in coreReq.Tools with injected
 // tavily_search/firecrawl_fetch tools when the resolved web search mode is "injected".
 // Returns true if injection was applied.

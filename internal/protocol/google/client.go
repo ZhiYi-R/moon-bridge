@@ -20,9 +20,9 @@ import (
 type ClientConfig struct {
 	BaseURL   string
 	APIKey    string
-	Project   string  // Vertex AI project ID (optional, for Vertex AI endpoint)
-	Location  string  // Vertex AI location (optional, default "us-central1")
-	Version   string  // API version (default "v1")
+	Project   string // Vertex AI project ID (optional, for Vertex AI endpoint)
+	Location  string // Vertex AI location (optional, default "us-central1")
+	Version   string // API version (default "v1")
 	UserAgent string
 	Client    *http.Client
 }
@@ -146,7 +146,6 @@ func (c *Client) StreamGenerateContent(ctx context.Context, model string, req *G
 // to close (connections are managed by http.Client), so this is a no-op.
 func (c *Client) Close() error { return nil }
 
-
 // ============================================================================
 // CachedContent API methods
 // ============================================================================
@@ -243,6 +242,7 @@ func (c *Client) DeleteCachedContent(ctx context.Context, name string) error {
 	}
 	return nil
 }
+
 // ============================================================================
 // Internal helpers
 // ============================================================================

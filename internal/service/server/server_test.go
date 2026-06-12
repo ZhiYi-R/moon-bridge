@@ -13,13 +13,13 @@ import (
 	"strings"
 	"testing"
 
+	"moonbridge/internal/config"
 	"moonbridge/internal/extension/codex"
 	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/config"
+	"moonbridge/internal/format"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/openai"
-	"moonbridge/internal/format"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/server"
 	"moonbridge/internal/service/stats"
@@ -81,7 +81,6 @@ func (provider providerFunc) CreateMessage(ctx context.Context, req any) (any, e
 func (provider providerFunc) StreamMessage(ctx context.Context, req any) (<-chan any, error) {
 	return provider.stream(ctx, req)
 }
-
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
 

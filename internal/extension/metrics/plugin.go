@@ -23,9 +23,9 @@ import (
 	"strconv"
 	"time"
 
-	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/config"
 	"moonbridge/internal/db"
+	"moonbridge/internal/extension/plugin"
 )
 
 const PluginName = "metrics"

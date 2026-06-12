@@ -3,12 +3,12 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"moonbridge/internal/protocol/anthropic"
+	"net/http"
 	"time"
 
-	"moonbridge/internal/logger"
 	"moonbridge/internal/format"
+	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/openai"
 
 	foundationdb "moonbridge/internal/db"
@@ -91,7 +91,7 @@ type StreamEvent struct {
 	Type  string // "block_start", "block_delta", "block_stop"
 	Index int
 	Block *format.CoreContentBlock // for block_start
-	Delta anthropic.StreamDelta   // for block_delta
+	Delta anthropic.StreamDelta    // for block_delta
 }
 
 // --- Error handling ---
@@ -213,10 +213,8 @@ type CoreContentRememberer interface {
 	RememberCoreContent(ctx context.Context, content []format.CoreContentBlock)
 }
 
-
 // PatchProxyDecider is implemented by plugins that control whether apply_patch
 // custom tools are expanded into structured proxy tools for upstream models.
 type PatchProxyDecider interface {
 	DisablePatchProxy(model string) bool
 }
-

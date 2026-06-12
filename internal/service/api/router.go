@@ -55,14 +55,14 @@ func NewRouter(cfg ConfigStore, rt *runtime.Runtime, st *stats.SessionStats, reg
 	mux := http.NewServeMux()
 
 	// Auth middleware for all API routes.
-		authMW := AuthMiddleware(func() string {
-			return r.server.CurrentConfig().AuthToken()
-		}, func() bool { return r.store != nil })
+	authMW := AuthMiddleware(func() string {
+		return r.server.CurrentConfig().AuthToken()
+	}, func() bool { return r.store != nil })
 
-		// Register all routes using Go 1.22+ pattern matching.
-		registerRoutes(mux, r)
+	// Register all routes using Go 1.22+ pattern matching.
+	registerRoutes(mux, r)
 
-		return authMW(mux)
+	return authMW(mux)
 }
 
 // registerRoutes registers all API endpoints with the mux.

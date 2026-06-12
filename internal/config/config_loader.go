@@ -88,8 +88,8 @@ type TraceFileConfig struct {
 }
 
 type ServerFileConfig struct {
-	Addr      string `yaml:"addr" json:"addr,omitempty"`
-	AuthToken string `yaml:"auth_token" json:"auth_token,omitempty"`
+	Addr        string `yaml:"addr" json:"addr,omitempty"`
+	AuthToken   string `yaml:"auth_token" json:"auth_token,omitempty"`
 	MaxSessions int    `yaml:"max_sessions"`
 	SessionTTL  string `yaml:"session_ttl"`
 }
@@ -122,33 +122,33 @@ type ModelDefFileConfig struct {
 }
 
 type OfferFileConfig struct {
-	Model        string                  `yaml:"model" json:"model"`
-	UpstreamName string                  `yaml:"upstream_name,omitempty" json:"upstream_name,omitempty"`
-	Priority     int                     `yaml:"priority,omitempty" json:"priority,omitempty"`
-	Pricing      ModelPricingFileConfig  `yaml:"pricing,omitempty" json:"pricing,omitempty"`
-	Overrides    *ModelDefFileConfig     `yaml:"overrides,omitempty" json:"overrides,omitempty"`
+	Model        string                 `yaml:"model" json:"model"`
+	UpstreamName string                 `yaml:"upstream_name,omitempty" json:"upstream_name,omitempty"`
+	Priority     int                    `yaml:"priority,omitempty" json:"priority,omitempty"`
+	Pricing      ModelPricingFileConfig `yaml:"pricing,omitempty" json:"pricing,omitempty"`
+	Overrides    *ModelDefFileConfig    `yaml:"overrides,omitempty" json:"overrides,omitempty"`
 }
 
 type ProviderDefFileConfig struct {
-	BaseURL    string                           `yaml:"base_url" json:"base_url"`
-	APIKey     string                           `yaml:"api_key" json:"api_key"`
-	Version    string                           `yaml:"version,omitempty" json:"version,omitempty"`
-	UserAgent  string                           `yaml:"user_agent,omitempty" json:"user_agent,omitempty"`
-	Protocol   string                           `yaml:"protocol,omitempty" json:"protocol,omitempty"`
-	WebSearch  WebSearchFileConfig              `yaml:"web_search,omitempty" json:"web_search,omitempty"`
-	Extensions map[string]ExtensionFileConfig   `yaml:"extensions,omitempty" json:"extensions,omitempty"`
-	Offers     []OfferFileConfig                `yaml:"offers,omitempty" json:"offers,omitempty"`
+	BaseURL    string                         `yaml:"base_url" json:"base_url"`
+	APIKey     string                         `yaml:"api_key" json:"api_key"`
+	Version    string                         `yaml:"version,omitempty" json:"version,omitempty"`
+	UserAgent  string                         `yaml:"user_agent,omitempty" json:"user_agent,omitempty"`
+	Protocol   string                         `yaml:"protocol,omitempty" json:"protocol,omitempty"`
+	WebSearch  WebSearchFileConfig            `yaml:"web_search,omitempty" json:"web_search,omitempty"`
+	Extensions map[string]ExtensionFileConfig `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	Offers     []OfferFileConfig              `yaml:"offers,omitempty" json:"offers,omitempty"`
 }
 
 type RouteFileConfig struct {
-	To            string                           `yaml:"to,omitempty" json:"to,omitempty"` // backward compat "provider/model"
-	Model         string                           `yaml:"model,omitempty" json:"model,omitempty"`
-	Provider      string                           `yaml:"provider,omitempty" json:"provider,omitempty"`
-	DisplayName   string                           `yaml:"display_name,omitempty" json:"display_name,omitempty"`
-	Description   string                           `yaml:"description,omitempty" json:"description,omitempty"`
-	ContextWindow int                              `yaml:"context_window,omitempty" json:"context_window,omitempty"`
-	WebSearch     WebSearchFileConfig              `yaml:"web_search,omitempty" json:"web_search,omitempty"`
-	Extensions    map[string]ExtensionFileConfig   `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	To            string                         `yaml:"to,omitempty" json:"to,omitempty"` // backward compat "provider/model"
+	Model         string                         `yaml:"model,omitempty" json:"model,omitempty"`
+	Provider      string                         `yaml:"provider,omitempty" json:"provider,omitempty"`
+	DisplayName   string                         `yaml:"display_name,omitempty" json:"display_name,omitempty"`
+	Description   string                         `yaml:"description,omitempty" json:"description,omitempty"`
+	ContextWindow int                            `yaml:"context_window,omitempty" json:"context_window,omitempty"`
+	WebSearch     WebSearchFileConfig            `yaml:"web_search,omitempty" json:"web_search,omitempty"`
+	Extensions    map[string]ExtensionFileConfig `yaml:"extensions,omitempty" json:"extensions,omitempty"`
 }
 
 func (cfg *RouteFileConfig) UnmarshalYAML(value *yaml.Node) error {

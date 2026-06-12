@@ -20,8 +20,8 @@ const (
 	ProtocolAnthropic      = "anthropic"
 	ProtocolOpenAIResponse = "openai-response"
 	// Phase 5: New protocol constants (D-08)
-	ProtocolGoogleGenAI    = "google-genai"
-	ProtocolOpenAIChat     = "openai-chat"
+	ProtocolGoogleGenAI = "google-genai"
+	ProtocolOpenAIChat  = "openai-chat"
 )
 
 type Mode string
@@ -51,22 +51,22 @@ type WebSearchConfig struct {
 }
 
 type Config struct {
-	Mode              Mode
-	Addr              string
-	AuthToken         string
-	TraceRequests     bool
-	LogLevel          string
-	LogFormat         string
-	SystemPrompt      string
-	DefaultModel      string
-	WebSearchSupport  WebSearchSupport
-	WebSearchMaxUses  int
-	TavilyAPIKey      string
-	FirecrawlAPIKey   string
-	SearchMaxRounds   int
-	DefaultMaxTokens  int
-	MaxSessions int    `yaml:"max_sessions"`  // 0 = unlimited
-	SessionTTL  string `yaml:"session_ttl"`   // default "24h"
+	Mode             Mode
+	Addr             string
+	AuthToken        string
+	TraceRequests    bool
+	LogLevel         string
+	LogFormat        string
+	SystemPrompt     string
+	DefaultModel     string
+	WebSearchSupport WebSearchSupport
+	WebSearchMaxUses int
+	TavilyAPIKey     string
+	FirecrawlAPIKey  string
+	SearchMaxRounds  int
+	DefaultMaxTokens int
+	MaxSessions      int    `yaml:"max_sessions"` // 0 = unlimited
+	SessionTTL       string `yaml:"session_ttl"`  // default "24h"
 	// Defaults holds the default configuration values.
 	Defaults Defaults
 	// Models is the canonical model definition map (shared across providers).
@@ -115,11 +115,11 @@ type RouteEntry struct {
 
 // ProviderDef defines a single upstream provider.
 type ProviderDef struct {
-	BaseURL          string
-	APIKey           string
-	Version          string
-	UserAgent        string
-	Protocol         string // "anthropic" (default), "openai-response", "google-genai", or "openai-chat"
+	BaseURL   string
+	APIKey    string
+	Version   string
+	UserAgent string
+	Protocol  string // "anthropic" (default), "openai-response", "google-genai", or "openai-chat"
 	// Phase 5: Google GenAI flat fields (D-09).
 	// Only relevant when Protocol == ProtocolGoogleGenAI.
 	// project: Google Cloud project ID (Vertex AI).
@@ -129,7 +129,7 @@ type ProviderDef struct {
 	Location   string `yaml:"location,omitempty"`
 	APIVersion string `yaml:"api_version,omitempty"`
 	// Cache config for this provider. If nil, provider does not use caching.
-	Cache *CacheConfig `yaml:"cache,omitempty"`
+	Cache            *CacheConfig `yaml:"cache,omitempty"`
 	WebSearchSupport WebSearchSupport
 	WebSearchMaxUses int
 	TavilyAPIKey     string
@@ -204,11 +204,11 @@ type ModelDef struct {
 
 // OfferEntry declares that a provider offers a model defined in Models.
 type OfferEntry struct {
-	Model        string      // references models.<slug>
-	UpstreamName string      // optional, upstream model name (empty = same as slug)
-	Priority     int         // lower value = higher priority (0 is highest)
+	Model        string // references models.<slug>
+	UpstreamName string // optional, upstream model name (empty = same as slug)
+	Priority     int    // lower value = higher priority (0 is highest)
 	Pricing      ModelPricing
-	Overrides    *ModelDef   // optional provider-specific overrides
+	Overrides    *ModelDef // optional provider-specific overrides
 }
 
 type ResponseProxyConfig struct {

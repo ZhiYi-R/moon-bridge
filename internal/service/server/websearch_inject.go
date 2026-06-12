@@ -116,6 +116,12 @@ func (s *Server) executeChatSearchLoop(
 		}
 
 		msg := resp.Choices[0].Message
+		// Defensive: ensure message role is set. Upstream may return empty role
+		// in some error-recovery scenarios, which would break the alternating
+		// user/assistant/tool contract on subsequent rounds.
+		if msg.Role == "" {
+			msg.Role = "assistant"
+		}
 		if len(msg.ToolCalls) == 0 {
 			return resp, nil
 		}
@@ -136,6 +142,22 @@ func (s *Server) executeChatSearchLoop(
 			return resp, nil
 		}
 		if len(nonSearchCalls) > 0 {
+			// Execute search calls as side effect, return only non-search content.
+			var toolResultMsgs []chat.ChatMessage
+			for _, tc := range searchCalls {
+				result, execErr := executeChatSearchCall(ctx, tavily, firecrawl, tc)
+				if execErr != nil {
+					log.Warn("Chat搜索执行失败（混合调用）", "tool", tc.Function.Name, "error", execErr)
+					result = fmt.Sprintf("Search error: %s", execErr.Error())
+				}
+				toolResultMsgs = append(toolResultMsgs, chat.ChatMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Content:    result,
+				})
+			}
+			req.Messages = append(req.Messages, msg)
+			req.Messages = append(req.Messages, toolResultMsgs...)
 			return resp, nil
 		}
 
@@ -193,7 +215,7 @@ func executeChatSearchCall(
 		if err != nil {
 			return "", err
 		}
-		return formatTavilyResults(result), nil
+		return websearch.FormatTavilyResults(result), nil
 
 	case "firecrawl_fetch":
 		if firecrawl == nil {
@@ -216,7 +238,7 @@ func executeChatSearchCall(
 		if err != nil {
 			return "", err
 		}
-		return formatFirecrawlResult(result), nil
+		return websearch.FormatFirecrawlResult(result), nil
 
 	default:
 		return "", fmt.Errorf("unknown search tool: %s", tc.Function.Name)
@@ -299,12 +321,18 @@ func (s *Server) executeGoogleSearchLoop(
 		if err != nil {
 			return nil, err
 		}
-		if len(resp.Candidates) == 0 || len(resp.Candidates[0].Content.Parts) == 0 {
+		if len(resp.Candidates) == 0 {
 			return resp, nil
 		}
 
-		// Check for function call parts.
-		funcCalls := googleFuncCalls(resp.Candidates[0].Content.Parts)
+		// Collect function calls from ALL candidates, not just the first.
+		var funcCalls []google.FunctionCall
+		for _, c := range resp.Candidates {
+			if len(c.Content.Parts) == 0 {
+				continue
+			}
+			funcCalls = append(funcCalls, googleFuncCalls(c.Content.Parts)...)
+		}
 		if len(funcCalls) == 0 {
 			return resp, nil
 		}
@@ -314,6 +342,34 @@ func (s *Server) executeGoogleSearchLoop(
 			return resp, nil
 		}
 		if len(nonSearchCalls) > 0 {
+			// Execute search calls as side effect, feed results to the model.
+			responseParts := make([]google.Part, 0, len(searchCalls))
+			for _, fc := range searchCalls {
+				result, execErr := executeGoogleSearchCall(ctx, tavily, firecrawl, fc)
+				if execErr != nil {
+					log.Warn("Google搜索执行失败（混合调用）", "tool", fc.Name, "error", execErr)
+					result = execErr.Error()
+				}
+				respJSON, _ := json.Marshal(map[string]any{"result": result})
+				responseParts = append(responseParts, google.Part{
+					FunctionResponse: &google.FunctionResponse{
+						Name:     fc.Name,
+						Response: respJSON,
+					},
+				})
+			}
+			for _, c := range resp.Candidates {
+				if len(c.Content.Parts) > 0 {
+					req.Contents = append(req.Contents, google.Content{
+						Role:  "model",
+						Parts: c.Content.Parts,
+					})
+				}
+			}
+			req.Contents = append(req.Contents, google.Content{
+				Role:  "function",
+				Parts: responseParts,
+			})
 			return resp, nil
 		}
 
@@ -335,10 +391,14 @@ func (s *Server) executeGoogleSearchLoop(
 		}
 
 		// Append model response + function response for next round.
-		req.Contents = append(req.Contents, google.Content{
-			Role:  "model",
-			Parts: resp.Candidates[0].Content.Parts,
-		})
+		for _, c := range resp.Candidates {
+			if len(c.Content.Parts) > 0 {
+				req.Contents = append(req.Contents, google.Content{
+					Role:  "model",
+					Parts: c.Content.Parts,
+				})
+			}
+		}
 		req.Contents = append(req.Contents, google.Content{
 			Role:  "function",
 			Parts: responseParts,
@@ -405,7 +465,7 @@ func executeGoogleSearchCall(
 		if err != nil {
 			return "", err
 		}
-		return formatTavilyResults(result), nil
+		return websearch.FormatTavilyResults(result), nil
 
 	case "firecrawl_fetch":
 		if firecrawl == nil {
@@ -429,52 +489,14 @@ func executeGoogleSearchCall(
 		if err != nil {
 			return "", err
 		}
-		return formatFirecrawlResult(result), nil
+		return websearch.FormatFirecrawlResult(result), nil
 
 	default:
 		return "", fmt.Errorf("unknown search tool: %s", fc.Name)
 	}
 }
 
-// ============================================================================
-// Formatting helpers (duplicated from websearch package for encapsulation)
-// ============================================================================
-
-func formatTavilyResults(result *websearch.SearchResult) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Search results for %q:\n\n", result.Query))
-	if result.Answer != "" {
-		b.WriteString("Answer: ")
-		b.WriteString(truncate(result.Answer, 2000))
-		b.WriteString("\n\n")
-	}
-	for i, item := range result.Results {
-		if i >= 10 {
-			break
-		}
-		b.WriteString(fmt.Sprintf("%d. [%s](%s)\n", i+1, item.Title, item.URL))
-		b.WriteString(fmt.Sprintf("   Score: %.2f\n", item.Score))
-		b.WriteString(fmt.Sprintf("   %s\n\n", truncate(item.Content, 500)))
-	}
-	return b.String()
-}
-
-func formatFirecrawlResult(result *websearch.FetchResult) string {
-	var b strings.Builder
-	b.WriteString(fmt.Sprintf("Content from %s:\n\n", result.Data.Metadata.SourceURL))
-	if result.Data.Metadata.Title != "" {
-		b.WriteString(fmt.Sprintf("Title: %s\n\n", result.Data.Metadata.Title))
-	}
-	b.WriteString(truncate(result.Data.Markdown, 8000))
-	return b.String()
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "..."
-}
+// Formatting helpers — delegated to exported websearch package functions.
 
 // ============================================================================
 // Chat streaming search loop
@@ -537,6 +559,29 @@ func (s *Server) chatSearchBufferedStream(
 			break
 		}
 		if len(nonSearchCalls) > 0 {
+			// Execute search calls, feed results to next round.
+			var toolResultMsgs []chat.ChatMessage
+			for _, tc := range searchCalls {
+				result, execErr := executeChatSearchCall(ctx, tavily, firecrawl, tc)
+				if execErr != nil {
+					log.Warn("流式搜索执行失败（混合调用）", "tool", tc.Function.Name, "error", execErr)
+					result = fmt.Sprintf("Search error: %s", execErr.Error())
+				}
+				toolResultMsgs = append(toolResultMsgs, chat.ChatMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Content:    result,
+				})
+			}
+			asstContent := collectChatStreamContent(events)
+			reasoningContent := collectChatStreamReasoning(events)
+			req.Messages = append(req.Messages, chat.ChatMessage{
+				Role:             "assistant",
+				Content:          asstContent,
+				ToolCalls:        toolCalls,
+				ReasoningContent: reasoningContent,
+			})
+			req.Messages = append(req.Messages, toolResultMsgs...)
 			allEvents = append(allEvents, events...)
 			exhausted = false
 			break

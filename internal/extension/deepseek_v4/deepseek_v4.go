@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"strings"
 
-	"moonbridge/internal/protocol/openai"
-	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/anthropic"
+	"moonbridge/internal/protocol/openai"
 )
 
 // StripReasoningContent removes the reasoning_content field from message

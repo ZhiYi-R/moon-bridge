@@ -46,10 +46,10 @@ func (s *consumeState) store(fn ConsumeFunc) {
 // handlerAttrs / handlerGroups and merged into LogEntry.Attrs before
 // dispatching to the consume pipeline, so consumers see the full context.
 type consumeHandler struct {
-	inner        slog.Handler
-	consume      *consumeState
-	handlerAttrs []slog.Attr   // attrs from WithAttrs calls
-	handlerGroups []string     // groups from WithGroup calls
+	inner         slog.Handler
+	consume       *consumeState
+	handlerAttrs  []slog.Attr // attrs from WithAttrs calls
+	handlerGroups []string    // groups from WithGroup calls
 }
 
 // newConsumeHandler wraps the given handler with consume-function support.
@@ -129,9 +129,9 @@ func (h *consumeHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	copy(combined, h.handlerAttrs)
 	combined = append(combined, attrs...)
 	return &consumeHandler{
-		inner:        h.inner.WithAttrs(attrs),
-		consume:      h.consume,
-		handlerAttrs: combined,
+		inner:         h.inner.WithAttrs(attrs),
+		consume:       h.consume,
+		handlerAttrs:  combined,
 		handlerGroups: h.handlerGroups,
 	}
 }

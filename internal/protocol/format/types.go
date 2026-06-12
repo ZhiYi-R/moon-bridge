@@ -114,7 +114,7 @@ type CoreToolChoice struct {
 // nil = use provider defaults.
 type CoreThinkingConfig struct {
 	Type         string `json:"type,omitempty"`          // "enabled" | "disabled"
-	BudgetTokens int    `json:"budget_tokens,omitempty"`  // token budget for thinking
+	BudgetTokens int    `json:"budget_tokens,omitempty"` // token budget for thinking
 }
 
 // CoreOutputConfig controls output generation behavior.
@@ -135,8 +135,8 @@ type CoreCacheControl struct {
 
 // CoreRequest is the protocol-agnostic representation of an LLM request.
 type CoreRequest struct {
-	Model    string          `json:"model"`
-	Messages []CoreMessage   `json:"messages"`
+	Model    string             `json:"model"`
+	Messages []CoreMessage      `json:"messages"`
 	System   []CoreContentBlock `json:"system,omitempty"`
 
 	// Tools
@@ -167,7 +167,6 @@ type CoreRequest struct {
 	// ProviderAdapters for Gemini read this and map to Gemini's generationConfig.
 	// Zero value (nil) = not set — adapter uses provider defaults.
 	GenerationConfig map[string]any `json:"generation_config,omitempty"`
-
 
 	// Thinking controls extended thinking/reasoning behavior (e.g. Anthropic extended thinking).
 	// nil = use provider defaults.

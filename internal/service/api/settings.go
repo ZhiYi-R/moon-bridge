@@ -66,11 +66,11 @@ func (r *Router) handleGetWebSearch(w http.ResponseWriter, req *http.Request) {
 	cfg := r.runtime.Current()
 
 	resp := map[string]any{
-		"support":            string(cfg.Config.WebSearchSupport),
-		"max_uses":           cfg.Config.WebSearchMaxUses,
-		"tavily_api_key":     maskAPIKey(cfg.Config.TavilyAPIKey),
-		"firecrawl_api_key":  maskAPIKey(cfg.Config.FirecrawlAPIKey),
-		"search_max_rounds":  cfg.Config.SearchMaxRounds,
+		"support":           string(cfg.Config.WebSearchSupport),
+		"max_uses":          cfg.Config.WebSearchMaxUses,
+		"tavily_api_key":    maskAPIKey(cfg.Config.TavilyAPIKey),
+		"firecrawl_api_key": maskAPIKey(cfg.Config.FirecrawlAPIKey),
+		"search_max_rounds": cfg.Config.SearchMaxRounds,
 	}
 
 	respondJSON(w, http.StatusOK, resp)
@@ -103,11 +103,11 @@ func (r *Router) handlePutWebSearch(w http.ResponseWriter, req *http.Request) {
 	}
 
 	wsJSON, _ := json.Marshal(map[string]any{
-		"support":            body.Support,
-		"max_uses":           body.MaxUses,
-		"tavily_api_key":     tavilyKey,
-		"firecrawl_api_key":  firecrawlKey,
-		"search_max_rounds":  body.SearchMaxRounds,
+		"support":           body.Support,
+		"max_uses":          body.MaxUses,
+		"tavily_api_key":    tavilyKey,
+		"firecrawl_api_key": firecrawlKey,
+		"search_max_rounds": body.SearchMaxRounds,
 	})
 
 	chID, err := r.store.StageChange(store.ChangeRow{
@@ -304,10 +304,10 @@ func (r *Router) handlePostConfigImport(w http.ResponseWriter, req *http.Request
 
 	for slug, def := range cfg.Models {
 		meta := map[string]any{
-			"display_name":       def.DisplayName,
-			"description":        def.Description,
-			"context_window":     def.ContextWindow,
-			"max_output_tokens":  def.MaxOutputTokens,
+			"display_name":      def.DisplayName,
+			"description":       def.Description,
+			"context_window":    def.ContextWindow,
+			"max_output_tokens": def.MaxOutputTokens,
 		}
 		metaJSON, _ := json.Marshal(meta)
 		afterJSON, _ := json.Marshal(map[string]any{
@@ -381,11 +381,11 @@ func (r *Router) handlePostConfigImport(w http.ResponseWriter, req *http.Request
 	// Stage web_search if set.
 	if cfg.WebSearchSupport != "" || cfg.TavilyAPIKey != "" || cfg.FirecrawlAPIKey != "" {
 		wsJSON, _ := json.Marshal(map[string]any{
-			"support":            string(cfg.WebSearchSupport),
-			"max_uses":           cfg.WebSearchMaxUses,
-			"tavily_api_key":     cfg.TavilyAPIKey,
-			"firecrawl_api_key":  cfg.FirecrawlAPIKey,
-			"search_max_rounds":  cfg.SearchMaxRounds,
+			"support":           string(cfg.WebSearchSupport),
+			"max_uses":          cfg.WebSearchMaxUses,
+			"tavily_api_key":    cfg.TavilyAPIKey,
+			"firecrawl_api_key": cfg.FirecrawlAPIKey,
+			"search_max_rounds": cfg.SearchMaxRounds,
 		})
 		chID, err := r.store.StageChange(store.ChangeRow{
 			Action:    "update",

@@ -117,7 +117,7 @@ func TestE2EChatProvider(t *testing.T) {
 						Name:        "get_weather",
 						Description: "Get the current weather for a city",
 						Parameters: map[string]any{
-							"type":       "object",
+							"type": "object",
 							"properties": map[string]any{
 								"location": map[string]any{
 									"type":        "string",
@@ -130,7 +130,7 @@ func TestE2EChatProvider(t *testing.T) {
 				},
 			},
 			ToolChoice: []byte(`"auto"`),
-			MaxTokens: 200,
+			MaxTokens:  200,
 		}
 
 		resp, err := client.CreateChat(context.Background(), req)

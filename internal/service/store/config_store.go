@@ -80,16 +80,16 @@ type ModelRow struct {
 
 // RouteRow represents a row in the config_store_routes table.
 type RouteRow struct {
-	Alias            string
-	ModelSlug        string
-	ProviderKey      string
-	DisplayName      string
-	ContextWindow    int
-	MaxOutputTokens  int
-	Extensions       string // JSON-serialized map[string]config.ExtensionFileConfig
-	WebSearch        string // JSON-serialized config.WebSearchFileConfig
-	CreatedAt        string
-	UpdatedAt        string
+	Alias           string
+	ModelSlug       string
+	ProviderKey     string
+	DisplayName     string
+	ContextWindow   int
+	MaxOutputTokens int
+	Extensions      string // JSON-serialized map[string]config.ExtensionFileConfig
+	WebSearch       string // JSON-serialized config.WebSearchFileConfig
+	CreatedAt       string
+	UpdatedAt       string
 }
 
 // SettingRow represents a row in the config_store_settings table.
@@ -100,16 +100,16 @@ type SettingRow struct {
 
 // ChangeRow represents a row in the config_store_changes table.
 type ChangeRow struct {
-	ID         int64
-	BatchID    string
-	Action     string // "create", "update", "delete"
-	Resource   string // "provider", "offer", "model", "route", "setting"
-	TargetKey  string
-	Before     string // JSON-serialized "before" state (empty for create)
-	After      string // JSON-serialized "after" state (empty for delete)
-	Applied    bool
-	Error      string
-	Revision   int
-	CreatedAt  string
-	AppliedAt  string
+	ID        int64
+	BatchID   string
+	Action    string // "create", "update", "delete"
+	Resource  string // "provider", "offer", "model", "route", "setting"
+	TargetKey string
+	Before    string // JSON-serialized "before" state (empty for create)
+	After     string // JSON-serialized "after" state (empty for delete)
+	Applied   bool
+	Error     string
+	Revision  int
+	CreatedAt string
+	AppliedAt string
 }

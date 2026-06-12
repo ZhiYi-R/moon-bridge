@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/format"
 	pluginpkg "moonbridge/internal/extension/plugin"
-	"moonbridge/internal/protocol/openai"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/anthropic"
+	"moonbridge/internal/protocol/openai"
 )
 
 func TestStripReasoningContentStripsField(t *testing.T) {
@@ -144,8 +144,8 @@ func TestPrependThinkingWarnsWhenUsingRequiredFallback(t *testing.T) {
 
 	logs.Reset()
 	summary := []openai.ReasoningItemSummary{{
-			Type: "summary_text",
-			Text: EncodeThinkingSummary(format.CoreContentBlock{Type: "reasoning", ReasoningSignature: "sig_summary"}),
+		Type: "summary_text",
+		Text: EncodeThinkingSummary(format.CoreContentBlock{Type: "reasoning", ReasoningSignature: "sig_summary"}),
 	}}
 	got = p.PrependThinkingForToolUse([]format.CoreMessage{{
 		Role:    "assistant",

@@ -2,10 +2,10 @@ package websearchinjected
 
 import (
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/service/provider"
 	"moonbridge/internal/extension/websearch"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/anthropic"
+	"moonbridge/internal/service/provider"
 )
 
 const PluginName = "web_search_injected"

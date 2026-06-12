@@ -11,15 +11,23 @@ import (
 
 type mockClient struct{ protocol string }
 
-func (m *mockClient) ClientProtocol() string                                          { return m.protocol }
-func (m *mockClient) ToCoreRequest(_ context.Context, _ any) (*CoreRequest, error)     { return &CoreRequest{}, nil }
-func (m *mockClient) FromCoreResponse(_ context.Context, _ *CoreResponse) (any, error) { return nil, nil }
+func (m *mockClient) ClientProtocol() string { return m.protocol }
+func (m *mockClient) ToCoreRequest(_ context.Context, _ any) (*CoreRequest, error) {
+	return &CoreRequest{}, nil
+}
+func (m *mockClient) FromCoreResponse(_ context.Context, _ *CoreResponse) (any, error) {
+	return nil, nil
+}
 
 type mockProvider struct{ protocol string }
 
-func (m *mockProvider) ProviderProtocol() string                                           { return m.protocol }
-func (m *mockProvider) FromCoreRequest(_ context.Context, _ *CoreRequest) (any, error)     { return nil, nil }
-func (m *mockProvider) ToCoreResponse(_ context.Context, _ any) (*CoreResponse, error)    { return &CoreResponse{}, nil }
+func (m *mockProvider) ProviderProtocol() string { return m.protocol }
+func (m *mockProvider) FromCoreRequest(_ context.Context, _ *CoreRequest) (any, error) {
+	return nil, nil
+}
+func (m *mockProvider) ToCoreResponse(_ context.Context, _ any) (*CoreResponse, error) {
+	return &CoreResponse{}, nil
+}
 
 type mockClientStream struct{ protocol string }
 

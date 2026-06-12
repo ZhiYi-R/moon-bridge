@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"moonbridge/internal/config"
-	"moonbridge/internal/protocol/cache"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/cache"
 	"moonbridge/internal/protocol/openai"
 )
 
@@ -100,7 +100,7 @@ func (m *adapterCacheManager) UpdateRegistry(ctx context.Context, key, ttl strin
 func PlanCache(cfg cache.PlanCacheConfig, registry *cache.MemoryRegistry, request openai.ResponsesRequest, converted MessageRequest) (cache.CacheCreationPlan, error) {
 	if request.PromptCacheRetention == "24h" && !cfg.AllowRetentionDowngrade {
 		return cache.CacheCreationPlan{}, &cachePlanError{
-			Status: 400,
+			Status:  400,
 			Message: "prompt_cache_retention 24h is not supported by Anthropic prompt caching",
 			Param:   "prompt_cache_retention",
 			Code:    "unsupported_parameter",

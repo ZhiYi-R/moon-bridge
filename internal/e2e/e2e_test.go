@@ -3,19 +3,19 @@
 package e2e_test
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net/http"
 	"os"
-	"bufio"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"moonbridge/internal/config"
+	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/chat"
-	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/google"
 	"moonbridge/internal/protocol/openai"
 )
@@ -187,7 +187,6 @@ func assertResponseBasics(t testing.TB, oaiResp *openai.Response, wantModel stri
 	}
 }
 
-
 func loadDotEnv(t testing.TB) {
 	if t != nil {
 		t.Helper()
@@ -203,10 +202,10 @@ func loadDotEnv(t testing.TB) {
 			f, err := os.Open(path)
 			if err != nil {
 				if t != nil {
-				t.Logf("warning: cannot open %s: %v", path, err)
-			} else {
-				println("warning: cannot open", path, err.Error())
-			}
+					t.Logf("warning: cannot open %s: %v", path, err)
+				} else {
+					println("warning: cannot open", path, err.Error())
+				}
 				return
 			}
 			defer f.Close()

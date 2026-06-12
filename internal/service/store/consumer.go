@@ -12,7 +12,7 @@ import (
 type ConfigStoreConsumer struct {
 	store               db.Store
 	persistenceDisabled bool
-	extensionSpecs       []config.ExtensionConfigSpec
+	extensionSpecs      []config.ExtensionConfigSpec
 	logger              *slog.Logger
 	configStore         ConfigStore
 }
@@ -152,5 +152,5 @@ func (c *ConfigStoreConsumer) Store() ConfigStore {
 
 // compile-time interface checks.
 var (
-	_ db.Consumer  = (*ConfigStoreConsumer)(nil)
+	_ db.Consumer = (*ConfigStoreConsumer)(nil)
 )

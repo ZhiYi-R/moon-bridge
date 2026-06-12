@@ -26,7 +26,7 @@ func NewFirecrawlClient(apiKey string) *FirecrawlClient {
 	}
 }
 
-// Fetch scrapes a URL and returns its content as markdown.
+// Fetch scrapes a URL and returns its content as markdown with retry on transient errors.
 func (c *FirecrawlClient) Fetch(ctx context.Context, req FetchRequest) (*FetchResult, error) {
 	if len(req.Formats) == 0 {
 		req.Formats = []string{"markdown"}
@@ -40,36 +40,54 @@ func (c *FirecrawlClient) Fetch(ctx context.Context, req FetchRequest) (*FetchRe
 		return nil, fmt.Errorf("marshal fetch request: %w", err)
 	}
 
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, firecrawlBaseURL+"/v1/scrape", bytes.NewReader(body))
-	if err != nil {
-		return nil, fmt.Errorf("create fetch request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
+	var lastErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(time.Duration(1<<attempt) * time.Second):
+			}
+		}
 
-	resp, err := c.httpClient.Do(httpReq)
-	if err != nil {
-		return nil, fmt.Errorf("fetch request failed: %w", err)
-	}
-	defer resp.Body.Close()
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, firecrawlBaseURL+"/v1/scrape", bytes.NewReader(body))
+		if err != nil {
+			return nil, fmt.Errorf("create fetch request: %w", err)
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Authorization", "Bearer "+c.apiKey)
 
-	respBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read fetch response: %w", err)
-	}
+		resp, err := c.httpClient.Do(httpReq)
+		if err != nil {
+			lastErr = fmt.Errorf("fetch request failed: %w", err)
+			continue
+		}
+		respBody, readErr := io.ReadAll(resp.Body)
+		resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, &SearchError{
+		if readErr != nil {
+			lastErr = fmt.Errorf("read fetch response: %w", readErr)
+			continue
+		}
+
+		if resp.StatusCode == http.StatusOK {
+			var result FetchResult
+			if err := json.Unmarshal(respBody, &result); err != nil {
+				return nil, fmt.Errorf("unmarshal fetch response: %w", err)
+			}
+			return &result, nil
+		}
+
+		lastErr = &SearchError{
 			StatusCode: resp.StatusCode,
 			Message:    fmt.Sprintf("Firecrawl API error %d: %s", resp.StatusCode, string(respBody)),
 		}
+		// Retry on 429 (rate limited) or 5xx (server error)
+		if resp.StatusCode != http.StatusTooManyRequests && (resp.StatusCode < 500 || resp.StatusCode >= 600) {
+			return nil, lastErr
+		}
 	}
-
-	var result FetchResult
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return nil, fmt.Errorf("unmarshal fetch response: %w", err)
-	}
-	return &result, nil
+	return nil, fmt.Errorf("firecrawl fetch failed after 3 attempts: %w", lastErr)
 }
 
 // Enabled returns whether the Firecrawl client is configured with a valid API key.

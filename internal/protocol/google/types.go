@@ -10,12 +10,12 @@ import "encoding/json"
 // GenerateContentRequest maps to Gemini's generateContent request body.
 // https://ai.google.dev/api/generate-content
 type GenerateContentRequest struct {
-	Contents         []Content            `json:"contents"`
-	SystemInstruction *Content            `json:"systemInstruction,omitempty"`
-	SafetySettings   []SafetySetting      `json:"safetySettings,omitempty"`
-	GenerationConfig *GenerationConfig    `json:"generationConfig,omitempty"`
-	Tools            []Tool               `json:"tools,omitempty"`
-	ToolConfig       json.RawMessage      `json:"toolConfig,omitempty"`
+	Contents          []Content         `json:"contents"`
+	SystemInstruction *Content          `json:"systemInstruction,omitempty"`
+	SafetySettings    []SafetySetting   `json:"safetySettings,omitempty"`
+	GenerationConfig  *GenerationConfig `json:"generationConfig,omitempty"`
+	Tools             []Tool            `json:"tools,omitempty"`
+	ToolConfig        json.RawMessage   `json:"toolConfig,omitempty"`
 	// CachedContent references a CachedContent resource for prompt caching.
 	// When set, system_instruction, tools, and tool_config must not be set
 	// (Gemini API constraint — they become part of the cached content).
@@ -31,11 +31,11 @@ type Content struct {
 
 // Part represents a single part within Content.
 type Part struct {
-	Text             string             `json:"text,omitempty"`
-	InlineData       *Blob              `json:"inlineData,omitempty"`
-	FileData         *FileData          `json:"fileData,omitempty"`
-	FunctionCall     *FunctionCall      `json:"functionCall,omitempty"`
-	FunctionResponse *FunctionResponse  `json:"functionResponse,omitempty"`
+	Text             string            `json:"text,omitempty"`
+	InlineData       *Blob             `json:"inlineData,omitempty"`
+	FileData         *FileData         `json:"fileData,omitempty"`
+	FunctionCall     *FunctionCall     `json:"functionCall,omitempty"`
+	FunctionResponse *FunctionResponse `json:"functionResponse,omitempty"`
 }
 
 // Blob represents inline binary data.
@@ -106,10 +106,10 @@ type GenerateContentResponse struct {
 
 // Candidate represents a single response candidate.
 type Candidate struct {
-	Index         int             `json:"index"`
-	Content       Content         `json:"content"`
-	FinishReason  string          `json:"finishReason"` // STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER
-	SafetyRatings []SafetyRating  `json:"safetyRatings,omitempty"`
+	Index         int            `json:"index"`
+	Content       Content        `json:"content"`
+	FinishReason  string         `json:"finishReason"` // STOP, MAX_TOKENS, SAFETY, RECITATION, OTHER
+	SafetyRatings []SafetyRating `json:"safetyRatings,omitempty"`
 }
 
 // SafetyRating represents a safety rating for a category.

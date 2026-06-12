@@ -359,7 +359,6 @@ func (a *OpenAIAdapter) StreamBuffer() []StreamEvent {
 	return nil
 }
 
-
 // openaiStreamResult wraps the OpenAI stream channel with per-stream buffer access.
 type OpenAIStreamResult struct {
 	ch  <-chan StreamEvent
@@ -382,14 +381,14 @@ func (r *OpenAIStreamResult) Buffer() []any {
 // streamLoop is the goroutine body for FromCoreStream.
 // nestedBufferState tracks two-level buffering for nested namespace tool calls.
 type nestedBufferState struct {
-	toolUseID      string
-	toolName       string                // original namespace-expanded name
-	actionName     string                // extracted sub-tool action name
-	namespace      string                // item namespace
-	outputIndex    int                   // index in response.Output
-	emitted        bool                  // whether output_item.added has been sent
-	buf            strings.Builder       // accumulated raw JSON arguments
-	sequence       func() int64          // event sequencer (captures next func)
+	toolUseID   string
+	toolName    string          // original namespace-expanded name
+	actionName  string          // extracted sub-tool action name
+	namespace   string          // item namespace
+	outputIndex int             // index in response.Output
+	emitted     bool            // whether output_item.added has been sent
+	buf         strings.Builder // accumulated raw JSON arguments
+	sequence    func() int64    // event sequencer (captures next func)
 }
 
 func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.CoreRequest, events <-chan format.CoreStreamEvent, out chan<- StreamEvent, buf *[]StreamEvent, bufMu *sync.Mutex) {

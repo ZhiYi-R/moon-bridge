@@ -230,4 +230,3 @@ func buildToolConversation(rounds int) []format.CoreMessage {
 	}
 	return msgs
 }
-

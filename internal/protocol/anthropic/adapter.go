@@ -63,10 +63,10 @@ type cacheKeyEntry struct {
 // if caching is not needed.
 func NewAnthropicProviderAdapter(cfgMaxTokens int, cacheMgr CacheManager, hooks format.CorePluginHooks) *AnthropicProviderAdapter {
 	return &AnthropicProviderAdapter{
-		cfgMaxTokens:   cfgMaxTokens,
-		cacheMgr:       cacheMgr,
-		hooks:          hooks.WithDefaults(),
-		cacheKeyStore:  make(map[string]cacheKeyEntry),
+		cfgMaxTokens:  cfgMaxTokens,
+		cacheMgr:      cacheMgr,
+		hooks:         hooks.WithDefaults(),
+		cacheKeyStore: make(map[string]cacheKeyEntry),
 	}
 }
 
@@ -122,7 +122,6 @@ func (a *AnthropicProviderAdapter) anthropicToCoreRequest(req *MessageRequest) *
 			Content: a.fromContentBlocks(msg.Content),
 		})
 	}
-
 
 	// Tools
 	if len(req.Tools) > 0 {

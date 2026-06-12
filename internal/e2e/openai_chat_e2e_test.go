@@ -12,8 +12,8 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/protocol/chat"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/chat"
 	"moonbridge/internal/protocol/openai"
 )
 
@@ -71,8 +71,8 @@ func TestOpenAIChatE2E_TextRoundTrip(t *testing.T) {
 
 	// Step 1: Build OpenAI Responses request.
 	openAIReq := openai.ResponsesRequest{
-		Model:          "gpt-4o",
-		Input:          json.RawMessage(`"Hello"`),
+		Model:           "gpt-4o",
+		Input:           json.RawMessage(`"Hello"`),
 		MaxOutputTokens: 100,
 	}
 
@@ -395,10 +395,10 @@ func TestOpenAIChatE2E_Streaming(t *testing.T) {
 
 	// Step 1: Build streaming OpenAI request.
 	openAIReq := openai.ResponsesRequest{
-		Model:          "gpt-4o",
-		Input:          json.RawMessage(`"Hello streaming"`),
+		Model:           "gpt-4o",
+		Input:           json.RawMessage(`"Hello streaming"`),
 		MaxOutputTokens: 100,
-		Stream:         true,
+		Stream:          true,
 	}
 
 	// Step 2: ClientAdapter.ToCoreRequest.
@@ -546,8 +546,8 @@ func TestOpenAIChatE2E_ErrorResponse(t *testing.T) {
 	defer mockSrv.Close()
 
 	openAIReq := openai.ResponsesRequest{
-		Model:          "gpt-4o",
-		Input:          json.RawMessage(`"Hello"`),
+		Model:           "gpt-4o",
+		Input:           json.RawMessage(`"Hello"`),
 		MaxOutputTokens: 100,
 	}
 

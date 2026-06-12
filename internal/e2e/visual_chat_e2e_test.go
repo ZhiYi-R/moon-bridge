@@ -36,9 +36,9 @@ func TestVisualOnOpenAIChat_OrchestratesBriefAcrossTwoMocks(t *testing.T) {
 	ctx := context.Background()
 
 	type observed struct {
-		mu      sync.Mutex
-		bodies  [][]byte
-		rounds  int
+		mu     sync.Mutex
+		bodies [][]byte
+		rounds int
 	}
 	upstreamObs := &observed{}
 	visualObs := &observed{}

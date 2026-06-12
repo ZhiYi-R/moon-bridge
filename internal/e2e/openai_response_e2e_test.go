@@ -311,8 +311,8 @@ func TestOpenAIResponsePassthroughE2E_Streaming(t *testing.T) {
 
 	// content_block.started (text type)
 	events <- format.CoreStreamEvent{
-		Type:   format.CoreContentBlockStarted,
-		Index:  0,
+		Type:         format.CoreContentBlockStarted,
+		Index:        0,
 		ContentBlock: &format.CoreContentBlock{Type: "text"},
 	}
 	// text delta

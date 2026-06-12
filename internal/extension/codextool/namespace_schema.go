@@ -89,7 +89,7 @@ func buildNestedOneOf(toolNames []string, toolMap map[string]format.CoreTool, na
 	}
 
 	mergedSchema := map[string]any{
-		"type": "object",
+		"type":  "object",
 		"oneOf": oneOf,
 	}
 
@@ -175,10 +175,12 @@ func buildFlat(toolNames []string, toolMap map[string]format.CoreTool, namespace
 // or anyOf schema format.
 //
 // For oneOf format: {"action": "read_file", "path": "/foo", ...}
-//   → action = "read_file", params = {"path": "/foo", ...}
+//
+//	→ action = "read_file", params = {"path": "/foo", ...}
 //
 // For anyOf format: {"action": "read_file", "params": {"path": "/foo"}}
-//   → action = "read_file", params = {"path": "/foo"}
+//
+//	→ action = "read_file", params = {"path": "/foo"}
 func DecodeNestedCall(input json.RawMessage, schemaKind ToolKind) (action string, params json.RawMessage, err error) {
 	if len(input) == 0 || string(input) == "null" {
 		return "", nil, fmt.Errorf("empty input")

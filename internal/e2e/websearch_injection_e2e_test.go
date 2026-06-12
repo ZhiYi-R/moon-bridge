@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/openai"
 )
 
@@ -109,8 +109,8 @@ func TestWebSearchE2E_InjectionEnabled(t *testing.T) {
 
 	// Step 1: Build an OpenAI ResponsesRequest WITHOUT web_search in tools.
 	openAIReq := openai.ResponsesRequest{
-		Model:          "claude-3.5-sonnet",
-		Input:          json.RawMessage(`"Search for latest AI breakthroughs"`),
+		Model:           "claude-3.5-sonnet",
+		Input:           json.RawMessage(`"Search for latest AI breakthroughs"`),
 		MaxOutputTokens: 100,
 	}
 
@@ -253,8 +253,8 @@ func TestWebSearchE2E_InjectionDisabled(t *testing.T) {
 
 	// Step 1: Build OpenAI request without web_search.
 	openAIReq := openai.ResponsesRequest{
-		Model:          "claude-3.5-sonnet",
-		Input:          json.RawMessage(`"Hello"`),
+		Model:           "claude-3.5-sonnet",
+		Input:           json.RawMessage(`"Hello"`),
 		MaxOutputTokens: 100,
 	}
 
@@ -367,7 +367,7 @@ func TestWebSearchE2E_AlreadyPresentNotOverwritten(t *testing.T) {
 				Name:        "get_weather",
 				Description: "Get the current weather for a city",
 				Parameters: map[string]any{
-					"type":     "object",
+					"type": "object",
 					"properties": map[string]any{
 						"city": map[string]any{"type": "string"},
 					},

@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"moonbridge/internal/config"
 	dbsqlite "moonbridge/internal/extension/db/sqlite"
 	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/config"
 )
 
 func TestName(t *testing.T) {

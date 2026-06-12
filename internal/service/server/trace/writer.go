@@ -24,8 +24,8 @@ type Writer interface {
 
 // FileWriter implements Writer by delegating to a *mbtrace.Tracer.
 type FileWriter struct {
-	tracer      *mbtrace.Tracer
-	errors      io.Writer
+	tracer *mbtrace.Tracer
+	errors io.Writer
 }
 
 // NewFileWriter creates a new FileWriter.

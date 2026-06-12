@@ -118,7 +118,7 @@ type CoreToolChoice struct {
 // nil = use provider defaults.
 type CoreThinkingConfig struct {
 	Type         string `json:"type,omitempty"`          // "enabled" | "disabled"
-	BudgetTokens int    `json:"budget_tokens,omitempty"`  // token budget for thinking
+	BudgetTokens int    `json:"budget_tokens,omitempty"` // token budget for thinking
 }
 
 // CoreOutputConfig controls output generation behavior.
@@ -139,8 +139,8 @@ type CoreCacheControl struct {
 
 // CoreRequest is the protocol-agnostic representation of an LLM request.
 type CoreRequest struct {
-	Model    string          `json:"model"`
-	Messages []CoreMessage   `json:"messages"`
+	Model    string             `json:"model"`
+	Messages []CoreMessage      `json:"messages"`
 	System   []CoreContentBlock `json:"system,omitempty"`
 
 	// Tools
@@ -171,7 +171,6 @@ type CoreRequest struct {
 	// ProviderAdapters for Gemini read this and map to Gemini's generationConfig.
 	// Zero value (nil) = not set — adapter uses provider defaults.
 	GenerationConfig map[string]any `json:"generation_config,omitempty"`
-
 
 	// Thinking controls extended thinking/reasoning behavior (e.g. Anthropic extended thinking).
 	// nil = use provider defaults.
@@ -304,7 +303,6 @@ type CoreStreamEvent struct {
 	Extensions map[string]any `json:"extensions,omitempty"`
 }
 
-
 // StripImageData scans string content for base64-encoded image data (data:image URLs
 // and raw PNG/JPEG base64 blobs) and replaces them with short placeholders.
 // This prevents large image payloads from wasting tokens when sent to text-only models
@@ -329,7 +327,7 @@ func StripImageData(s string) string {
 				for end < len(s) && (isBase64Char(s[end]) || s[end] == '=') {
 					end++
 				}
-				if end > dataStart + 500 {
+				if end > dataStart+500 {
 					imgType := s[start+len(marker) : start+commaIdx]
 					result.WriteString(fmt.Sprintf("[Image data: %s, %d bytes]", imgType, end-dataStart))
 					pos = end
@@ -352,7 +350,7 @@ func StripImageData(s string) string {
 			for end < len(s) && (isBase64Char(s[end]) || s[end] == '=') {
 				end++
 			}
-			if end > start + 500 {
+			if end > start+500 {
 				result.WriteString(fmt.Sprintf("[Image data: png, %d bytes]", end-start))
 				pos = end
 				continue
@@ -370,7 +368,7 @@ func StripImageData(s string) string {
 			for end < len(s) && (isBase64Char(s[end]) || s[end] == '=') {
 				end++
 			}
-			if end > start + 500 {
+			if end > start+500 {
 				result.WriteString(fmt.Sprintf("[Image data: jpeg, %d bytes]", end-start))
 				pos = end
 				continue

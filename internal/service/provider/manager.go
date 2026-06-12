@@ -453,10 +453,10 @@ func newHTTPClient(cfg HTTPConfig) *http.Client {
 
 	return &http.Client{
 		Transport: &http.Transport{
-			MaxIdleConns:        100,
-			MaxIdleConnsPerHost: maxIdle,
-			IdleConnTimeout:     idleTimeout,
-			DisableCompression:  false,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   maxIdle,
+			IdleConnTimeout:       idleTimeout,
+			DisableCompression:    false,
 			ResponseHeaderTimeout: 30 * time.Second,
 		},
 	}

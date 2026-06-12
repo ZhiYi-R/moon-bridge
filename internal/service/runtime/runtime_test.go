@@ -188,7 +188,7 @@ func TestReloadWithInvalidConfigReturnsError(t *testing.T) {
 
 	// Reload with invalid mode (empty mode fails validation).
 	invalidCfg := config.Config{
-		Mode: config.Mode(""),
+		Mode:  config.Mode(""),
 		Cache: config.CacheConfig{Mode: "off"},
 	}
 

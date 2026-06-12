@@ -98,13 +98,13 @@ func (r *Router) handleGetModel(w http.ResponseWriter, req *http.Request) {
 	}
 
 	resp := map[string]any{
-		"slug":               slug,
-		"display_name":       def.DisplayName,
-		"description":        def.Description,
-		"context_window":     def.ContextWindow,
-		"max_output_tokens":  def.MaxOutputTokens,
-		"input_modalities":   def.InputModalities,
-		"providers":          providers,
+		"slug":              slug,
+		"display_name":      def.DisplayName,
+		"description":       def.Description,
+		"context_window":    def.ContextWindow,
+		"max_output_tokens": def.MaxOutputTokens,
+		"input_modalities":  def.InputModalities,
+		"providers":         providers,
 	}
 
 	respondJSON(w, http.StatusOK, resp)
@@ -132,10 +132,10 @@ func (r *Router) handlePutModel(w http.ResponseWriter, req *http.Request) {
 
 	// Build metadata JSON.
 	meta := map[string]any{
-		"display_name":       body.DisplayName,
-		"description":        body.Description,
-		"context_window":     body.ContextWindow,
-		"max_output_tokens":  body.MaxOutputTokens,
+		"display_name":      body.DisplayName,
+		"description":       body.Description,
+		"context_window":    body.ContextWindow,
+		"max_output_tokens": body.MaxOutputTokens,
 	}
 	metaJSON, _ := json.Marshal(meta)
 
