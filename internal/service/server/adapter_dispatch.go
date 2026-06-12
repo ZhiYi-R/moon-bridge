@@ -518,6 +518,29 @@ func (s *Server) handleWithAdapters(
 		}
 
 		record.UpstreamRequest = googleReq
+		// Wrap with visual orchestrator if enabled for this model.
+		googlePreferred := preferred
+		googlePreferred.Client = &googleProviderClient{c: googleClient, model: googlePreferred.UpstreamModel}
+		if visProv := s.wrapWithVisual(ctx, openAIReq.Model, googlePreferred, providerAdapter, nil); visProv != nil {
+			var visErr error
+			coreResp, visErr = visProv.CreateCore(ctx, coreReq)
+			if visErr != nil {
+				log.Error("adapter path: google visual CreateCore failed", "error", visErr)
+				payload := openai.ErrorResponse{
+					Error: openai.ErrorObject{
+						Message: fmt.Sprintf("google visual orchestration failed: %v", visErr),
+						Type:    "server_error",
+						Code:    "provider_error",
+					},
+				}
+				record.Error = traceError("google_visual_core", visErr)
+				record.OpenAIResponse = payload
+				writeOpenAIError(w, http.StatusBadGateway, payload)
+				return
+			}
+			break
+		}
+
 		var googleResp *google.GenerateContentResponse
 		if wsInjected {
 			googleResp, err = s.executeGoogleSearchLoop(ctx, googleClient, preferred.UpstreamModel, googleReq, searchCfg.tavilyKey, searchCfg.firecrawlKey, searchCfg.maxRounds)
@@ -1131,6 +1154,52 @@ func (s *Server) handleAdapterStream(
 		streamRecord.ChatRequest = chatReq
 		var chatStream <-chan chat.ChatStreamChunk
 		var err error
+
+		providerAdapter, ok := s.adapterRegistry.GetProvider(config.ProtocolOpenAIChat)
+		if !ok {
+			log.Warn("adapter stream: no chat provider adapter for visual path")
+		}
+
+		// Visual orchestrator for streaming path: non-streaming orchestration
+		// → synthetic stream events, matching the anthropic streaming pattern.
+		if s.pluginRegistry != nil && s.runtime != nil && openAIReq.Model != "" && ok && providerAdapter != nil {
+			cfgV := s.runtime.Current().Config
+			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, openAIReq.Model)
+			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
+				finalizeUpstream := func(_ context.Context, upstream any) (any, error) {
+					req, ok := upstream.(*chat.ChatRequest)
+					if !ok {
+						return nil, fmt.Errorf("chat visual finalize: expected *chat.ChatRequest, got %T", upstream)
+					}
+					if s.pluginRegistry != nil && sess != nil {
+						prependCachedReasoningForChat(req, sess)
+					}
+					return req, nil
+				}
+				visCandidate := candidate
+				visCandidate.Client = &chatProviderClient{c: chatClient}
+				if visProv := s.wrapWithVisual(ctx, openAIReq.Model, visCandidate, providerAdapter, finalizeUpstream); visProv != nil {
+					coreResp, visErr := visProv.CreateCore(ctx, coreReq)
+					if visErr != nil {
+						log.Error("adapter stream: chat visual CreateCore failed", "error", visErr)
+						payload := openai.ErrorResponse{
+							Error: openai.ErrorObject{
+								Message: fmt.Sprintf("chat visual orchestration failed: %v", visErr),
+								Type:    "server_error",
+								Code:    "provider_error",
+							},
+						}
+						streamRecord.Error = traceError("stream_chat_visual", visErr)
+						streamRecord.OpenAIResponse = payload
+						writeOpenAIError(w, http.StatusBadGateway, payload)
+						return
+					}
+					coreEvents = coreResponseToCoreStream(ctx, coreResp)
+					break
+				}
+			}
+		}
+
 		if wsInjected {
 			searchCfg := s.resolvedSearchConfig(candidate.ProviderKey, openAIReq.Model)
 			chatStream, err = s.chatSearchBufferedStream(ctx, chatClient, chatReq, searchCfg.tavilyKey, searchCfg.firecrawlKey, searchCfg.maxRounds)
@@ -1236,6 +1305,38 @@ func (s *Server) handleAdapterStream(
 		}
 
 		streamRecord.UpstreamRequest = googleReq
+
+		// Visual orchestrator for streaming path: non-streaming orchestration
+		// → synthetic stream events, matching the anthropic/chat streaming pattern.
+		providerAdapter, ok := s.adapterRegistry.GetProvider(config.ProtocolGoogleGenAI)
+		if ok && providerAdapter != nil && s.runtime != nil && openAIReq.Model != "" {
+			cfgV := s.runtime.Current().Config
+			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, openAIReq.Model)
+			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
+				visCandidate := candidate
+				visCandidate.Client = &googleProviderClient{c: googleClient, model: candidate.UpstreamModel}
+				if visProv := s.wrapWithVisual(ctx, openAIReq.Model, visCandidate, providerAdapter, nil); visProv != nil {
+					coreResp, visErr := visProv.CreateCore(ctx, coreReq)
+					if visErr != nil {
+						log.Error("adapter stream: google visual CreateCore failed", "error", visErr)
+						payload := openai.ErrorResponse{
+							Error: openai.ErrorObject{
+								Message: fmt.Sprintf("google visual orchestration failed: %v", visErr),
+								Type:    "server_error",
+								Code:    "provider_error",
+							},
+						}
+						streamRecord.Error = traceError("stream_google_visual", visErr)
+						streamRecord.OpenAIResponse = payload
+						writeOpenAIError(w, http.StatusBadGateway, payload)
+						return
+					}
+					coreEvents = coreResponseToCoreStream(ctx, coreResp)
+					break
+				}
+			}
+		}
+
 		if wsInjected {
 			searchCfg := s.resolvedSearchConfig(candidate.ProviderKey, openAIReq.Model)
 			googleResp, err := s.executeGoogleSearchLoop(ctx, googleClient, candidate.UpstreamModel, googleReq, searchCfg.tavilyKey, searchCfg.firecrawlKey, searchCfg.maxRounds)
@@ -2156,6 +2257,22 @@ func (s *Server) wrapWithVisual(
 			return nil
 		}
 		visClient = &chatProviderClient{c: chatClient}
+	case config.ProtocolGoogleGenAI:
+		gcRaw := s.activeGoogleClient(visCfg.Provider)
+		if gcRaw == nil {
+			slog.Default().Warn("visual: no google client for visual provider", "visual_provider", visCfg.Provider, "model", modelAlias)
+			return nil
+		}
+		gc, ok := gcRaw.(*google.Client)
+		if !ok || gc == nil {
+			slog.Default().Warn("visual: google client type mismatch", "visual_provider", visCfg.Provider)
+			return nil
+		}
+		visModel := pm.FirstUpstreamModelForKey(visCfg.Provider)
+		if visModel == "" {
+			visModel = visCfg.Model
+		}
+		visClient = &googleProviderClient{c: gc, model: visModel}
 	default:
 		c, err := pm.ClientForKey(visCfg.Provider)
 		if err != nil || c == nil {
@@ -2176,6 +2293,29 @@ func (s *Server) wrapWithVisual(
 // pm.ClientForKey only constructs anthropic-shaped clients; chat-protocol
 // providers keep their dedicated *chat.Client in s.chatClients. This adapter
 // bridges the two when visual orchestration needs to call into a chat upstream.
+// googleProviderClient adapts *google.Client to provider.ProviderClient so the
+// adapter-based CoreProvider machinery can drive a google-genai protocol
+// upstream uniformly across protocols. Google's GenerateContent requires
+// a model parameter in the call signature (unlike anthropic/chat), so we
+// capture the model name at construction time.
+type googleProviderClient struct {
+	c     *google.Client
+	model string
+}
+
+func (p *googleProviderClient) CreateMessage(ctx context.Context, req any) (any, error) {
+	googleReq, ok := req.(*google.GenerateContentRequest)
+	if !ok {
+		return nil, fmt.Errorf("googleProviderClient: expected *google.GenerateContentRequest, got %T", req)
+	}
+	return p.c.GenerateContent(ctx, p.model, googleReq)
+}
+
+func (p *googleProviderClient) StreamMessage(ctx context.Context, req any) (<-chan any, error) {
+	// Not used by visual orchestrator (uses CreateCore non-streaming path).
+	return nil, fmt.Errorf("googleProviderClient: streaming not supported via ProviderClient interface")
+}
+
 type chatProviderClient struct{ c *chat.Client }
 
 func (p *chatProviderClient) CreateMessage(ctx context.Context, req any) (any, error) {
