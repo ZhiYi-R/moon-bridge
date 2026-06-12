@@ -16,6 +16,8 @@ const (
 	ToolRaw        ToolKind = "raw"
 	ToolFunction   ToolKind = "function"
 	ToolLocalShell ToolKind = "local_shell"
+	ToolNestedOneOf  ToolKind = "nested_oneof"
+	ToolNestedAnyOf  ToolKind = "nested_namespace"
 	ToolUnknown    ToolKind = "unknown"
 )
 

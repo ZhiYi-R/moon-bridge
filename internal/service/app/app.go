@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"moonbridge/internal/config"
 	"moonbridge/internal/db"
+	"moonbridge/internal/extension/codextool"
 	"moonbridge/internal/format"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/anthropic"
@@ -205,7 +206,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	coreHooks := plugins.CorePluginHooks()
 
 	// Inbound: OpenAI Responses client adapter.
-	oaiAdapter := openai.NewOpenAIAdapter(coreHooks)
+	oaiAdapter := openai.NewOpenAIAdapter(coreHooks, codextool.NestedOneOf)
 	_ = adapterReg.RegisterClient(oaiAdapter)
 	_ = adapterReg.RegisterClientStream(oaiAdapter)
 

@@ -34,13 +34,19 @@ type OpenAIAdapter struct {
 	hooks format.CorePluginHooks
 
 	disablePatchProxy func(string) bool
+	nsStrategy        codextool.NamespaceStrategy
 }
 
 // NewOpenAIAdapter creates a new OpenAIAdapter with the given config and hooks.
-func NewOpenAIAdapter(hooks format.CorePluginHooks) *OpenAIAdapter {
+func NewOpenAIAdapter(hooks format.CorePluginHooks, nsStrategy ...codextool.NamespaceStrategy) *OpenAIAdapter {
+	strategy := codextool.NestedOneOf
+	if len(nsStrategy) > 0 {
+		strategy = nsStrategy[0]
+	}
 	return &OpenAIAdapter{
-		hooks: hooks.WithDefaults(),
+		hooks:             hooks.WithDefaults(),
 		disablePatchProxy: hooks.DisablePatchProxy,
+		nsStrategy:        strategy,
 	}
 }
 
@@ -108,7 +114,7 @@ func (a *OpenAIAdapter) ToCoreRequest(ctx context.Context, req any) (*format.Cor
 
 	// 5. Convert tools.
 	if len(openaiReq.Tools) > 0 {
-		coreReq.Tools = flattenToolsWithNamespace(openaiReq.Tools, "", a.disablePatchProxy)
+		coreReq.Tools = flattenToolsWithNamespace(openaiReq.Tools, "", a.disablePatchProxy, a.nsStrategy)
 	}
 	if injected := a.hooks.InjectTools(format.ContextWithCoreRequest(ctx, coreReq)); len(injected) > 0 {
 		coreReq.Tools = append(coreReq.Tools, injected...)
@@ -374,6 +380,18 @@ func (r *OpenAIStreamResult) Buffer() []any {
 }
 
 // streamLoop is the goroutine body for FromCoreStream.
+// nestedBufferState tracks two-level buffering for nested namespace tool calls.
+type nestedBufferState struct {
+	toolUseID      string
+	toolName       string                // original namespace-expanded name
+	actionName     string                // extracted sub-tool action name
+	namespace      string                // item namespace
+	outputIndex    int                   // index in response.Output
+	emitted        bool                  // whether output_item.added has been sent
+	buf            strings.Builder       // accumulated raw JSON arguments
+	sequence       func() int64          // event sequencer (captures next func)
+}
+
 func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.CoreRequest, events <-chan format.CoreStreamEvent, out chan<- StreamEvent, buf *[]StreamEvent, bufMu *sync.Mutex) {
 	defer close(out)
 
@@ -405,6 +423,7 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 	itemIDs := make(map[int]string)
 	reasonIndexes := make(map[int]bool)
 	toolCallFinalized := make(map[int]bool)
+	nestedBuffers := make(map[int]*nestedBufferState)
 
 	for event := range events {
 		// Let hooks skip events.
@@ -501,18 +520,37 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 				}
 				itemIDs[index] = fmt.Sprintf("fc_item_%d", index)
 				toolBlockNames[index] = event.ContentBlock.ToolName
-				item := buildToolOutputItemStreaming(event.ContentBlock, coreReq.Extensions, toolUseID)
-				outputIndexes[index] = len(response.Output)
-				response.Output = append(response.Output, item)
-				send(StreamEvent{
-					Event: "response.output_item.added",
-					Data: OutputItemEvent{
-						Type:           "response.output_item.added",
-						SequenceNumber: next(),
-						OutputIndex:    outputIndexes[index],
-						Item:           item,
-					},
-				})
+
+				// Check if this tool is a nested namespace (NestedOneOf/NestedAnyOf).
+				// If so, defer output_item.added until we extract the action from args.
+				toolMap := codextool.DecodeToolMapFromExtensions(coreReq.Extensions)
+				spec, hasSpec := toolMap.Lookup(event.ContentBlock.ToolName)
+				isNested := hasSpec && (spec.Kind == codextool.ToolNestedOneOf || spec.Kind == codextool.ToolNestedAnyOf)
+
+				if isNested {
+					// Defer emission: buffer args until action is extracted.
+					nestedBuffers[index] = &nestedBufferState{
+						toolUseID:   toolUseID,
+						toolName:    event.ContentBlock.ToolName,
+						namespace:   spec.Namespace,
+						emitted:     false,
+						outputIndex: -1,
+						sequence:    next,
+					}
+				} else {
+					item := buildToolOutputItemStreaming(event.ContentBlock, coreReq.Extensions, toolUseID)
+					outputIndexes[index] = len(response.Output)
+					response.Output = append(response.Output, item)
+					send(StreamEvent{
+						Event: "response.output_item.added",
+						Data: OutputItemEvent{
+							Type:           "response.output_item.added",
+							SequenceNumber: next(),
+							OutputIndex:    outputIndexes[index],
+							Item:           item,
+						},
+					})
+				}
 			}
 
 		// ==================================================================
@@ -652,6 +690,50 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 		case format.CoreToolCallArgsDelta:
 			index := event.Index
 			toolCallArgs[index] += event.Delta
+
+			// Check if this is a buffered nested namespace tool call.
+			if nBuf, isBuffered := nestedBuffers[index]; isBuffered {
+				nBuf.buf.WriteString(event.Delta)
+
+				if !nBuf.emitted {
+					if action, ok := codextool.TryExtractAction(nBuf.buf.String()); ok {
+						nBuf.actionName = action
+						nBuf.emitted = true
+
+						// Emit output_item.added with the correct action name.
+						item := OutputItem{
+							Type:   "function_call",
+							ID:     nBuf.toolUseID,
+							CallID: nBuf.toolUseID,
+							Name:   action,
+							Status: "in_progress",
+						}
+						if nBuf.namespace != "" {
+							item.Namespace = nBuf.namespace
+						}
+						outputIndexes[index] = len(response.Output)
+						nBuf.outputIndex = outputIndexes[index]
+						response.Output = append(response.Output, item)
+						send(StreamEvent{
+							Event: "response.output_item.added",
+							Data: OutputItemEvent{
+								Type:           "response.output_item.added",
+								SequenceNumber: next(),
+								OutputIndex:    outputIndexes[index],
+								Item:           item,
+							},
+						})
+
+						// Replay already-buffered params (minus the action prefix).
+						replayNestedBuffer(nBuf, send, next, index, itemIDs)
+					}
+				} else {
+					// Already emitted: pass through deltas directly.
+					emitNestedDelta(nBuf, event.Delta, send, next, index, itemIDs, outputIndexes)
+				}
+				break
+			}
+
 			send(StreamEvent{
 				Event: "response.function_call_arguments.delta",
 				Data: FunctionCallArgumentsDeltaEvent{
@@ -672,6 +754,66 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 				break
 			}
 			finalArgs := event.Delta
+
+			// Check if this is a buffered nested namespace tool call that hasn't
+			// emitted yet (action never extracted — flush all buffered data).
+			if nBuf, isBuffered := nestedBuffers[index]; isBuffered {
+				if !nBuf.emitted {
+					// Action never extracted — flush everything as the original name.
+					nBuf.actionName = nBuf.toolName
+					finalCombined := nBuf.buf.String()
+					if finalArgs != "" && finalCombined == "" {
+						finalCombined = finalArgs
+					}
+					item := OutputItem{
+						Type:   "function_call",
+						ID:     nBuf.toolUseID,
+						CallID: nBuf.toolUseID,
+						Name:   nBuf.toolName,
+						Status: "completed",
+					}
+					if nBuf.namespace != "" {
+						item.Namespace = nBuf.namespace
+					}
+					item.Arguments = finalCombined
+					outputIndexes[index] = len(response.Output)
+					nBuf.outputIndex = outputIndexes[index]
+					response.Output = append(response.Output, item)
+					nBuf.emitted = true
+					send(StreamEvent{
+						Event: "response.output_item.added",
+						Data: OutputItemEvent{
+							Type:           "response.output_item.added",
+							SequenceNumber: next(),
+							OutputIndex:    outputIndexes[index],
+							Item:           item,
+						},
+					})
+					send(StreamEvent{
+						Event: "response.function_call_arguments.done",
+						Data: FunctionCallArgumentsDoneEvent{
+							Type:           "response.function_call_arguments.done",
+							SequenceNumber: next(),
+							ItemID:         itemIDs[index],
+							OutputIndex:    outputIndexes[index],
+							Arguments:      finalCombined,
+						},
+					})
+					send(StreamEvent{
+						Event: "response.output_item.done",
+						Data: OutputItemEvent{
+							Type:           "response.output_item.done",
+							SequenceNumber: next(),
+							OutputIndex:    outputIndexes[index],
+							Item:           response.Output[outputIndexes[index]],
+						},
+					})
+					delete(nestedBuffers, index)
+					break
+				}
+				// Already emitted — use existing output index.
+				delete(nestedBuffers, index)
+			}
 			if finalArgs == "" {
 				finalArgs = toolCallArgs[index]
 			}
@@ -1524,6 +1666,131 @@ func buildToolOutputItem(block format.CoreContentBlock, extensions map[string]an
 
 // buildToolOutputItemStreaming constructs a streaming OutputItem for a tool_use content block start.
 // The item is created with "in_progress" status.
+
+// replayNestedBuffer emits the accumulated params from a nested namespace buffer
+// as function_call_arguments.delta events, stripping the action prefix.
+func replayNestedBuffer(nBuf *nestedBufferState, send func(StreamEvent), next func() int64, index int, itemIDs map[int]string) {
+	if nBuf.buf.Len() == 0 {
+		return
+	}
+	paramsOnly := stripPrefixActionFromJSON(nBuf.buf.String(), nBuf.actionName)
+	if paramsOnly != "" {
+		send(StreamEvent{
+			Event: "response.function_call_arguments.delta",
+			Data: FunctionCallArgumentsDeltaEvent{
+				Type:           "response.function_call_arguments.delta",
+				SequenceNumber: next(),
+				ItemID:         itemIDs[index],
+				OutputIndex:    nBuf.outputIndex,
+				Delta:          paramsOnly,
+			},
+		})
+	}
+}
+
+// emitNestedDelta sends a function_call_arguments.delta for a nested namespace tool
+// that has already emitted its output_item.added.
+func emitNestedDelta(nBuf *nestedBufferState, delta string, send func(StreamEvent), next func() int64, index int, itemIDs map[int]string, outputIndexes map[int]int) {
+	cleanedDelta := stripPrefixActionFromJSON(delta, nBuf.actionName)
+	if cleanedDelta == "" {
+		return
+	}
+	oi := nBuf.outputIndex
+	if oi < 0 {
+		oi = outputIndexes[index]
+	}
+	send(StreamEvent{
+		Event: "response.function_call_arguments.delta",
+		Data: FunctionCallArgumentsDeltaEvent{
+			Type:           "response.function_call_arguments.delta",
+			SequenceNumber: next(),
+			ItemID:         itemIDs[index],
+			OutputIndex:    oi,
+			Delta:          cleanedDelta,
+		},
+	})
+}
+
+// stripPrefixActionFromJSON removes the "action": "value" portion from the start
+// of a partial JSON string. Uses a position-constrained scan that only looks for
+// "action" as a top-level key (before any nested "{" or after the first "," that
+// signals the end of the first key-value pair). Falls back to full JSON parse
+// when the buffer is syntactically complete.
+func stripPrefixActionFromJSON(raw string, action string) string {
+	if raw == "" {
+		return ""
+	}
+
+	// First, try a full JSON parse — if the buffer is complete, this is the
+	// most robust path.
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+		delete(parsed, "action")
+		if len(parsed) == 0 {
+			return ""
+		}
+		data, _ := json.Marshal(parsed)
+		result := string(data)
+		// Strip outer braces for streaming delta context.
+		result = strings.TrimPrefix(result, "{")
+		result = strings.TrimSuffix(result, "}")
+		return strings.TrimSpace(result)
+	}
+
+	// Fallback: position-constrained scan. Only look for "action" in the
+	// first object level — roughly the content before a nested "{" or after
+	// the first top-level comma that follows the action key-value pair.
+	//
+	// Strategy: find "action" at the top level, extract its value, remove
+	// the key-value pair, and return the remaining JSON fragment.
+	idx := strings.Index(raw, `"action"`)
+	if idx < 0 {
+		return raw
+	}
+
+	// Only treat as top-level action if it appears before any nested object
+	// (the namespace tool schema is flat — action is at the root).
+	firstBrace := strings.IndexByte(raw, '{')
+	if firstBrace >= 0 && firstBrace < idx {
+		// "action" is not in the first object — return raw unchanged.
+		return raw
+	}
+
+	// Find the colon after the key.
+	afterKey := raw[idx+8:]
+	colonIdx := strings.IndexByte(afterKey, ':')
+	if colonIdx < 0 {
+		return raw
+	}
+
+	// Skip whitespace and colon.
+	afterColon := strings.TrimSpace(afterKey[colonIdx+1:])
+	if len(afterColon) == 0 {
+		return raw
+	}
+
+	// Must start with a quote (action is always a string).
+	if afterColon[0] != '"' {
+		return raw
+	}
+	afterColon = afterColon[1:] // skip opening quote
+	endQuote := strings.IndexByte(afterColon, '"')
+	if endQuote < 0 {
+		return raw
+	}
+
+	// Extract the portion after the action value.
+	afterValue := strings.TrimSpace(afterColon[endQuote+1:])
+	// Strip trailing comma.
+	afterValue = strings.TrimLeft(afterValue, ", ")
+
+	// Combine the part before the action key with the part after the value.
+	prefix := strings.TrimRight(raw[:idx], ", ")
+	if prefix == "" || prefix == "{" || strings.TrimSpace(prefix) == "{" {
+		return afterValue
+	}
+	return prefix + ", " + afterValue
+}
 func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map[string]any, toolUseID string) OutputItem {
 	toolMap := codextool.DecodeToolMapFromExtensions(extensions)
 	itemT, itemN, itemNS, itemInput, isLS, actionJSON := codextool.OutputItemFromBlock(block.ToolName, block.ToolInput, toolMap)
@@ -1556,7 +1823,7 @@ func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map
 // Function/web_search/file_search/code_interpreter/computer_use_preview pass through.
 // Custom tools are expanded using codex package helpers.
 // Namespace tools are recursively flattened.
-func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy func(string) bool) []format.CoreTool {
+func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy func(string) bool, nsStrategy codextool.NamespaceStrategy) []format.CoreTool {
 	name := namespacedToolName(namespace, tool.Name)
 	ext := make(map[string]any)
 
@@ -1606,7 +1873,23 @@ func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy fun
 
 	case "namespace":
 		ns := namespacedToolName(namespace, tool.Name)
-		return flattenToolsWithNamespace(tool.Tools, ns, disablePatchProxy)
+		// Build sub-tool map for BuildNamespaceTools.
+		subMap := make(map[string]format.CoreTool)
+		var subNames []string
+		for _, sub := range tool.Tools {
+			subNames = append(subNames, sub.Name)
+			subMap[sub.Name] = format.CoreTool{
+				Name:        sub.Name,
+				Description: sub.Description,
+				InputSchema: sub.Parameters,
+			}
+		}
+		tools, err := codextool.BuildNamespaceTools(subNames, subMap, ns, nsStrategy)
+		if err != nil || len(tools) == 0 {
+			// Fallback to flat expansion.
+			return flattenToolsWithNamespace(tool.Tools, ns, disablePatchProxy, nsStrategy)
+		}
+		return tools
 
 	case "custom":
 		grammar := codextool.CustomToolGrammar(tool.Format)
@@ -1660,22 +1943,28 @@ func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy fun
 
 // flattenToolsWithNamespace recursively flattens namespace tools and converts
 // individual tools, building a flat list of CoreTools suitable for upstream providers.
-func flattenToolsWithNamespace(openaiTools []Tool, namespace string, disablePatchProxy func(string) bool) []format.CoreTool {
+func flattenToolsWithNamespace(openaiTools []Tool, namespace string, disablePatchProxy func(string) bool, nsStrategy codextool.NamespaceStrategy) []format.CoreTool {
 	var result []format.CoreTool
 	for _, t := range openaiTools {
-		converted := convertToolWithNamespace(t, namespace, disablePatchProxy)
+		converted := convertToolWithNamespace(t, namespace, disablePatchProxy, nsStrategy)
 		result = append(result, converted...)
 	}
 	// Deduplicate by name: Codex may send the same tool both as a namespace member
 	// and as an independently-injected function tool (e.g. MCP tools that inject themselves
-	// after first use). Keep the first occurrence, which has the correct metadata.
-	seen := make(map[string]bool, len(result))
+	// after first use). Prefer tools with a codex_namespace annotation (comes from namespace
+	// expansion) over flat function tools with the same name.
+	seen := make(map[string]int, len(result)) // name → index in deduped
 	deduped := make([]format.CoreTool, 0, len(result))
 	for _, t := range result {
-		if seen[t.Name] {
+		if existing, exists := seen[t.Name]; exists {
+			existingNS, _ := deduped[existing].Extensions["codex_namespace"].(string)
+			newNS, _ := t.Extensions["codex_namespace"].(string)
+			if existingNS == "" && newNS != "" {
+				deduped[existing] = t
+			}
 			continue
 		}
-		seen[t.Name] = true
+		seen[t.Name] = len(deduped)
 		deduped = append(deduped, t)
 	}
 	result = deduped

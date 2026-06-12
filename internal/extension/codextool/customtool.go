@@ -114,6 +114,13 @@ func OutputItemFromBlock(
 		return "custom_tool_call", spec.OpenAIName, "", RebuildGrammar(blockName, toolInput), false, nil
 	case ToolRaw:
 		return "custom_tool_call", spec.OpenAIName, "", InputFromRaw(toolInput), false, nil
+	case ToolNestedOneOf, ToolNestedAnyOf:
+		action, paramsStr, err := DecodeNestedCall(toolInput, spec.Kind)
+		if err != nil || action == "" {
+			// Fallback: return raw input with blockName as the tool Name.
+			return "function_call", blockName, spec.Namespace, string(toolInput), false, nil
+		}
+		return "function_call", action, spec.Namespace, string(paramsStr), false, nil
 	case ToolFunction:
 		return "function_call", spec.OpenAIName, spec.Namespace, string(toolInput), false, nil
 	default:
