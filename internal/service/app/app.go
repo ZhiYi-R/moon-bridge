@@ -325,6 +325,8 @@ type webSearchCandidateProber interface {
 	ProbeWebSearchCandidate(context.Context, string, string) (bool, error)
 }
 
+var webSearchProbeTimeout = 3 * time.Second
+
 // resolvePerProviderWebSearch resolves web_search support for each provider and
 // each model that has a model-level override.
 func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *provider.ProviderManager, errors io.Writer) {
@@ -463,7 +465,7 @@ func probeProviderWebSearch(ctx context.Context, key string, pm *provider.Provid
 		return "disabled"
 	}
 	client := acc.AnthropicClient()
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, webSearchProbeTimeout)
 	defer cancel()
 	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
 	if err != nil {
@@ -496,7 +498,7 @@ func probeModelWebSearch(ctx context.Context, modelAlias string, pm *provider.Pr
 		slog.Warn("网页搜索模型探测跳过：客户端不可用", "model", modelAlias, "error", err)
 		return "disabled"
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, webSearchProbeTimeout)
 	defer cancel()
 	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
 	if err != nil {
@@ -532,7 +534,7 @@ func resolveModelWebSearchWithProber(ctx context.Context, modelAlias, providerKe
 		}
 		return "disabled"
 	}
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, webSearchProbeTimeout)
 	defer cancel()
 
 	supported, err := prober.ProbeWebSearchCandidate(probeCtx, providerKey, upstreamModel)

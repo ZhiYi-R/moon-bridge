@@ -122,6 +122,36 @@ func TestToCoreRequest_FunctionCallOutputImage(t *testing.T) {
 	}
 }
 
+func TestToCoreRequest_NamespaceFunctionCallRewrapsAction(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+
+	req := &openai.ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{"type":"function_call","call_id":"call_spawn","namespace":"multi_agent_v1","name":"spawn_agent","arguments":"{\"message\":\"plan\"}"}
+		]`),
+	}
+
+	result, err := adapter.ToCoreRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 1 {
+		t.Fatalf("messages len=%d, want 1: %+v", len(result.Messages), result.Messages)
+	}
+	block := result.Messages[0].Content[0]
+	if block.Type != "tool_use" || block.ToolName != "multi_agent_v1" || block.ToolUseID != "call_spawn" {
+		t.Fatalf("tool block = %+v", block)
+	}
+	var args map[string]any
+	if err := json.Unmarshal(block.ToolInput, &args); err != nil {
+		t.Fatalf("tool input invalid: %s: %v", string(block.ToolInput), err)
+	}
+	if args["action"] != "spawn_agent" || args["message"] != "plan" {
+		t.Fatalf("tool input = %#v, want action and message", args)
+	}
+}
+
 func TestFromCoreResponse_Basic(t *testing.T) {
 	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
@@ -153,6 +183,43 @@ func TestFromCoreResponse_Basic(t *testing.T) {
 	}
 }
 
+func TestFromCoreResponse_NamespaceToolArgumentsOmitAction(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+
+	coreResp := &format.CoreResponse{
+		ID:         "resp_123",
+		Status:     "completed",
+		Model:      "gpt-4o",
+		Extensions: namespaceToolMapExtension("multi_agent_v1"),
+		Messages: []format.CoreMessage{
+			{
+				Role: "assistant",
+				Content: []format.CoreContentBlock{{
+					Type:      "tool_use",
+					ToolUseID: "call_spawn",
+					ToolName:  "multi_agent_v1",
+					ToolInput: json.RawMessage(`{"action":"spawn_agent","message":"plan","fork_context":true}`),
+				}},
+			},
+		},
+	}
+
+	result, err := adapter.FromCoreResponse(context.Background(), coreResp)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resp := result.(*openai.Response)
+	if len(resp.Output) != 1 {
+		t.Fatalf("output len=%d, want 1: %+v", len(resp.Output), resp.Output)
+	}
+	item := resp.Output[0]
+	if item.Type != "function_call" || item.Name != "spawn_agent" || item.Namespace != "multi_agent_v1" {
+		t.Fatalf("item identity = type:%q name:%q namespace:%q", item.Type, item.Name, item.Namespace)
+	}
+	assertNoActionArgument(t, item.Arguments)
+}
+
 func TestFromCoreResponse_Error(t *testing.T) {
 	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
 
@@ -176,6 +243,69 @@ func TestFromCoreResponse_Error(t *testing.T) {
 	if resp.Error.Message != "upstream error" {
 		t.Errorf("Error.Message = %q", resp.Error.Message)
 	}
+}
+
+func TestFromCoreStream_NamespaceToolArgumentsOmitActionFromDeltaAndDone(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+	coreReq := &format.CoreRequest{
+		Model:      "gpt-4o",
+		Extensions: namespaceToolMapExtension("multi_agent_v1"),
+	}
+	evCh := make(chan format.CoreStreamEvent, 8)
+	evCh <- format.CoreStreamEvent{
+		Type:  format.CoreContentBlockStarted,
+		Index: 2,
+		ContentBlock: &format.CoreContentBlock{
+			Type:      "tool_use",
+			ToolUseID: "call_spawn",
+			ToolName:  "multi_agent_v1",
+		},
+	}
+	evCh <- format.CoreStreamEvent{Type: format.CoreToolCallArgsDelta, Index: 2, Delta: `{"action":"spawn_agent",`}
+	evCh <- format.CoreStreamEvent{Type: format.CoreToolCallArgsDelta, Index: 2, Delta: `"message":"plan"}`}
+	evCh <- format.CoreStreamEvent{Type: format.CoreToolCallArgsDone, Index: 2, Delta: `{"action":"spawn_agent","message":"plan"}`}
+	evCh <- format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: 2}
+	evCh <- format.CoreStreamEvent{Type: format.CoreEventCompleted, Status: "completed"}
+	close(evCh)
+
+	events := collectOpenAIStreamEvents(t, adapter, coreReq, evCh)
+	itemDone, argsDone := finalToolStreamEvents(t, events)
+	if itemDone.Item.Name != "spawn_agent" || itemDone.Item.Namespace != "multi_agent_v1" {
+		t.Fatalf("item identity = type:%q name:%q namespace:%q", itemDone.Item.Type, itemDone.Item.Name, itemDone.Item.Namespace)
+	}
+	assertNamespaceDeltasParamsOnly(t, events, map[string]any{"message": "plan"})
+	assertNoActionArgument(t, itemDone.Item.Arguments)
+	assertNoActionArgument(t, argsDone.Arguments)
+}
+
+func TestFromCoreStream_NamespaceToolArgumentsOmitActionFromDoneOnly(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+	coreReq := &format.CoreRequest{
+		Model:      "gpt-4o",
+		Extensions: namespaceToolMapExtension("multi_agent_v1"),
+	}
+	evCh := make(chan format.CoreStreamEvent, 8)
+	evCh <- format.CoreStreamEvent{
+		Type:  format.CoreContentBlockStarted,
+		Index: 2,
+		ContentBlock: &format.CoreContentBlock{
+			Type:      "tool_use",
+			ToolUseID: "call_spawn",
+			ToolName:  "multi_agent_v1",
+		},
+	}
+	evCh <- format.CoreStreamEvent{Type: format.CoreToolCallArgsDone, Index: 2, Delta: `{"action":"spawn_agent","message":"plan"}`}
+	evCh <- format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: 2}
+	evCh <- format.CoreStreamEvent{Type: format.CoreEventCompleted, Status: "completed"}
+	close(evCh)
+
+	events := collectOpenAIStreamEvents(t, adapter, coreReq, evCh)
+	itemDone, argsDone := finalToolStreamEvents(t, events)
+	if itemDone.Item.Name != "spawn_agent" || itemDone.Item.Namespace != "multi_agent_v1" {
+		t.Fatalf("item identity = type:%q name:%q namespace:%q", itemDone.Item.Type, itemDone.Item.Name, itemDone.Item.Namespace)
+	}
+	assertNoActionArgument(t, itemDone.Item.Arguments)
+	assertNoActionArgument(t, argsDone.Arguments)
 }
 
 func TestToCoreRequest_NilInput(t *testing.T) {
@@ -369,5 +499,118 @@ func TestFromCoreStream_NoDuplicateDoneForToolUse(t *testing.T) {
 	}
 	if itemDone != 1 {
 		t.Fatalf("output_item.done (tool) count=%d, want 1", itemDone)
+	}
+}
+
+func namespaceToolMapExtension(namespace string) map[string]any {
+	return map[string]any{
+		"codex_tool_map": map[string]any{
+			namespace: map[string]any{
+				"kind":        "nested_oneof",
+				"openai_name": namespace,
+				"namespace":   namespace,
+			},
+		},
+	}
+}
+
+func collectOpenAIStreamEvents(t *testing.T, adapter *openai.OpenAIAdapter, coreReq *format.CoreRequest, evCh <-chan format.CoreStreamEvent) []openai.StreamEvent {
+	t.Helper()
+
+	streamAny, err := adapter.FromCoreStream(context.Background(), coreReq, evCh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stream <-chan openai.StreamEvent
+	if oaiResult, ok := streamAny.(*openai.OpenAIStreamResult); ok {
+		stream = oaiResult.Chan()
+	} else {
+		stream = streamAny.(<-chan openai.StreamEvent)
+	}
+	var events []openai.StreamEvent
+	for ev := range stream {
+		events = append(events, ev)
+	}
+	return events
+}
+
+func finalToolStreamEvents(t *testing.T, events []openai.StreamEvent) (openai.OutputItemEvent, openai.FunctionCallArgumentsDoneEvent) {
+	t.Helper()
+
+	var itemDone *openai.OutputItemEvent
+	var argsDone *openai.FunctionCallArgumentsDoneEvent
+	for _, ev := range events {
+		switch ev.Event {
+		case "response.function_call_arguments.done":
+			data, ok := ev.Data.(openai.FunctionCallArgumentsDoneEvent)
+			if !ok {
+				t.Fatalf("args done data type = %T", ev.Data)
+			}
+			argsDone = &data
+		case "response.output_item.done":
+			data, ok := ev.Data.(openai.OutputItemEvent)
+			if !ok {
+				t.Fatalf("item done data type = %T", ev.Data)
+			}
+			if data.Item.Type == "function_call" {
+				itemDone = &data
+			}
+		}
+	}
+	if itemDone == nil {
+		t.Fatalf("missing function_call output_item.done in events: %+v", events)
+	}
+	if argsDone == nil {
+		t.Fatalf("missing function_call_arguments.done in events: %+v", events)
+	}
+	return *itemDone, *argsDone
+}
+
+func assertNoActionArgument(t *testing.T, raw string) {
+	t.Helper()
+
+	if raw == "" {
+		t.Fatal("arguments are empty")
+	}
+	var args map[string]any
+	if err := json.Unmarshal([]byte(raw), &args); err != nil {
+		t.Fatalf("arguments are not JSON object: %q: %v", raw, err)
+	}
+	if _, exists := args["action"]; exists {
+		t.Fatalf("arguments leaked action discriminator: %s", raw)
+	}
+}
+
+func assertNamespaceDeltasParamsOnly(t *testing.T, events []openai.StreamEvent, want map[string]any) {
+	t.Helper()
+
+	var combined strings.Builder
+	for _, ev := range events {
+		if ev.Event != "response.function_call_arguments.delta" {
+			continue
+		}
+		data, ok := ev.Data.(openai.FunctionCallArgumentsDeltaEvent)
+		if !ok {
+			t.Fatalf("delta data type = %T", ev.Data)
+		}
+		if strings.Contains(data.Delta, `"action"`) || strings.Contains(data.Delta, "spawn_agent") {
+			t.Fatalf("delta leaked namespace action: %q", data.Delta)
+		}
+		combined.WriteString(data.Delta)
+	}
+	if combined.Len() == 0 {
+		t.Fatal("missing function_call_arguments.delta events")
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(combined.String()), &got); err != nil {
+		t.Fatalf("combined deltas are not valid JSON: %q: %v", combined.String(), err)
+	}
+	if len(got) != len(want) {
+		t.Fatalf("combined deltas = %#v, want %#v", got, want)
+	}
+	for key, expected := range want {
+		if got[key] != expected {
+			t.Fatalf("combined deltas[%q] = %#v, want %#v; full=%#v", key, got[key], expected, got)
+		}
 	}
 }

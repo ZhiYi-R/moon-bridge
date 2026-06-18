@@ -1,8 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"moonbridge/internal/config"
@@ -11,6 +15,18 @@ import (
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/runtime"
 )
+
+type canceledReader struct{}
+
+func (canceledReader) Read([]byte) (int, error) {
+	return 0, context.Canceled
+}
+
+type canceledWriter struct{}
+
+func (canceledWriter) Write([]byte) (int, error) {
+	return 0, context.Canceled
+}
 
 func TestCoreResponseToCoreStreamEmitsUsageOnCompleted(t *testing.T) {
 	resp := &format.CoreResponse{
@@ -83,6 +99,108 @@ func TestCoreResponseToCoreStreamEmitsUsageOnCompleted(t *testing.T) {
 	}
 	if !sawToolArgsDone {
 		t.Fatal("missing tool args done event")
+	}
+}
+
+func TestCoreResponseToStreamEventsEmitsToolUse(t *testing.T) {
+	resp := &format.CoreResponse{
+		ID:     "resp_test",
+		Status: "completed",
+		Model:  "chat-test",
+		Messages: []format.CoreMessage{
+			{
+				Role: "assistant",
+				Content: []format.CoreContentBlock{{
+					Type:      "tool_use",
+					ToolUseID: "call_spawn",
+					ToolName:  "multi_agent_v1",
+					ToolInput: json.RawMessage(`{"action":"spawn_agent","message":"plan"}`),
+				}},
+			},
+		},
+	}
+
+	stream := coreResponseToStreamEvents(context.Background(), resp)
+	var events []format.CoreStreamEvent
+	for ev := range stream {
+		events = append(events, ev)
+	}
+
+	var sawToolStarted bool
+	var sawToolArgsDone bool
+	var sawToolDone bool
+	for _, ev := range events {
+		if ev.Type == format.CoreContentBlockStarted && ev.ContentBlock != nil &&
+			ev.ContentBlock.Type == "tool_use" &&
+			ev.ContentBlock.ToolUseID == "call_spawn" &&
+			ev.ContentBlock.ToolName == "multi_agent_v1" {
+			sawToolStarted = true
+		}
+		if ev.Type == format.CoreToolCallArgsDone && ev.Delta == `{"action":"spawn_agent","message":"plan"}` {
+			sawToolArgsDone = true
+		}
+		if ev.Type == format.CoreContentBlockDone && ev.Index == 0 {
+			sawToolDone = true
+		}
+	}
+	if !sawToolStarted {
+		t.Fatal("missing tool_use block start event")
+	}
+	if !sawToolArgsDone {
+		t.Fatal("missing tool args done event")
+	}
+	if !sawToolDone {
+		t.Fatal("missing tool content block done event")
+	}
+}
+
+func TestStreamOutputItemToCoreBlocksRewrapsNamespaceFunctionCall(t *testing.T) {
+	blocks := streamOutputItemToCoreBlocks(openai.OutputItem{
+		Type:      "function_call",
+		CallID:    "call_spawn",
+		Namespace: "multi_agent_v1",
+		Name:      "spawn_agent",
+		Arguments: `{"message":"plan"}`,
+	})
+
+	if len(blocks) != 1 {
+		t.Fatalf("blocks len=%d, want 1: %+v", len(blocks), blocks)
+	}
+	block := blocks[0]
+	if block.Type != "tool_use" || block.ToolUseID != "call_spawn" || block.ToolName != "multi_agent_v1" {
+		t.Fatalf("tool block = %+v", block)
+	}
+	var args map[string]any
+	if err := json.Unmarshal(block.ToolInput, &args); err != nil {
+		t.Fatalf("tool input invalid: %s: %v", string(block.ToolInput), err)
+	}
+	if args["action"] != "spawn_agent" || args["message"] != "plan" {
+		t.Fatalf("tool input = %#v, want action and message", args)
+	}
+}
+
+func TestClientCanceledCopyErrorRequiresWriteSideOrRequestCancel(t *testing.T) {
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	if _, err := copyResponseBody(canceledWriter{}, strings.NewReader("chunk")); err == nil {
+		t.Fatal("copyResponseBody() write-side error = nil")
+	} else if !isClientCanceledCopyError(request, err) {
+		t.Fatal("write-side context canceled was not classified as client cancellation")
+	}
+
+	if _, err := copyResponseBody(&bytes.Buffer{}, canceledReader{}); err == nil {
+		t.Fatal("copyResponseBody() read-side error = nil")
+	} else if isClientCanceledCopyError(request, err) {
+		t.Fatal("read-side context canceled was classified as client cancellation")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	canceledRequest := request.WithContext(ctx)
+	if _, err := copyResponseBody(&bytes.Buffer{}, canceledReader{}); err == nil {
+		t.Fatal("copyResponseBody() canceled request read-side error = nil")
+	} else if !isClientCanceledCopyError(canceledRequest, err) {
+		t.Fatal("request cancellation did not classify read-side context canceled as client cancellation")
 	}
 }
 
@@ -178,6 +296,33 @@ func TestResolvedWebSearchModePrefersCandidateOverProvider(t *testing.T) {
 	})
 	if mode != "enabled" {
 		t.Fatalf("resolvedWebSearchMode() = %q, want enabled", mode)
+	}
+}
+
+func TestResolvedWebSearchModePrefersExplicitModelAliasOverCandidate(t *testing.T) {
+	pm, err := provider.NewProviderManager(
+		map[string]provider.ProviderConfig{
+			"deepseek": {
+				BaseURL: "https://deepseek.example.test",
+				APIKey:  "key-deepseek",
+			},
+		},
+		map[string]provider.ModelRoute{
+			"alias-off": {Provider: "deepseek", Name: "deepseek-v4-flash"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewProviderManager() error = %v", err)
+	}
+	pm.SetResolvedWebSearch("model:alias-off", "disabled")
+	pm.SetResolvedWebSearch(provider.WebSearchCandidateKey("deepseek", "deepseek-v4-flash"), "enabled")
+
+	mode := resolvedWebSearchMode(pm, "alias-off", provider.ProviderCandidate{
+		ProviderKey:   "deepseek",
+		UpstreamModel: "deepseek-v4-flash",
+	})
+	if mode != "disabled" {
+		t.Fatalf("resolvedWebSearchMode() = %q, want disabled", mode)
 	}
 }
 

@@ -11,6 +11,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"moonbridge/internal/format"
 )
 
 type ClientConfig struct {
@@ -195,6 +197,7 @@ func (client *Client) ProbeWebSearch(ctx context.Context, model string) (bool, e
 }
 
 func (client *Client) newRequest(ctx context.Context, messageRequest MessageRequest) (*http.Request, error) {
+	messageRequest.Tools = normalizeToolInputSchemas(messageRequest.Tools)
 	data, err := json.Marshal(messageRequest)
 	if err != nil {
 		return nil, err
@@ -213,6 +216,27 @@ func (client *Client) newRequest(ctx context.Context, messageRequest MessageRequ
 		httpRequest.Header.Set("user-agent", client.userAgent)
 	}
 	return httpRequest, nil
+}
+
+func normalizeToolInputSchemas(tools []Tool) []Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	normalized := make([]Tool, len(tools))
+	copy(normalized, tools)
+	for i := range normalized {
+		if normalized[i].InputSchema != nil {
+			normalized[i].InputSchema = normalizeProviderSchemaForSend(normalized[i].InputSchema)
+		}
+	}
+	return normalized
+}
+
+func normalizeProviderSchemaForSend(schema map[string]any) map[string]any {
+	if normalized := format.NormalizeFunctionToolSchema(schema); normalized != nil {
+		return normalized
+	}
+	return map[string]any{"type": "object"}
 }
 
 func decodeProviderError(response *http.Response) error {

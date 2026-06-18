@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"moonbridge/internal/format"
 )
 
 // ClientConfig configures the Gemini API HTTP client.
@@ -152,7 +154,14 @@ func (c *Client) Close() error { return nil }
 
 // CreateCachedContent creates a new CachedContent resource.
 func (c *Client) CreateCachedContent(ctx context.Context, cc *CachedContent) (*CachedContent, error) {
-	data, _ := json.Marshal(cc)
+	var data []byte
+	if cc != nil {
+		wireCC := *cc
+		wireCC.Tools = normalizeGoogleToolSchemas(cc.Tools)
+		data, _ = json.Marshal(&wireCC)
+	} else {
+		data, _ = json.Marshal(cc)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/"+c.version+"/cachedContents", bytes.NewReader(data))
 	if err != nil {
@@ -252,7 +261,15 @@ func (c *Client) DeleteCachedContent(ctx context.Context, name string) error {
 // Gemini API mode (no project): {baseURL}/{version}/models/{model}:{action}?key={apiKey}
 // Vertex AI mode (project set): {baseURL}/{version}/projects/{project}/locations/{location}/publishers/google/models/{model}:{action}
 func (c *Client) newRequest(ctx context.Context, model, action string, req *GenerateContentRequest) (*http.Request, error) {
-	data, err := json.Marshal(req)
+	var data []byte
+	var err error
+	if req != nil {
+		wireReq := *req
+		wireReq.Tools = normalizeGoogleToolSchemas(req.Tools)
+		data, err = json.Marshal(&wireReq)
+	} else {
+		data, err = json.Marshal(req)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("google API request marshal: %w", err)
 	}
@@ -281,6 +298,35 @@ func (c *Client) newRequest(ctx context.Context, model, action string, req *Gene
 		httpReq.Header.Set("authorization", "Bearer "+c.apiKey)
 	}
 	return httpReq, nil
+}
+
+func normalizeGoogleToolSchemas(tools []Tool) []Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	normalized := make([]Tool, len(tools))
+	copy(normalized, tools)
+	for i := range normalized {
+		if len(normalized[i].FunctionDeclarations) == 0 {
+			continue
+		}
+		decls := make([]FunctionDeclaration, len(normalized[i].FunctionDeclarations))
+		copy(decls, normalized[i].FunctionDeclarations)
+		for j := range decls {
+			if decls[j].Parameters != nil {
+				decls[j].Parameters = normalizeProviderSchemaForSend(decls[j].Parameters)
+			}
+		}
+		normalized[i].FunctionDeclarations = decls
+	}
+	return normalized
+}
+
+func normalizeProviderSchemaForSend(schema map[string]any) map[string]any {
+	if normalized := format.NormalizeFunctionToolSchema(schema); normalized != nil {
+		return normalized
+	}
+	return map[string]any{"type": "object"}
 }
 
 // readStream reads SSE lines from the HTTP response body and sends parsed

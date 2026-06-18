@@ -14,6 +14,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+
+	"moonbridge/internal/format"
 )
 
 // ClientConfig configures the OpenAI Chat Completions HTTP client.
@@ -151,7 +153,10 @@ func (c *Client) Close() error { return nil }
 
 // newRequest builds an HTTP POST request for the Chat Completions API.
 func (c *Client) newRequest(ctx context.Context, req *ChatRequest) (*http.Request, error) {
-	data, err := json.Marshal(req)
+	wireReq := *req
+	wireReq.Messages = legalizeChatToolCallWireMessages(req.Messages)
+	wireReq.Tools = normalizeChatToolSchemas(req.Tools)
+	data, err := json.Marshal(&wireReq)
 	if err != nil {
 		return nil, fmt.Errorf("chat API request marshal: %w", err)
 	}
@@ -167,6 +172,254 @@ func (c *Client) newRequest(ctx context.Context, req *ChatRequest) (*http.Reques
 		httpReq.Header.Set("user-agent", c.userAgent)
 	}
 	return httpReq, nil
+}
+
+func legalizeChatToolCallWireMessages(messages []ChatMessage) []ChatMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	normalized := make([]ChatMessage, 0, len(messages))
+	usedToolCallIDs := make(map[string]struct{})
+	activeToolCallIDRewrite := make(map[string]string)
+	toolResultIndexByID := make(map[string]int)
+
+	for _, msg := range messages {
+		if len(msg.ToolCalls) > 0 {
+			activeToolCallIDRewrite = make(map[string]string, len(msg.ToolCalls))
+			toolResultIndexByID = make(map[string]int)
+			msg.ToolCalls = legalizeChatToolCalls(msg.ToolCalls, usedToolCallIDs, activeToolCallIDRewrite)
+		}
+		if msg.Role != "tool" || msg.ToolCallID == "" {
+			normalized = append(normalized, msg)
+			continue
+		}
+		if rewrittenID, ok := activeToolCallIDRewrite[msg.ToolCallID]; ok {
+			msg.ToolCallID = rewrittenID
+		}
+		if existingIndex, ok := toolResultIndexByID[msg.ToolCallID]; ok {
+			normalized[existingIndex].Content = mergeChatToolResultContent(normalized[existingIndex].Content, msg.Content)
+			continue
+		}
+		normalized = append(normalized, msg)
+		toolResultIndexByID[msg.ToolCallID] = len(normalized) - 1
+	}
+
+	return normalized
+}
+
+func legalizeChatToolCalls(
+	toolCalls []ToolCall,
+	usedToolCallIDs map[string]struct{},
+	activeToolCallIDRewrite map[string]string,
+) []ToolCall {
+	if len(toolCalls) == 0 {
+		return toolCalls
+	}
+	legalized := make([]ToolCall, len(toolCalls))
+	copy(legalized, toolCalls)
+	for i := range legalized {
+		originalID := legalized[i].ID
+		emittedID := allocateChatToolCallID(originalID, usedToolCallIDs)
+		if originalID != "" {
+			activeToolCallIDRewrite[originalID] = emittedID
+			legalized[i].ID = emittedID
+		}
+	}
+	return legalized
+}
+
+func allocateChatToolCallID(id string, used map[string]struct{}) string {
+	if id == "" {
+		return id
+	}
+	if _, ok := used[id]; !ok {
+		used[id] = struct{}{}
+		return id
+	}
+	for suffix := 2; ; suffix++ {
+		candidate := fmt.Sprintf("%s__mb%d", id, suffix)
+		if _, ok := used[candidate]; !ok {
+			used[candidate] = struct{}{}
+			return candidate
+		}
+	}
+}
+
+func mergeChatToolResultContent(existing, incoming any) any {
+	if existingParts, ok := existing.([]ContentPart); ok {
+		return mergeChatContentParts(existingParts, incoming)
+	}
+	if incomingParts, ok := incoming.([]ContentPart); ok {
+		return mergeChatContentParts(contentPartsFromAny(existing), incomingParts)
+	}
+	if existingItems, ok := existing.([]any); ok {
+		return mergeChatAnyContent(existingItems, incoming)
+	}
+	if incomingItems, ok := incoming.([]any); ok {
+		return mergeChatAnyContent(anyContentFromValue(existing), incomingItems)
+	}
+
+	existingText := chatToolResultContentText(existing)
+	incomingText := chatToolResultContentText(incoming)
+	if existingText == "" {
+		return incomingText
+	}
+	if incomingText == "" {
+		return existingText
+	}
+	return existingText + "\n" + incomingText
+}
+
+func mergeChatContentParts(existing []ContentPart, incoming any) []ContentPart {
+	merged := append([]ContentPart(nil), existing...)
+	incomingParts := contentPartsFromAny(incoming)
+	if len(merged) > 0 && len(incomingParts) > 0 {
+		merged = append(merged, ContentPart{Type: "text", Text: "\n"})
+	}
+	merged = append(merged, incomingParts...)
+	return merged
+}
+
+func contentPartsFromAny(content any) []ContentPart {
+	switch v := content.(type) {
+	case nil:
+		return nil
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []ContentPart{{Type: "text", Text: v}}
+	case []ContentPart:
+		return append([]ContentPart(nil), v...)
+	case []any:
+		parts := make([]ContentPart, 0, len(v))
+		for _, item := range v {
+			switch typed := item.(type) {
+			case ContentPart:
+				parts = append(parts, typed)
+			case map[string]any:
+				parts = append(parts, contentPartFromMap(typed))
+			default:
+				if text := chatToolResultContentText(typed); text != "" {
+					parts = append(parts, ContentPart{Type: "text", Text: text})
+				}
+			}
+		}
+		return parts
+	default:
+		if text := chatToolResultContentText(v); text != "" {
+			return []ContentPart{{Type: "text", Text: text}}
+		}
+		return nil
+	}
+}
+
+func contentPartFromMap(item map[string]any) ContentPart {
+	part := ContentPart{}
+	if value, ok := item["type"].(string); ok {
+		part.Type = value
+	}
+	if value, ok := item["text"].(string); ok {
+		part.Text = value
+	}
+	if rawImageURL, ok := item["image_url"]; ok {
+		if imageURL, ok := rawImageURL.(map[string]any); ok {
+			if value, ok := imageURL["url"].(string); ok {
+				part.ImageURL = &ImageURL{URL: value}
+				if detail, ok := imageURL["detail"].(string); ok {
+					part.ImageURL.Detail = detail
+				}
+			}
+		}
+	}
+	return part
+}
+
+func mergeChatAnyContent(existing []any, incoming any) []any {
+	merged := append([]any(nil), existing...)
+	incomingItems := anyContentFromValue(incoming)
+	if len(merged) > 0 && len(incomingItems) > 0 {
+		merged = append(merged, map[string]any{"type": "text", "text": "\n"})
+	}
+	merged = append(merged, incomingItems...)
+	return merged
+}
+
+func anyContentFromValue(content any) []any {
+	switch v := content.(type) {
+	case nil:
+		return nil
+	case string:
+		if v == "" {
+			return nil
+		}
+		return []any{map[string]any{"type": "text", "text": v}}
+	case []any:
+		return append([]any(nil), v...)
+	case []ContentPart:
+		items := make([]any, 0, len(v))
+		for _, part := range v {
+			items = append(items, part)
+		}
+		return items
+	default:
+		return []any{v}
+	}
+}
+
+func chatToolResultContentText(content any) string {
+	switch v := content.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case []ContentPart:
+		var text string
+		for _, part := range v {
+			if part.Text != "" {
+				text += part.Text
+			}
+		}
+		return text
+	case []any:
+		var text string
+		for _, item := range v {
+			if part, ok := item.(map[string]any); ok {
+				if value, ok := part["text"].(string); ok {
+					text += value
+				}
+			}
+		}
+		return text
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return string(data)
+	}
+}
+
+func normalizeChatToolSchemas(tools []ChatTool) []ChatTool {
+	if len(tools) == 0 {
+		return tools
+	}
+	normalized := make([]ChatTool, len(tools))
+	copy(normalized, tools)
+	for i := range normalized {
+		if normalized[i].Function.Parameters != nil {
+			normalized[i].Function.Parameters = normalizeProviderSchemaForSend(normalized[i].Function.Parameters)
+		}
+	}
+	return normalized
+}
+
+func normalizeProviderSchemaForSend(schema map[string]any) map[string]any {
+	if normalized := format.NormalizeFunctionToolSchema(schema); normalized != nil {
+		return normalized
+	}
+	return map[string]any{"type": "object"}
 }
 
 // readStream reads SSE lines from the HTTP response body and sends parsed

@@ -328,17 +328,19 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 	}
 
 	// Tools
+	var skippedTools []format.CoreTool
 	if len(req.Tools) > 0 {
 		anthropicReq.Tools = make([]Tool, 0, len(req.Tools))
 		for _, t := range req.Tools {
-			schema := cleanSchema(t.InputSchema)
-			if schema == nil {
-				schema = map[string]any{"type": "object"}
+			prepared, ok := format.PrepareFunctionProviderTool(t)
+			if !ok {
+				skippedTools = append(skippedTools, t)
+				continue
 			}
 			anthropicReq.Tools = append(anthropicReq.Tools, Tool{
-				Name:        t.Name,
-				Description: t.Description,
-				InputSchema: schema,
+				Name:        prepared.Name,
+				Description: prepared.Description,
+				InputSchema: prepared.InputSchema,
 			})
 		}
 	}
@@ -346,7 +348,16 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 	// ToolChoice
 	if req.ToolChoice != nil {
 		tc := a.toAnthropicToolChoice(*req.ToolChoice)
-		anthropicReq.ToolChoice = &tc
+		if len(skippedTools) > 0 && len(anthropicReq.Tools) == 0 {
+			tc = ToolChoice{}
+		} else if format.ShouldFallbackToolChoiceForSkippedTools(req.ToolChoice, skippedTools) {
+			tc = ToolChoice{Type: "auto"}
+		}
+		if tc.IsZero() {
+			anthropicReq.ToolChoice = nil
+		} else {
+			anthropicReq.ToolChoice = &tc
+		}
 	} else if len(anthropicReq.Tools) > 0 {
 		// Only set tool_choice to auto if there are tools defined.
 		// Otherwise, upstream providers like DashScope will reject the request.

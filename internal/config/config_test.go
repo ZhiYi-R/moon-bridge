@@ -1141,3 +1141,35 @@ routes:
 		t.Fatalf("DisplayName = %q, want \"My Custom Display Name\"", route.DisplayName)
 	}
 }
+
+func TestWebSearchKeyOnlyOverridesAreResolvedForModel(t *testing.T) {
+	cfg, err := config.LoadFromYAML([]byte(`
+mode: Transform
+providers:
+  main:
+    base_url: https://example.test
+    api_key: test
+    offers:
+      - model: provider-model
+models:
+  provider-model:
+    web_search:
+      tavily_api_key: provider-model-key
+routes:
+  route-model:
+    model: provider-model
+    provider: main
+    web_search:
+      tavily_api_key: route-key
+`))
+	if err != nil {
+		t.Fatalf("LoadFromYAML() error = %v", err)
+	}
+
+	if got := cfg.WebSearchTavilyKeyForModel("route-model"); got != "route-key" {
+		t.Fatalf("WebSearchTavilyKeyForModel(route-model) = %q, want route-key", got)
+	}
+	if got := cfg.WebSearchTavilyKeyForModel("main/provider-model"); got != "provider-model-key" {
+		t.Fatalf("WebSearchTavilyKeyForModel(main/provider-model) = %q, want provider-model-key", got)
+	}
+}

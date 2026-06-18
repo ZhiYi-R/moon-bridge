@@ -144,12 +144,16 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 	if len(req.Tools) > 0 {
 		geminiReq.Tools = make([]Tool, 0, len(req.Tools))
 		for _, t := range req.Tools {
+			prepared, ok := format.PrepareFunctionProviderTool(t)
+			if !ok {
+				continue
+			}
 			geminiReq.Tools = append(geminiReq.Tools, Tool{
 				FunctionDeclarations: []FunctionDeclaration{
 					{
-						Name:        t.Name,
-						Description: t.Description,
-						Parameters:  t.InputSchema,
+						Name:        prepared.Name,
+						Description: prepared.Description,
+						Parameters:  prepared.InputSchema,
 					},
 				},
 			})

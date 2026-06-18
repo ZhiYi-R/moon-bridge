@@ -594,7 +594,7 @@ func (cfg Config) webSearchConfigForModel(modelAlias string) WebSearchConfig {
 	var providerKey string
 	var upstreamModel string
 	if route, ok := cfg.Routes[modelAlias]; ok {
-		if route.WebSearch.Support != "" {
+		if hasWebSearchConfig(route.WebSearch) {
 			return route.WebSearch
 		}
 		providerKey = route.Provider
@@ -605,7 +605,7 @@ func (cfg Config) webSearchConfigForModel(modelAlias string) WebSearchConfig {
 	}
 	if providerKey != "" {
 		if def, ok := cfg.ProviderDefs[providerKey]; ok {
-			if meta, ok := def.Models[upstreamModel]; ok && meta.WebSearch.Support != "" {
+			if meta, ok := def.Models[upstreamModel]; ok && hasWebSearchConfig(meta.WebSearch) {
 				return meta.WebSearch
 			}
 		}
@@ -613,12 +613,21 @@ func (cfg Config) webSearchConfigForModel(modelAlias string) WebSearchConfig {
 	// Pure model name: check provider catalog.
 	for _, def := range cfg.ProviderDefs {
 		if meta, ok := def.Models[modelAlias]; ok {
-			if meta.WebSearch.Support != "" {
+			if hasWebSearchConfig(meta.WebSearch) {
 				return meta.WebSearch
 			}
 		}
 	}
 	return WebSearchConfig{}
+}
+
+func hasWebSearchConfig(ws WebSearchConfig) bool {
+	return ws.Support != "" ||
+		ws.MaxUses != 0 ||
+		ws.TavilyAPIKey != "" ||
+		ws.FirecrawlAPIKey != "" ||
+		ws.SearchMaxRounds != 0 ||
+		len(ws.Extra) > 0
 }
 
 // WebSearchMaxUsesForModel returns the max uses for a given model alias.

@@ -104,8 +104,12 @@ func (server *AnthropicServer) serveProxy(writer http.ResponseWriter, request *h
 		Body:       mbtrace.RawJSONOrString(responseBody.Bytes()),
 	}
 	if copyErr != nil {
-		log.Error("复制上游响应失败", "error", copyErr)
-		record.Error = map[string]string{"stage": "copy_upstream_response", "message": copyErr.Error()}
+		if isClientCanceledCopyError(request, copyErr) {
+			log.Debug("客户端取消，停止复制上游响应", "error", copyErr)
+		} else {
+			log.Error("复制上游响应失败", "error", copyErr)
+			record.Error = map[string]string{"stage": "copy_upstream_response", "message": copyErr.Error()}
+		}
 	}
 	log.Info("代理响应", "status", upstreamResponse.StatusCode, "bytes", responseBody.Len())
 	writeTrace(server.tracer, server.traceErrors, record)

@@ -558,6 +558,267 @@ func TestCreateChat_Success(t *testing.T) {
 	}
 }
 
+func TestCreateChat_NormalizesToolSchemaBeforeSend(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload chat.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("Decode request error = %v", err)
+		}
+		if len(payload.Tools) != 1 {
+			t.Fatalf("tools = %d, want 1", len(payload.Tools))
+		}
+		assertRequiredAny(t, payload.Tools[0].Function.Parameters, []string{"action", "app", "element_index"})
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-123","object":"chat.completion","choices":[]}`))
+	}))
+	defer srv.Close()
+
+	parameters := map[string]any{
+		"type":     "object",
+		"required": json.RawMessage(`["action","app","element_index","action"]`),
+		"properties": map[string]any{
+			"action":        map[string]any{"type": "string"},
+			"app":           map[string]any{"type": "string"},
+			"element_index": map[string]any{"type": "integer"},
+		},
+	}
+	client := newTestClient(t, srv)
+	_, err := client.CreateChat(context.Background(), &chat.ChatRequest{
+		Model:    "gpt-4o",
+		Messages: []chat.ChatMessage{{Role: "user", Content: "hi"}},
+		Tools: []chat.ChatTool{{
+			Type: "function",
+			Function: chat.FunctionDef{
+				Name:       "mcp__computer_use",
+				Parameters: parameters,
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parameters["required"].(json.RawMessage); !ok {
+		t.Fatal("original parameters required was mutated")
+	}
+}
+
+func TestCreateChat_MergesDuplicateToolCallIDBeforeSend(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload chat.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("Decode request error = %v", err)
+		}
+
+		var toolMessages []chat.ChatMessage
+		for _, msg := range payload.Messages {
+			if msg.Role == "tool" {
+				toolMessages = append(toolMessages, msg)
+			}
+		}
+		if len(toolMessages) != 1 {
+			t.Fatalf("tool messages = %d, want 1: %+v", len(toolMessages), toolMessages)
+		}
+		if toolMessages[0].ToolCallID != "call_dup" {
+			t.Fatalf("tool_call_id = %q, want call_dup", toolMessages[0].ToolCallID)
+		}
+		content, ok := toolMessages[0].Content.(string)
+		if !ok || content != "first\nsecond" {
+			t.Fatalf("tool content = %#v (%T), want merged text", toolMessages[0].Content, toolMessages[0].Content)
+		}
+
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-123","object":"chat.completion","choices":[]}`))
+	}))
+	defer srv.Close()
+
+	req := &chat.ChatRequest{
+		Model: "gpt-4o",
+		Messages: []chat.ChatMessage{
+			{
+				Role: "assistant",
+				ToolCalls: []chat.ToolCall{{
+					ID:   "call_dup",
+					Type: "function",
+					Function: chat.ToolCallFunc{
+						Name:      "lookup",
+						Arguments: json.RawMessage(`{}`),
+					},
+				}},
+			},
+			{Role: "tool", ToolCallID: "call_dup", Content: "first"},
+			{Role: "tool", ToolCallID: "call_dup", Content: "second"},
+		},
+	}
+
+	client := newTestClient(t, srv)
+	if _, err := client.CreateChat(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Messages) != 3 {
+		t.Fatalf("original messages = %d, want 3", len(req.Messages))
+	}
+	if req.Messages[1].Content != "first" || req.Messages[2].Content != "second" {
+		t.Fatalf("original request content was mutated: %+v", req.Messages)
+	}
+}
+
+func TestCreateChat_RenamesDuplicateToolCallIDPairsAcrossAssistantRoundsBeforeSend(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload chat.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("Decode request error = %v", err)
+		}
+		if len(payload.Messages) != 4 {
+			t.Fatalf("messages = %d, want 4: %+v", len(payload.Messages), payload.Messages)
+		}
+
+		firstID := payload.Messages[0].ToolCalls[0].ID
+		firstToolID := payload.Messages[1].ToolCallID
+		secondID := payload.Messages[2].ToolCalls[0].ID
+		secondToolID := payload.Messages[3].ToolCallID
+		if firstID != "call_reused" || firstToolID != firstID {
+			t.Fatalf("first pair IDs: assistant=%q tool=%q", firstID, firstToolID)
+		}
+		if secondID == "" || secondID == "call_reused" || secondToolID != secondID {
+			t.Fatalf("second pair IDs: assistant=%q tool=%q", secondID, secondToolID)
+		}
+		if firstID == secondID {
+			t.Fatalf("tool_call_id was reused: %q", firstID)
+		}
+		if payload.Messages[1].Content != "first result" || payload.Messages[3].Content != "second result" {
+			t.Fatalf("tool contents changed: %+v", payload.Messages)
+		}
+
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-123","object":"chat.completion","choices":[]}`))
+	}))
+	defer srv.Close()
+
+	req := &chat.ChatRequest{
+		Model: "gpt-4o",
+		Messages: []chat.ChatMessage{
+			{
+				Role: "assistant",
+				ToolCalls: []chat.ToolCall{{
+					ID:   "call_reused",
+					Type: "function",
+					Function: chat.ToolCallFunc{
+						Name:      "lookup",
+						Arguments: json.RawMessage(`{"q":"first"}`),
+					},
+				}},
+			},
+			{Role: "tool", ToolCallID: "call_reused", Content: "first result"},
+			{
+				Role: "assistant",
+				ToolCalls: []chat.ToolCall{{
+					ID:   "call_reused",
+					Type: "function",
+					Function: chat.ToolCallFunc{
+						Name:      "lookup",
+						Arguments: json.RawMessage(`{"q":"second"}`),
+					},
+				}},
+			},
+			{Role: "tool", ToolCallID: "call_reused", Content: "second result"},
+		},
+	}
+
+	client := newTestClient(t, srv)
+	if _, err := client.CreateChat(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if req.Messages[0].ToolCalls[0].ID != "call_reused" || req.Messages[2].ToolCalls[0].ID != "call_reused" {
+		t.Fatalf("original request tool call IDs were mutated: %+v", req.Messages)
+	}
+	if req.Messages[3].ToolCallID != "call_reused" {
+		t.Fatalf("original request tool result ID was mutated: %+v", req.Messages[3])
+	}
+}
+
+func TestCreateChat_MergesStructuredDuplicateToolContentBeforeSend(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload chat.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("Decode request error = %v", err)
+		}
+
+		var toolMessages []chat.ChatMessage
+		for _, msg := range payload.Messages {
+			if msg.Role == "tool" {
+				toolMessages = append(toolMessages, msg)
+			}
+		}
+		if len(toolMessages) != 1 {
+			t.Fatalf("tool messages = %d, want 1: %+v", len(toolMessages), toolMessages)
+		}
+		parts, ok := toolMessages[0].Content.([]any)
+		if !ok {
+			t.Fatalf("tool content = %T, want []any", toolMessages[0].Content)
+		}
+		if len(parts) != 4 {
+			t.Fatalf("content parts = %d, want 4: %#v", len(parts), parts)
+		}
+		if imagePart, ok := parts[1].(map[string]any); !ok || imagePart["type"] != "image_url" {
+			t.Fatalf("image part was not preserved: %#v", parts[1])
+		}
+		if newline, ok := parts[2].(map[string]any); !ok || newline["text"] != "\n" {
+			t.Fatalf("newline separator missing: %#v", parts[2])
+		}
+
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"id":"chatcmpl-123","object":"chat.completion","choices":[]}`))
+	}))
+	defer srv.Close()
+
+	req := &chat.ChatRequest{
+		Model: "gpt-4o",
+		Messages: []chat.ChatMessage{
+			{
+				Role: "assistant",
+				ToolCalls: []chat.ToolCall{{
+					ID:   "call_dup",
+					Type: "function",
+					Function: chat.ToolCallFunc{
+						Name:      "lookup",
+						Arguments: json.RawMessage(`{}`),
+					},
+				}},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_dup",
+				Content: []chat.ContentPart{
+					{Type: "text", Text: "first"},
+					{Type: "image_url", ImageURL: &chat.ImageURL{URL: "https://example.com/a.png"}},
+				},
+			},
+			{
+				Role:       "tool",
+				ToolCallID: "call_dup",
+				Content: []chat.ContentPart{
+					{Type: "text", Text: "second"},
+				},
+			},
+		},
+	}
+
+	client := newTestClient(t, srv)
+	if _, err := client.CreateChat(context.Background(), req); err != nil {
+		t.Fatal(err)
+	}
+	if len(req.Messages) != 3 {
+		t.Fatalf("original messages = %d, want 3", len(req.Messages))
+	}
+	if _, ok := req.Messages[1].Content.([]chat.ContentPart); !ok {
+		t.Fatalf("original structured content was mutated: %T", req.Messages[1].Content)
+	}
+}
+
 func TestCreateChat_HTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
@@ -1183,6 +1444,125 @@ func TestFromCoreRequest_Tools(t *testing.T) {
 	}
 }
 
+func TestFromCoreRequest_ToolsNormalizeRequiredForFunctionProviders(t *testing.T) {
+	adapter := newTestAdapter()
+	result, err := adapter.FromCoreRequest(context.Background(), &format.CoreRequest{
+		Model: "gpt-4o",
+		Messages: []format.CoreMessage{
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "use computer"}}},
+		},
+		Tools: []format.CoreTool{
+			{
+				Name:        "mcp__computer_use",
+				Description: "Use computer",
+				InputSchema: map[string]any{
+					"type":     "object",
+					"required": []any{"action", "app", "element_index", "action"},
+					"properties": map[string]any{
+						"action":        map[string]any{"type": "string"},
+						"app":           map[string]any{"type": "string"},
+						"element_index": map[string]any{"type": "integer"},
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatReq := result.(*chat.ChatRequest)
+	if len(chatReq.Tools) != 1 {
+		t.Fatalf("Tools: got %d, want 1", len(chatReq.Tools))
+	}
+	required := chatReq.Tools[0].Function.Parameters["required"].([]any)
+	assertAnyStringSlice(t, required, []string{"action", "app", "element_index"})
+}
+
+func TestFromCoreRequest_SkipsUnconvertibleToolsAndFallbacksToolChoice(t *testing.T) {
+	adapter := newTestAdapter()
+	rawChoice := json.RawMessage(`{"type":"function","function":{"name":"image_generation"}}`)
+	result, err := adapter.FromCoreRequest(context.Background(), &format.CoreRequest{
+		Model: "gpt-4o",
+		Messages: []format.CoreMessage{
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "make an image"}}},
+		},
+		Tools: []format.CoreTool{
+			{Extensions: map[string]any{"source_type": "image_generation"}},
+			{Name: "get_weather", Description: "Get weather", InputSchema: map[string]any{"type": "object"}},
+		},
+		ToolChoice: &format.CoreToolChoice{
+			Mode: "function",
+			Name: "image_generation",
+			Raw:  rawChoice,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatReq := result.(*chat.ChatRequest)
+	if len(chatReq.Tools) != 1 {
+		t.Fatalf("Tools: got %d, want 1", len(chatReq.Tools))
+	}
+	if chatReq.Tools[0].Function.Name != "get_weather" {
+		t.Fatalf("Tool name = %q, want get_weather", chatReq.Tools[0].Function.Name)
+	}
+	var choice string
+	if err := json.Unmarshal(chatReq.ToolChoice, &choice); err != nil {
+		t.Fatalf("ToolChoice not string JSON: %s", string(chatReq.ToolChoice))
+	}
+	if choice != "auto" {
+		t.Errorf("ToolChoice = %q, want auto", choice)
+	}
+}
+
+func TestFromCoreRequest_SkipsOnlyUnconvertibleToolAndOmitsToolChoice(t *testing.T) {
+	adapter := newTestAdapter()
+	tests := []struct {
+		name       string
+		toolChoice *format.CoreToolChoice
+	}{
+		{
+			name: "forced skipped tool",
+			toolChoice: &format.CoreToolChoice{
+				Mode: "image_generation",
+				Raw:  json.RawMessage(`{"type":"image_generation"}`),
+			},
+		},
+		{
+			name:       "explicit auto",
+			toolChoice: &format.CoreToolChoice{Mode: "auto"},
+		},
+		{
+			name:       "raw auto",
+			toolChoice: &format.CoreToolChoice{Mode: "auto", Raw: json.RawMessage(`"auto"`)},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := adapter.FromCoreRequest(context.Background(), &format.CoreRequest{
+				Model: "gpt-4o",
+				Messages: []format.CoreMessage{
+					{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "make an image"}}},
+				},
+				Tools: []format.CoreTool{
+					{Extensions: map[string]any{"source_type": "image_generation"}},
+				},
+				ToolChoice: tt.toolChoice,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			chatReq := result.(*chat.ChatRequest)
+			if len(chatReq.Tools) != 0 {
+				t.Fatalf("Tools: got %d, want 0", len(chatReq.Tools))
+			}
+			if len(chatReq.ToolChoice) != 0 {
+				t.Fatalf("ToolChoice = %s, want omitted", string(chatReq.ToolChoice))
+			}
+		})
+	}
+}
+
 func TestFromCoreRequest_ToolChoice(t *testing.T) {
 	adapter := newTestAdapter()
 	tests := []struct {
@@ -1299,6 +1679,127 @@ func TestFromCoreRequest_ToolUseAndToolResult(t *testing.T) {
 	}
 	if chatReq.Messages[1].ToolCallID != "call_xyz" {
 		t.Errorf("Messages[1].ToolCallID = %q, want call_xyz", chatReq.Messages[1].ToolCallID)
+	}
+}
+
+func TestFromCoreRequest_MergesDuplicateToolResultsForChat(t *testing.T) {
+	adapter := newTestAdapter()
+	result, err := adapter.FromCoreRequest(context.Background(), &format.CoreRequest{
+		Model: "gpt-4o",
+		Messages: []format.CoreMessage{
+			{
+				Role: "assistant",
+				Content: []format.CoreContentBlock{
+					{Type: "tool_use", ToolUseID: "call_dup", ToolName: "lookup", ToolInput: json.RawMessage(`{"q":"one"}`)},
+					{Type: "tool_use", ToolUseID: "call_other", ToolName: "lookup", ToolInput: json.RawMessage(`{"q":"two"}`)},
+				},
+			},
+			{
+				Role: "tool",
+				Content: []format.CoreContentBlock{
+					{Type: "tool_result", ToolUseID: "call_dup", ToolResultContent: []format.CoreContentBlock{
+						{Type: "text", Text: "first"},
+					}},
+					{Type: "tool_result", ToolUseID: "call_other", ToolResultContent: []format.CoreContentBlock{
+						{Type: "text", Text: "other"},
+					}},
+				},
+			},
+			{
+				Role: "tool",
+				Content: []format.CoreContentBlock{
+					{Type: "tool_result", ToolUseID: "call_dup", ToolResultContent: []format.CoreContentBlock{
+						{Type: "text", Text: "second"},
+					}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chatReq := result.(*chat.ChatRequest)
+	if len(chatReq.Messages) != 3 {
+		t.Fatalf("Messages: got %d, want 3: %+v", len(chatReq.Messages), chatReq.Messages)
+	}
+	if len(chatReq.Messages[0].ToolCalls) != 2 {
+		t.Fatalf("assistant tool calls = %d, want 2", len(chatReq.Messages[0].ToolCalls))
+	}
+	if chatReq.Messages[1].Role != "tool" || chatReq.Messages[1].ToolCallID != "call_dup" {
+		t.Fatalf("Messages[1] = %+v, want call_dup tool result", chatReq.Messages[1])
+	}
+	if content, ok := chatReq.Messages[1].Content.(string); !ok || content != "first\nsecond" {
+		t.Fatalf("Messages[1].Content = %#v (%T), want merged duplicate result", chatReq.Messages[1].Content, chatReq.Messages[1].Content)
+	}
+	if chatReq.Messages[2].Role != "tool" || chatReq.Messages[2].ToolCallID != "call_other" {
+		t.Fatalf("Messages[2] = %+v, want call_other tool result", chatReq.Messages[2])
+	}
+	if content, ok := chatReq.Messages[2].Content.(string); !ok || content != "other" {
+		t.Fatalf("Messages[2].Content = %#v (%T), want other", chatReq.Messages[2].Content, chatReq.Messages[2].Content)
+	}
+}
+
+func TestFromCoreRequest_RenamesDuplicateToolIDAcrossAssistantRounds(t *testing.T) {
+	adapter := newTestAdapter()
+	result, err := adapter.FromCoreRequest(context.Background(), &format.CoreRequest{
+		Model: "gpt-4o",
+		Messages: []format.CoreMessage{
+			{
+				Role: "assistant",
+				Content: []format.CoreContentBlock{
+					{Type: "tool_use", ToolUseID: "call_reused", ToolName: "lookup", ToolInput: json.RawMessage(`{"q":"first"}`)},
+				},
+			},
+			{
+				Role: "tool",
+				Content: []format.CoreContentBlock{
+					{Type: "tool_result", ToolUseID: "call_reused", ToolResultContent: []format.CoreContentBlock{
+						{Type: "text", Text: "first result"},
+					}},
+				},
+			},
+			{
+				Role: "assistant",
+				Content: []format.CoreContentBlock{
+					{Type: "tool_use", ToolUseID: "call_reused", ToolName: "lookup", ToolInput: json.RawMessage(`{"q":"second"}`)},
+				},
+			},
+			{
+				Role: "tool",
+				Content: []format.CoreContentBlock{
+					{Type: "tool_result", ToolUseID: "call_reused", ToolResultContent: []format.CoreContentBlock{
+						{Type: "text", Text: "second result"},
+					}},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chatReq := result.(*chat.ChatRequest)
+	if len(chatReq.Messages) != 4 {
+		t.Fatalf("Messages: got %d, want 4: %+v", len(chatReq.Messages), chatReq.Messages)
+	}
+	firstID := chatReq.Messages[0].ToolCalls[0].ID
+	firstToolID := chatReq.Messages[1].ToolCallID
+	secondID := chatReq.Messages[2].ToolCalls[0].ID
+	secondToolID := chatReq.Messages[3].ToolCallID
+	if firstID != "call_reused" || firstToolID != firstID {
+		t.Fatalf("first pair IDs: assistant=%q tool=%q", firstID, firstToolID)
+	}
+	if secondID == "" || secondID == "call_reused" || secondToolID != secondID {
+		t.Fatalf("second pair IDs: assistant=%q tool=%q", secondID, secondToolID)
+	}
+	if firstID == secondID {
+		t.Fatalf("tool_call_id was reused: %q", firstID)
+	}
+	firstContent, _ := chatReq.Messages[1].Content.(string)
+	secondContent, _ := chatReq.Messages[3].Content.(string)
+	if firstContent != "first result" || secondContent != "second result" {
+		t.Fatalf("tool results were merged across rounds: first=%q second=%q", firstContent, secondContent)
 	}
 }
 
@@ -2099,6 +2600,31 @@ func TestFromCoreRequest_ToolChoiceUnknownMode(t *testing.T) {
 			t.Errorf("ToolChoice type = %v, want function", tc["type"])
 		}
 	})
+}
+
+func assertAnyStringSlice(t *testing.T, got []any, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("slice = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		item, ok := got[i].(string)
+		if !ok {
+			t.Fatalf("slice[%d] = %T, want string", i, got[i])
+		}
+		if item != want[i] {
+			t.Fatalf("slice = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func assertRequiredAny(t *testing.T, schema map[string]any, want []string) {
+	t.Helper()
+	required, ok := schema["required"].([]any)
+	if !ok {
+		t.Fatalf("required = %T, want []any", schema["required"])
+	}
+	assertAnyStringSlice(t, required, want)
 }
 
 func TestFromCoreRequest_DefaultMaxTokens(t *testing.T) {

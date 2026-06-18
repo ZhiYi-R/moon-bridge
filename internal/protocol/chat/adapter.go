@@ -90,7 +90,7 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 	}
 
 	// Messages.
-	for _, msg := range req.Messages {
+	for _, msg := range normalizeChatToolResultMessages(req.Messages) {
 		chatMsg := a.toChatMessage(msg)
 		// Skip messages with neither text content nor tool calls — empty messages
 		// contribute no semantic value and may be rejected by some upstreams.
@@ -99,6 +99,7 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 		}
 		chatReq.Messages = append(chatReq.Messages, chatMsg)
 	}
+	chatReq.Messages = legalizeChatToolCallWireMessages(chatReq.Messages)
 
 	// Sampling parameters.
 	if req.Temperature != nil {
@@ -117,15 +118,21 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 	}
 
 	// Tools.
+	var skippedTools []format.CoreTool
 	if len(req.Tools) > 0 {
 		chatReq.Tools = make([]ChatTool, 0, len(req.Tools))
 		for _, t := range req.Tools {
+			prepared, ok := format.PrepareFunctionProviderTool(t)
+			if !ok {
+				skippedTools = append(skippedTools, t)
+				continue
+			}
 			chatReq.Tools = append(chatReq.Tools, ChatTool{
 				Type: "function",
 				Function: FunctionDef{
-					Name:        t.Name,
-					Description: t.Description,
-					Parameters:  t.InputSchema,
+					Name:        prepared.Name,
+					Description: prepared.Description,
+					Parameters:  prepared.InputSchema,
 				},
 			})
 		}
@@ -133,7 +140,13 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 
 	// ToolChoice.
 	if req.ToolChoice != nil {
-		if req.ToolChoice.Raw != nil {
+		if len(skippedTools) > 0 && len(chatReq.Tools) == 0 {
+			chatReq.ToolChoice = nil
+		} else if format.ShouldFallbackToolChoiceForSkippedTools(req.ToolChoice, skippedTools) {
+			if len(chatReq.Tools) > 0 {
+				chatReq.ToolChoice = a.toChatToolChoice(format.CoreToolChoice{Mode: "auto"})
+			}
+		} else if req.ToolChoice.Raw != nil {
 			chatReq.ToolChoice = req.ToolChoice.Raw
 		} else {
 			chatReq.ToolChoice = a.toChatToolChoice(*req.ToolChoice)
@@ -656,6 +669,113 @@ func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage 
 	}
 
 	return chatMsg
+}
+
+func normalizeChatToolResultMessages(messages []format.CoreMessage) []format.CoreMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+
+	normalized := make([]format.CoreMessage, 0, len(messages))
+	toolResultIndexByID := make(map[string]int)
+
+	for _, msg := range messages {
+		if messageHasToolUse(msg) {
+			toolResultIndexByID = make(map[string]int)
+		}
+
+		if msg.Role != "tool" {
+			normalized = append(normalized, msg)
+			continue
+		}
+
+		toolResults := toolResultBlocks(msg.Content)
+		if len(toolResults) == 0 {
+			normalized = append(normalized, msg)
+			continue
+		}
+
+		for _, block := range toolResults {
+			if block.ToolUseID != "" {
+				if existingIndex, ok := toolResultIndexByID[block.ToolUseID]; ok {
+					mergeToolResultIntoMessage(&normalized[existingIndex], block)
+					continue
+				}
+			}
+
+			next := format.CoreMessage{
+				Role:       msg.Role,
+				Content:    []format.CoreContentBlock{block},
+				Extensions: msg.Extensions,
+			}
+			normalized = append(normalized, next)
+			if block.ToolUseID != "" {
+				toolResultIndexByID[block.ToolUseID] = len(normalized) - 1
+			}
+		}
+	}
+
+	return normalized
+}
+
+func messageHasToolUse(msg format.CoreMessage) bool {
+	if msg.Role != "assistant" {
+		return false
+	}
+	for _, block := range msg.Content {
+		if block.Type == "tool_use" {
+			return true
+		}
+	}
+	return false
+}
+
+func toolResultBlocks(blocks []format.CoreContentBlock) []format.CoreContentBlock {
+	results := make([]format.CoreContentBlock, 0, len(blocks))
+	for _, block := range blocks {
+		if block.Type == "tool_result" {
+			results = append(results, block)
+		}
+	}
+	return results
+}
+
+func mergeToolResultIntoMessage(msg *format.CoreMessage, block format.CoreContentBlock) {
+	for i := range msg.Content {
+		if msg.Content[i].Type == "tool_result" && msg.Content[i].ToolUseID == block.ToolUseID {
+			msg.Content[i].ToolResultContent = mergeToolResultContent(
+				msg.Content[i].ToolResultContent,
+				block.ToolResultContent,
+			)
+			return
+		}
+	}
+	msg.Content = append(msg.Content, block)
+}
+
+func mergeToolResultContent(existing, incoming []format.CoreContentBlock) []format.CoreContentBlock {
+	if len(existing) == 0 {
+		return append([]format.CoreContentBlock(nil), incoming...)
+	}
+	if len(incoming) == 0 {
+		return existing
+	}
+	merged := make([]format.CoreContentBlock, 0, len(existing)+len(incoming)+1)
+	merged = append(merged, existing...)
+	if toolResultContentHasText(existing) && toolResultContentHasText(incoming) {
+		merged = append(merged, format.CoreContentBlock{Type: "text", Text: "\n"})
+	}
+	merged = append(merged, incoming...)
+	return merged
+}
+
+func toolResultContentHasText(blocks []format.CoreContentBlock) bool {
+	for _, block := range blocks {
+		if block.Text != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // toChatContent converts []CoreContentBlock to a Chat content value.

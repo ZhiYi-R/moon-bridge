@@ -2,14 +2,37 @@ package proxy
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
+	"syscall"
 
 	mbtrace "moonbridge/internal/service/trace"
 )
+
+type copyErrorSource string
+
+const (
+	copyErrorSourceRead  copyErrorSource = "read"
+	copyErrorSourceWrite copyErrorSource = "write"
+)
+
+type streamingCopyError struct {
+	source copyErrorSource
+	err    error
+}
+
+func (err *streamingCopyError) Error() string {
+	return err.err.Error()
+}
+
+func (err *streamingCopyError) Unwrap() error {
+	return err.err
+}
 
 type HeaderOverride func(http.Header)
 
@@ -113,7 +136,7 @@ func copyStreaming(writer http.ResponseWriter, reader io.Reader, capture *bytes.
 		if n > 0 {
 			chunk := buffer[:n]
 			if _, err := writer.Write(chunk); err != nil {
-				return err
+				return &streamingCopyError{source: copyErrorSourceWrite, err: err}
 			}
 			_, _ = capture.Write(chunk)
 			if flusher != nil {
@@ -124,7 +147,36 @@ func copyStreaming(writer http.ResponseWriter, reader io.Reader, capture *bytes.
 			return nil
 		}
 		if readErr != nil {
-			return readErr
+			return &streamingCopyError{source: copyErrorSourceRead, err: readErr}
 		}
 	}
+}
+
+func isClientCanceledCopyError(request *http.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	var copyErr *streamingCopyError
+	if errors.As(err, &copyErr) {
+		if copyErr.source == copyErrorSourceRead && (request == nil || !errors.Is(request.Context().Err(), context.Canceled)) {
+			return false
+		}
+	}
+	if errors.Is(err, http.ErrAbortHandler) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	if request != nil && errors.Is(request.Context().Err(), context.Canceled) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) {
+		return copyErr != nil && copyErr.source == copyErrorSourceWrite
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "context canceled") ||
+		strings.Contains(message, "broken pipe") ||
+		strings.Contains(message, "connection reset by peer") ||
+		strings.Contains(message, "client disconnected") ||
+		strings.Contains(message, "use of closed network connection")
 }

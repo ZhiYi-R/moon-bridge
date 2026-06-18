@@ -351,6 +351,93 @@ func TestGenerateContent_Success(t *testing.T) {
 	}
 }
 
+func TestGenerateContent_NormalizesToolSchemaBeforeSend(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload google.GenerateContentRequest
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("Decode request error = %v", err)
+		}
+		if len(payload.Tools) != 1 || len(payload.Tools[0].FunctionDeclarations) != 1 {
+			t.Fatalf("tools = %+v, want one declaration", payload.Tools)
+		}
+		assertRequiredAny(t, payload.Tools[0].FunctionDeclarations[0].Parameters, []string{"action", "app", "element_index"})
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"candidates":[]}`))
+	}))
+	defer srv.Close()
+
+	parameters := map[string]any{
+		"type":     "object",
+		"required": json.RawMessage(`["action","app","element_index","action"]`),
+		"properties": map[string]any{
+			"action":        map[string]any{"type": "string"},
+			"app":           map[string]any{"type": "string"},
+			"element_index": map[string]any{"type": "integer"},
+		},
+	}
+	client := newTestClient(t, srv)
+	_, err := client.GenerateContent(context.Background(), "gemini-2.0-flash", &google.GenerateContentRequest{
+		Contents: []google.Content{{Role: "user", Parts: []google.Part{{Text: "hi"}}}},
+		Tools: []google.Tool{{
+			FunctionDeclarations: []google.FunctionDeclaration{{
+				Name:       "mcp__computer_use",
+				Parameters: parameters,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parameters["required"].(json.RawMessage); !ok {
+		t.Fatal("original parameters required was mutated")
+	}
+}
+
+func TestCreateCachedContent_NormalizesToolSchemaBeforeSend(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload google.CachedContent
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("Decode request error = %v", err)
+		}
+		if len(payload.Tools) != 1 || len(payload.Tools[0].FunctionDeclarations) != 1 {
+			t.Fatalf("tools = %+v, want one declaration", payload.Tools)
+		}
+		assertRequiredAny(t, payload.Tools[0].FunctionDeclarations[0].Parameters, []string{"action", "app", "element_index"})
+		w.Header().Set("content-type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"name":"cachedContents/test","model":"models/gemini-2.0-flash","contents":[]}`))
+	}))
+	defer srv.Close()
+
+	parameters := map[string]any{
+		"type":     "object",
+		"required": json.RawMessage(`["action","app","element_index","action"]`),
+		"properties": map[string]any{
+			"action":        map[string]any{"type": "string"},
+			"app":           map[string]any{"type": "string"},
+			"element_index": map[string]any{"type": "integer"},
+		},
+	}
+	client := newTestClient(t, srv)
+	_, err := client.CreateCachedContent(context.Background(), &google.CachedContent{
+		Model:    "models/gemini-2.0-flash",
+		Contents: []google.Content{{Role: "user", Parts: []google.Part{{Text: "hi"}}}},
+		Tools: []google.Tool{{
+			FunctionDeclarations: []google.FunctionDeclaration{{
+				Name:       "mcp__computer_use",
+				Parameters: parameters,
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := parameters["required"].(json.RawMessage); !ok {
+		t.Fatal("original cached parameters required was mutated")
+	}
+}
+
 func TestGenerateContent_EmptyCandidate(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "application/json")
@@ -882,6 +969,74 @@ func TestFromCoreRequest_Tools(t *testing.T) {
 	}
 }
 
+func TestFromCoreRequest_ToolsNormalizeRequiredForFunctionProviders(t *testing.T) {
+	adapter := newTestAdapter()
+	coreReq := &format.CoreRequest{
+		Model: "test",
+		Messages: []format.CoreMessage{
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "use computer"}}},
+		},
+		Tools: []format.CoreTool{
+			{
+				Name:        "mcp__computer_use",
+				Description: "Use computer",
+				InputSchema: map[string]any{
+					"type":     "object",
+					"required": []any{"action", "app", "element_index", "action"},
+					"properties": map[string]any{
+						"action":        map[string]any{"type": "string"},
+						"app":           map[string]any{"type": "string"},
+						"element_index": map[string]any{"type": "integer"},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := adapter.FromCoreRequest(context.Background(), coreReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	geminiReq := result.(*google.GenerateContentRequest)
+	if len(geminiReq.Tools) != 1 {
+		t.Fatalf("Tools: got %d, want 1", len(geminiReq.Tools))
+	}
+	params := geminiReq.Tools[0].FunctionDeclarations[0].Parameters
+	required := params["required"].([]any)
+	assertAnyStringSlice(t, required, []string{"action", "app", "element_index"})
+}
+
+func TestFromCoreRequest_SkipsUnconvertibleTools(t *testing.T) {
+	adapter := newTestAdapter()
+	coreReq := &format.CoreRequest{
+		Model: "test",
+		Messages: []format.CoreMessage{
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "make an image"}}},
+		},
+		Tools: []format.CoreTool{
+			{Extensions: map[string]any{"source_type": "image_generation"}},
+			{Name: "get_weather", Description: "Get weather", InputSchema: map[string]any{"type": "object"}},
+		},
+		ToolChoice: &format.CoreToolChoice{Mode: "function", Name: "image_generation"},
+	}
+
+	result, err := adapter.FromCoreRequest(context.Background(), coreReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	geminiReq := result.(*google.GenerateContentRequest)
+	if len(geminiReq.Tools) != 1 {
+		t.Fatalf("Tools: got %d, want 1", len(geminiReq.Tools))
+	}
+	fn := geminiReq.Tools[0].FunctionDeclarations[0]
+	if fn.Name != "get_weather" {
+		t.Fatalf("FunctionDeclaration.Name = %q, want get_weather", fn.Name)
+	}
+	if len(geminiReq.ToolConfig) != 0 {
+		t.Fatalf("ToolConfig = %s, want empty", string(geminiReq.ToolConfig))
+	}
+}
+
 func TestFromCoreRequest_SafetySettingsMap(t *testing.T) {
 	adapter := newTestAdapter()
 	coreReq := &format.CoreRequest{
@@ -920,6 +1075,31 @@ func TestFromCoreRequest_SafetySettingsMap(t *testing.T) {
 	if found != 2 {
 		t.Errorf("found %d expected safety settings, want 2", found)
 	}
+}
+
+func assertAnyStringSlice(t *testing.T, got []any, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("slice = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		item, ok := got[i].(string)
+		if !ok {
+			t.Fatalf("slice[%d] = %T, want string", i, got[i])
+		}
+		if item != want[i] {
+			t.Fatalf("slice = %#v, want %#v", got, want)
+		}
+	}
+}
+
+func assertRequiredAny(t *testing.T, schema map[string]any, want []string) {
+	t.Helper()
+	required, ok := schema["required"].([]any)
+	if !ok {
+		t.Fatalf("required = %T, want []any", schema["required"])
+	}
+	assertAnyStringSlice(t, required, want)
 }
 
 func TestFromCoreRequest_GenerationConfigMap(t *testing.T) {

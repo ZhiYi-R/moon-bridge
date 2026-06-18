@@ -382,8 +382,10 @@ func (r *OpenAIStreamResult) Buffer() []any {
 // nestedBufferState tracks two-level buffering for nested namespace tool calls.
 type nestedBufferState struct {
 	toolUseID   string
-	toolName    string          // original namespace-expanded name
+	toolName    string // original namespace-expanded name
+	kind        codextool.ToolKind
 	actionName  string          // extracted sub-tool action name
+	emittedArgs string          // params-only arguments already emitted as deltas
 	namespace   string          // item namespace
 	outputIndex int             // index in response.Output
 	emitted     bool            // whether output_item.added has been sent
@@ -423,6 +425,79 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 	reasonIndexes := make(map[int]bool)
 	toolCallFinalized := make(map[int]bool)
 	nestedBuffers := make(map[int]*nestedBufferState)
+
+	finalizeNestedToolCall := func(index int, nBuf *nestedBufferState, finalArgs string) {
+		if finalArgs == "" {
+			finalArgs = nBuf.buf.String()
+		}
+
+		actionName := nBuf.actionName
+		if actionName == "" {
+			actionName = nBuf.toolName
+		}
+		arguments := finalArgs
+		if finalArgs != "" {
+			if action, params, err := codextool.DecodeNestedCall(json.RawMessage(finalArgs), nBuf.kind); err == nil && action != "" {
+				actionName = action
+				arguments = toolInputString(params)
+			}
+		}
+
+		item := OutputItem{
+			Type:      "function_call",
+			ID:        nBuf.toolUseID,
+			CallID:    nBuf.toolUseID,
+			Name:      actionName,
+			Namespace: nBuf.namespace,
+			Arguments: arguments,
+			Status:    "completed",
+		}
+
+		outIdx, hasOutput := outputIndexes[index]
+		if !nBuf.emitted || !hasOutput || outIdx < 0 || outIdx >= len(response.Output) {
+			outIdx = len(response.Output)
+			outputIndexes[index] = outIdx
+			nBuf.outputIndex = outIdx
+			response.Output = append(response.Output, item)
+			nBuf.emitted = true
+			send(StreamEvent{
+				Event: "response.output_item.added",
+				Data: OutputItemEvent{
+					Type:           "response.output_item.added",
+					SequenceNumber: next(),
+					OutputIndex:    outIdx,
+					Item:           item,
+				},
+			})
+		} else {
+			response.Output[outIdx].Name = item.Name
+			response.Output[outIdx].Namespace = item.Namespace
+			response.Output[outIdx].Arguments = item.Arguments
+			response.Output[outIdx].Status = item.Status
+		}
+
+		send(StreamEvent{
+			Event: "response.function_call_arguments.done",
+			Data: FunctionCallArgumentsDoneEvent{
+				Type:           "response.function_call_arguments.done",
+				SequenceNumber: next(),
+				ItemID:         itemIDs[index],
+				OutputIndex:    outIdx,
+				Arguments:      arguments,
+			},
+		})
+		send(StreamEvent{
+			Event: "response.output_item.done",
+			Data: OutputItemEvent{
+				Type:           "response.output_item.done",
+				SequenceNumber: next(),
+				OutputIndex:    outIdx,
+				Item:           response.Output[outIdx],
+			},
+		})
+		toolCallFinalized[index] = true
+		delete(nestedBuffers, index)
+	}
 
 	for event := range events {
 		// Let hooks skip events.
@@ -531,6 +606,7 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 					nestedBuffers[index] = &nestedBufferState{
 						toolUseID:   toolUseID,
 						toolName:    event.ContentBlock.ToolName,
+						kind:        spec.Kind,
 						namespace:   spec.Namespace,
 						emitted:     false,
 						outputIndex: -1,
@@ -754,64 +830,9 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 			}
 			finalArgs := event.Delta
 
-			// Check if this is a buffered nested namespace tool call that hasn't
-			// emitted yet (action never extracted — flush all buffered data).
 			if nBuf, isBuffered := nestedBuffers[index]; isBuffered {
-				if !nBuf.emitted {
-					// Action never extracted — flush everything as the original name.
-					nBuf.actionName = nBuf.toolName
-					finalCombined := nBuf.buf.String()
-					if finalArgs != "" && finalCombined == "" {
-						finalCombined = finalArgs
-					}
-					item := OutputItem{
-						Type:   "function_call",
-						ID:     nBuf.toolUseID,
-						CallID: nBuf.toolUseID,
-						Name:   nBuf.toolName,
-						Status: "completed",
-					}
-					if nBuf.namespace != "" {
-						item.Namespace = nBuf.namespace
-					}
-					item.Arguments = finalCombined
-					outputIndexes[index] = len(response.Output)
-					nBuf.outputIndex = outputIndexes[index]
-					response.Output = append(response.Output, item)
-					nBuf.emitted = true
-					send(StreamEvent{
-						Event: "response.output_item.added",
-						Data: OutputItemEvent{
-							Type:           "response.output_item.added",
-							SequenceNumber: next(),
-							OutputIndex:    outputIndexes[index],
-							Item:           item,
-						},
-					})
-					send(StreamEvent{
-						Event: "response.function_call_arguments.done",
-						Data: FunctionCallArgumentsDoneEvent{
-							Type:           "response.function_call_arguments.done",
-							SequenceNumber: next(),
-							ItemID:         itemIDs[index],
-							OutputIndex:    outputIndexes[index],
-							Arguments:      finalCombined,
-						},
-					})
-					send(StreamEvent{
-						Event: "response.output_item.done",
-						Data: OutputItemEvent{
-							Type:           "response.output_item.done",
-							SequenceNumber: next(),
-							OutputIndex:    outputIndexes[index],
-							Item:           response.Output[outputIndexes[index]],
-						},
-					})
-					delete(nestedBuffers, index)
-					break
-				}
-				// Already emitted — use existing output index.
-				delete(nestedBuffers, index)
+				finalizeNestedToolCall(index, nBuf, finalArgs)
+				break
 			}
 			if finalArgs == "" {
 				finalArgs = toolCallArgs[index]
@@ -1023,6 +1044,9 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 				// Clean up state.
 				delete(contentText, index)
 
+			} else if nBuf, ok := nestedBuffers[index]; ok {
+				finalizeNestedToolCall(index, nBuf, toolCallArgs[index])
+
 			} else if _, ok := outputIndexes[index]; ok {
 				if toolCallFinalized[index] {
 					break
@@ -1107,6 +1131,7 @@ type inputItem struct {
 	Summary   json.RawMessage `json:"summary"`
 	CallID    string          `json:"call_id"`
 	Name      string          `json:"name"`
+	Namespace string          `json:"namespace"`
 	Arguments string          `json:"arguments"`
 	Output    json.RawMessage `json:"output"`
 	Input     string          `json:"input"`
@@ -1255,14 +1280,11 @@ func convertInput(raw json.RawMessage, model string) ([]format.CoreMessage, []fo
 				pendingFCBlocks = append(pendingFCBlocks, pendingReasoning...)
 				pendingReasoning = pendingReasoning[:0]
 			}
-			toolInput := json.RawMessage(item.Arguments)
-			if !json.Valid([]byte(item.Arguments)) {
-				toolInput = json.RawMessage(`{}`)
-			}
+			toolName, toolInput := functionCallToolUse(item.Name, item.Namespace, item.Arguments)
 			pendingFCBlocks = append(pendingFCBlocks, format.CoreContentBlock{
 				Type:      "tool_use",
 				ToolUseID: firstNonEmpty(item.CallID, item.ID),
-				ToolName:  item.Name,
+				ToolName:  toolName,
 				ToolInput: toolInput,
 			})
 
@@ -1589,6 +1611,31 @@ func isReasoningModel(model string) bool {
 		strings.Contains(m, "reasoning")
 }
 
+func functionCallToolUse(name, namespace, arguments string) (string, json.RawMessage) {
+	toolInput := json.RawMessage(arguments)
+	if !json.Valid([]byte(arguments)) {
+		toolInput = json.RawMessage(`{}`)
+	}
+	if namespace == "" {
+		return name, toolInput
+	}
+	return namespace, wrapNamespaceToolInput(name, toolInput)
+}
+
+func wrapNamespaceToolInput(action string, params json.RawMessage) json.RawMessage {
+	args := make(map[string]json.RawMessage)
+	if len(params) > 0 && string(params) != "null" {
+		_ = json.Unmarshal(params, &args)
+	}
+	actionRaw, _ := json.Marshal(action)
+	args["action"] = actionRaw
+	data, err := json.Marshal(args)
+	if err != nil {
+		return json.RawMessage(`{"action":""}`)
+	}
+	return data
+}
+
 // toolInputString converts a json.RawMessage tool input to a string,
 // defaulting to "{}" when the input is nil or null.
 func toolInputString(input json.RawMessage) string {
@@ -1657,7 +1704,7 @@ func buildToolOutputItem(block format.CoreContentBlock, extensions map[string]an
 		CallID:    block.ToolUseID,
 		Name:      itemN,
 		Namespace: itemNS,
-		Arguments: toolInputString(block.ToolInput),
+		Arguments: outputItemArguments(itemT, itemInput, block.ToolInput),
 		Input:     itemInput,
 		Status:    "completed",
 	}
@@ -1672,40 +1719,37 @@ func replayNestedBuffer(nBuf *nestedBufferState, send func(StreamEvent), next fu
 	if nBuf.buf.Len() == 0 {
 		return
 	}
-	paramsOnly := stripPrefixActionFromJSON(nBuf.buf.String(), nBuf.actionName)
-	if paramsOnly != "" {
-		send(StreamEvent{
-			Event: "response.function_call_arguments.delta",
-			Data: FunctionCallArgumentsDeltaEvent{
-				Type:           "response.function_call_arguments.delta",
-				SequenceNumber: next(),
-				ItemID:         itemIDs[index],
-				OutputIndex:    nBuf.outputIndex,
-				Delta:          paramsOnly,
-			},
-		})
-	}
+	emitNestedBufferedDelta(nBuf, send, next, index, itemIDs, nBuf.outputIndex)
 }
 
 // emitNestedDelta sends a function_call_arguments.delta for a nested namespace tool
 // that has already emitted its output_item.added.
 func emitNestedDelta(nBuf *nestedBufferState, delta string, send func(StreamEvent), next func() int64, index int, itemIDs map[int]string, outputIndexes map[int]int) {
-	cleanedDelta := stripPrefixActionFromJSON(delta, nBuf.actionName)
-	if cleanedDelta == "" {
-		return
-	}
 	oi := nBuf.outputIndex
 	if oi < 0 {
 		oi = outputIndexes[index]
 	}
+	emitNestedBufferedDelta(nBuf, send, next, index, itemIDs, oi)
+}
+
+func emitNestedBufferedDelta(nBuf *nestedBufferState, send func(StreamEvent), next func() int64, index int, itemIDs map[int]string, outputIndex int) {
+	paramsOnly := stripPrefixActionFromJSON(nBuf.buf.String(), nBuf.actionName)
+	if paramsOnly == "" || paramsOnly == nBuf.emittedArgs {
+		return
+	}
+	if !strings.HasPrefix(paramsOnly, nBuf.emittedArgs) {
+		return
+	}
+	delta := strings.TrimPrefix(paramsOnly, nBuf.emittedArgs)
+	nBuf.emittedArgs = paramsOnly
 	send(StreamEvent{
 		Event: "response.function_call_arguments.delta",
 		Data: FunctionCallArgumentsDeltaEvent{
 			Type:           "response.function_call_arguments.delta",
 			SequenceNumber: next(),
 			ItemID:         itemIDs[index],
-			OutputIndex:    oi,
-			Delta:          cleanedDelta,
+			OutputIndex:    outputIndex,
+			Delta:          delta,
 		},
 	})
 }
@@ -1720,22 +1764,6 @@ func stripPrefixActionFromJSON(raw string, action string) string {
 		return ""
 	}
 
-	// First, try a full JSON parse — if the buffer is complete, this is the
-	// most robust path.
-	var parsed map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
-		delete(parsed, "action")
-		if len(parsed) == 0 {
-			return ""
-		}
-		data, _ := json.Marshal(parsed)
-		result := string(data)
-		// Strip outer braces for streaming delta context.
-		result = strings.TrimPrefix(result, "{")
-		result = strings.TrimSuffix(result, "}")
-		return strings.TrimSpace(result)
-	}
-
 	// Fallback: position-constrained scan. Only look for "action" in the
 	// first object level — roughly the content before a nested "{" or after
 	// the first top-level comma that follows the action key-value pair.
@@ -1744,38 +1772,30 @@ func stripPrefixActionFromJSON(raw string, action string) string {
 	// the key-value pair, and return the remaining JSON fragment.
 	idx := strings.Index(raw, `"action"`)
 	if idx < 0 {
-		return raw
-	}
-
-	// Only treat as top-level action if it appears before any nested object
-	// (the namespace tool schema is flat — action is at the root).
-	firstBrace := strings.IndexByte(raw, '{')
-	if firstBrace >= 0 && firstBrace < idx {
-		// "action" is not in the first object — return raw unchanged.
-		return raw
+		return ""
 	}
 
 	// Find the colon after the key.
 	afterKey := raw[idx+8:]
 	colonIdx := strings.IndexByte(afterKey, ':')
 	if colonIdx < 0 {
-		return raw
+		return ""
 	}
 
 	// Skip whitespace and colon.
 	afterColon := strings.TrimSpace(afterKey[colonIdx+1:])
 	if len(afterColon) == 0 {
-		return raw
+		return ""
 	}
 
 	// Must start with a quote (action is always a string).
 	if afterColon[0] != '"' {
-		return raw
+		return ""
 	}
 	afterColon = afterColon[1:] // skip opening quote
 	endQuote := strings.IndexByte(afterColon, '"')
 	if endQuote < 0 {
-		return raw
+		return ""
 	}
 
 	// Extract the portion after the action value.
@@ -1784,11 +1804,24 @@ func stripPrefixActionFromJSON(raw string, action string) string {
 	afterValue = strings.TrimLeft(afterValue, ", ")
 
 	// Combine the part before the action key with the part after the value.
-	prefix := strings.TrimRight(raw[:idx], ", ")
-	if prefix == "" || prefix == "{" || strings.TrimSpace(prefix) == "{" {
-		return afterValue
+	prefix := strings.TrimSpace(raw[:idx])
+	if prefix == "" || prefix == "{" {
+		if afterValue == "" {
+			return "{"
+		}
+		if afterValue == "}" {
+			return "{}"
+		}
+		return "{" + afterValue
 	}
-	return prefix + ", " + afterValue
+
+	var parsed map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &parsed); err == nil {
+		delete(parsed, "action")
+		data, _ := json.Marshal(parsed)
+		return string(data)
+	}
+	return ""
 }
 func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map[string]any, toolUseID string) OutputItem {
 	toolMap := codextool.DecodeToolMapFromExtensions(extensions)
@@ -1809,9 +1842,16 @@ func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map
 		CallID:    toolUseID,
 		Name:      itemN,
 		Namespace: itemNS,
-		Arguments: toolInputString(block.ToolInput),
+		Arguments: outputItemArguments(itemT, itemInput, block.ToolInput),
 		Status:    "in_progress",
 	}
+}
+
+func outputItemArguments(itemType, mappedInput string, rawInput json.RawMessage) string {
+	if itemType == "function_call" && mappedInput != "" {
+		return mappedInput
+	}
+	return toolInputString(rawInput)
 }
 
 // ============================================================================

@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -18,6 +19,26 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
+}
+
+type canceledResponseWriter struct {
+	header http.Header
+	code   int
+}
+
+func (writer *canceledResponseWriter) Header() http.Header {
+	if writer.header == nil {
+		writer.header = make(http.Header)
+	}
+	return writer.header
+}
+
+func (writer *canceledResponseWriter) Write([]byte) (int, error) {
+	return 0, context.Canceled
+}
+
+func (writer *canceledResponseWriter) WriteHeader(statusCode int) {
+	writer.code = statusCode
 }
 
 func TestResponseProxyPassesHeadersThroughAndCapturesTrace(t *testing.T) {
@@ -209,5 +230,44 @@ func TestResponseProxyCapturesStreamingResponse(t *testing.T) {
 	upstreamResponse := record["upstream_response"].(map[string]any)
 	if !strings.Contains(upstreamResponse["body"].(string), "response.completed") {
 		t.Fatalf("captured body = %+v", upstreamResponse["body"])
+	}
+}
+
+func TestResponseProxyClientCancelDuringCopyDoesNotWriteTraceError(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       io.NopCloser(strings.NewReader("data: still-streaming\n\n")),
+		}, nil
+	})}
+
+	traceRoot := t.TempDir()
+	handler, err := proxy.NewResponse(proxy.ResponseConfig{
+		UpstreamBaseURL: "https://upstream.example/v1",
+		Client:          client,
+		Tracer:          mbtrace.New(mbtrace.Config{Enabled: true, Root: traceRoot, SessionID: "cancel"}),
+	})
+	if err != nil {
+		t.Fatalf("NewResponse() error = %v", err)
+	}
+
+	request := httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(`{"stream":true}`))
+	writer := &canceledResponseWriter{}
+	handler.ServeHTTP(writer, request)
+	if writer.code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", writer.code)
+	}
+
+	traceData, err := os.ReadFile(filepath.Join(traceRoot, "cancel", "1.json"))
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var record map[string]any
+	if err := json.Unmarshal(traceData, &record); err != nil {
+		t.Fatalf("trace is invalid JSON: %v", err)
+	}
+	if value, ok := record["error"]; ok {
+		t.Fatalf("trace error = %+v, want no error for client cancellation", value)
 	}
 }

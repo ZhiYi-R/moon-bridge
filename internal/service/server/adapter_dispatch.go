@@ -789,7 +789,7 @@ func streamOutputItemToCoreBlocks(item openai.OutputItem) []format.CoreContentBl
 		return []format.CoreContentBlock{{
 			Type:      "tool_use",
 			ToolUseID: toolUseID,
-			ToolName:  item.Name,
+			ToolName:  streamOutputToolName(item),
 			ToolInput: streamOutputToolInput(item),
 		}}
 	case "message":
@@ -831,15 +831,39 @@ func reasoningBlocksFromStreamOutput(summary []openai.ReasoningItemSummary) []fo
 }
 
 func streamOutputToolInput(item openai.OutputItem) json.RawMessage {
+	raw := json.RawMessage(nil)
 	if item.Arguments != "" && json.Valid([]byte(item.Arguments)) {
-		return json.RawMessage(item.Arguments)
+		raw = json.RawMessage(item.Arguments)
+	} else if item.Input != "" {
+		payload, err := json.Marshal(map[string]string{"input": item.Input})
+		if err != nil {
+			return nil
+		}
+		raw = payload
 	}
-	if item.Input == "" {
-		return nil
+	if item.Type == "function_call" && item.Namespace != "" {
+		return wrapStreamNamespaceToolInput(item.Name, raw)
 	}
-	payload, err := json.Marshal(map[string]string{"input": item.Input})
+	return raw
+}
+
+func streamOutputToolName(item openai.OutputItem) string {
+	if item.Type == "function_call" && item.Namespace != "" {
+		return item.Namespace
+	}
+	return item.Name
+}
+
+func wrapStreamNamespaceToolInput(action string, params json.RawMessage) json.RawMessage {
+	args := make(map[string]json.RawMessage)
+	if len(params) > 0 && string(params) != "null" {
+		_ = json.Unmarshal(params, &args)
+	}
+	actionRaw, _ := json.Marshal(action)
+	args["action"] = actionRaw
+	payload, err := json.Marshal(args)
 	if err != nil {
-		return nil
+		return json.RawMessage(`{"action":""}`)
 	}
 	return payload
 }
@@ -1930,6 +1954,33 @@ func coreResponseToStreamEvents(ctx context.Context, resp *format.CoreResponse) 
 						return
 					}
 					index++
+				case "tool_use":
+					toolUseID := block.ToolUseID
+					if toolUseID == "" {
+						toolUseID = fmt.Sprintf("call_%d", index)
+					}
+					if !send(format.CoreStreamEvent{
+						Type:  format.CoreContentBlockStarted,
+						Index: index,
+						ContentBlock: &format.CoreContentBlock{
+							Type:      "tool_use",
+							ToolUseID: toolUseID,
+							ToolName:  block.ToolName,
+						},
+					}) {
+						return
+					}
+					if !send(format.CoreStreamEvent{
+						Type:  format.CoreToolCallArgsDone,
+						Index: index,
+						Delta: toolInputStringForCoreStream(block.ToolInput),
+					}) {
+						return
+					}
+					if !send(format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: index}) {
+						return
+					}
+					index++
 				}
 			}
 		}
@@ -1952,6 +2003,13 @@ func coreResponseToStreamEvents(ctx context.Context, resp *format.CoreResponse) 
 		})
 	}()
 	return out
+}
+
+func toolInputStringForCoreStream(input json.RawMessage) string {
+	if len(input) == 0 || string(input) == "null" {
+		return "{}"
+	}
+	return string(input)
 }
 
 func coreRequestHasImage(req *format.CoreRequest) bool {
@@ -2409,13 +2467,15 @@ func resolvedWebSearchMode(pm *provider.ProviderManager, modelAlias string, pref
 	if pm == nil {
 		return ""
 	}
+	if modelAlias != "" {
+		if mode := pm.ResolvedWebSearchForModel(modelAlias); mode != "" {
+			return mode
+		}
+	}
 	if preferred.ProviderKey != "" && preferred.UpstreamModel != "" {
 		if mode := pm.ResolvedWebSearchForCandidate(preferred.ProviderKey, preferred.UpstreamModel); mode != "" {
 			return mode
 		}
-	}
-	if modelAlias != "" {
-		return pm.ResolvedWebSearchForModel(modelAlias)
 	}
 	return ""
 }

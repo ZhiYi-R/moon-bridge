@@ -77,6 +77,57 @@ func TestClientCreateMessageSendsHeadersAndParsesResponse(t *testing.T) {
 	}
 }
 
+func TestClientCreateMessageNormalizesToolSchemaBeforeSend(t *testing.T) {
+	httpClient := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		var request anthropic.MessageRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatalf("Decode request error = %v", err)
+		}
+		if len(request.Tools) != 1 {
+			t.Fatalf("tools = %d, want 1", len(request.Tools))
+		}
+		assertRequiredAny(t, request.Tools[0].InputSchema, []string{"action", "app", "element_index"})
+
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"id":"msg_123","type":"message","role":"assistant","stop_reason":"end_turn","content":[]}`)),
+			Header:     http.Header{},
+		}, nil
+	})}
+
+	inputSchema := map[string]any{
+		"type":     "object",
+		"required": json.RawMessage(`["action","app","element_index","action"]`),
+		"properties": map[string]any{
+			"action":        map[string]any{"type": "string"},
+			"app":           map[string]any{"type": "string"},
+			"element_index": map[string]any{"type": "integer"},
+		},
+	}
+	client := anthropic.NewClient(anthropic.ClientConfig{
+		BaseURL: "https://provider.example.test",
+		APIKey:  "upstream-key",
+		Version: "2023-06-01",
+		Client:  httpClient,
+	})
+
+	_, err := client.CreateMessage(context.Background(), anthropic.MessageRequest{
+		Model:     "claude-test",
+		MaxTokens: 64,
+		Messages:  []anthropic.Message{{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "Hi"}}}},
+		Tools: []anthropic.Tool{{
+			Name:        "mcp__computer_use",
+			InputSchema: inputSchema,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage() error = %v", err)
+	}
+	if _, ok := inputSchema["required"].(json.RawMessage); !ok {
+		t.Fatal("original input schema required was mutated")
+	}
+}
+
 func TestClientStreamMessageParsesSSEEvents(t *testing.T) {
 	body := strings.Join([]string{
 		"event: message_start",
@@ -125,6 +176,26 @@ func TestClientStreamMessageParsesSSEEvents(t *testing.T) {
 	}
 	if second.Type != "message_stop" {
 		t.Fatalf("second event = %+v", second)
+	}
+}
+
+func assertRequiredAny(t *testing.T, schema map[string]any, want []string) {
+	t.Helper()
+	required, ok := schema["required"].([]any)
+	if !ok {
+		t.Fatalf("required = %T, want []any", schema["required"])
+	}
+	if len(required) != len(want) {
+		t.Fatalf("required = %#v, want %#v", required, want)
+	}
+	for i := range want {
+		got, ok := required[i].(string)
+		if !ok {
+			t.Fatalf("required[%d] = %T, want string", i, required[i])
+		}
+		if got != want[i] {
+			t.Fatalf("required = %#v, want %#v", required, want)
+		}
 	}
 }
 

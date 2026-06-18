@@ -53,20 +53,24 @@ func buildNestedOneOf(toolNames []string, toolMap map[string]format.CoreTool, na
 		if !ok {
 			continue
 		}
+		inputSchema := format.NormalizeFunctionToolSchema(sub.InputSchema)
 		props := make(map[string]any)
 		required := []string{"action"}
-		if sub.InputSchema != nil {
-			if p, ok := sub.InputSchema["properties"].(map[string]any); ok {
+		if inputSchema != nil {
+			if p, ok := inputSchema["properties"].(map[string]any); ok {
 				for k, v := range p {
 					props[k] = v
 				}
 			}
-			if r, ok := sub.InputSchema["required"].([]any); ok {
+			if r, ok := inputSchema["required"].([]any); ok {
 				for _, rv := range r {
 					if rs, ok := rv.(string); ok {
-						required = append(required, rs)
+						required = appendUniqueRequired(required, rs)
 					}
 				}
+			}
+			if r, ok := inputSchema["required"].([]string); ok {
+				required = appendUniqueRequired(required, r...)
 			}
 		}
 		// action field with single-value enum
@@ -102,6 +106,27 @@ func buildNestedOneOf(toolNames []string, toolMap map[string]format.CoreTool, na
 	return []format.CoreTool{ct}
 }
 
+func appendUniqueRequired(required []string, values ...string) []string {
+	seen := make(map[string]struct{}, len(required)+len(values))
+	for _, name := range required {
+		if name == "" {
+			continue
+		}
+		seen[name] = struct{}{}
+	}
+	for _, name := range values {
+		if name == "" {
+			continue
+		}
+		if _, exists := seen[name]; exists {
+			continue
+		}
+		seen[name] = struct{}{}
+		required = append(required, name)
+	}
+	return required
+}
+
 // buildNestedAnyOf generates a single tool with an action enum + params anyOf
 // (the PR #75 compatible format).
 func buildNestedAnyOf(toolNames []string, toolMap map[string]format.CoreTool, namespace string) []format.CoreTool {
@@ -119,7 +144,7 @@ func buildNestedAnyOf(toolNames []string, toolMap map[string]format.CoreTool, na
 			continue
 		}
 		actions = append(actions, name)
-		branch := sub.InputSchema
+		branch := format.NormalizeFunctionToolSchema(sub.InputSchema)
 		if branch == nil {
 			branch = map[string]any{"type": "object"}
 		}
@@ -162,7 +187,10 @@ func buildFlat(toolNames []string, toolMap map[string]format.CoreTool, namespace
 		ct := format.CoreTool{
 			Name:        fullName,
 			Description: sub.Description,
-			InputSchema: sub.InputSchema,
+			InputSchema: format.NormalizeFunctionToolSchema(sub.InputSchema),
+		}
+		if ct.InputSchema == nil {
+			ct.InputSchema = map[string]any{"type": "object"}
 		}
 		AnnotateCoreTool(&ct, ToolFunction, name, namespace)
 		result = append(result, ct)

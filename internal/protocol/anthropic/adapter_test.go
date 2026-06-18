@@ -149,6 +149,22 @@ func TestFromCoreRequest_ToolChoiceForced(t *testing.T) {
 	}
 }
 
+func assertAnyStringSlice(t *testing.T, got []any, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("slice = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		item, ok := got[i].(string)
+		if !ok {
+			t.Fatalf("slice[%d] = %T, want string", i, got[i])
+		}
+		if item != want[i] {
+			t.Fatalf("slice = %#v, want %#v", got, want)
+		}
+	}
+}
+
 func TestFromCoreRequest_Tools(t *testing.T) {
 	adapter := newTestAdapter()
 
@@ -177,6 +193,122 @@ func TestFromCoreRequest_Tools(t *testing.T) {
 		t.Errorf("tool type = %q, want empty (Anthropic custom tools have no type field)", msgReq.Tools[0].Type)
 	}
 }
+
+func TestFromCoreRequest_ToolsNormalizeRequiredForFunctionProviders(t *testing.T) {
+	adapter := newTestAdapter()
+
+	coreReq := &format.CoreRequest{
+		Model: "claude-sonnet-4",
+		Messages: []format.CoreMessage{
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "use computer"}}},
+		},
+		Tools: []format.CoreTool{
+			{
+				Name:        "mcp__computer_use",
+				Description: "Use computer",
+				InputSchema: map[string]any{
+					"type":     "object",
+					"required": []any{"action", "app", "element_index", "action"},
+					"properties": map[string]any{
+						"action":        map[string]any{"type": "string"},
+						"app":           map[string]any{"type": "string"},
+						"element_index": map[string]any{"type": "integer"},
+					},
+				},
+			},
+		},
+	}
+
+	result, err := adapter.FromCoreRequest(context.Background(), coreReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgReq := result.(*anthropic.MessageRequest)
+	if len(msgReq.Tools) != 1 {
+		t.Fatalf("got %d tools, want 1", len(msgReq.Tools))
+	}
+	required := msgReq.Tools[0].InputSchema["required"].([]any)
+	assertAnyStringSlice(t, required, []string{"action", "app", "element_index"})
+}
+
+func TestFromCoreRequest_SkipsUnconvertibleToolsAndFallbacksToolChoice(t *testing.T) {
+	adapter := newTestAdapter()
+
+	coreReq := &format.CoreRequest{
+		Model: "claude-sonnet-4",
+		Messages: []format.CoreMessage{
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "make an image"}}},
+		},
+		Tools: []format.CoreTool{
+			{Extensions: map[string]any{"source_type": "image_generation"}},
+			{Name: "get_weather", Description: "Get weather", InputSchema: map[string]any{"type": "object"}},
+		},
+		ToolChoice: &format.CoreToolChoice{Mode: "function", Name: "image_generation"},
+	}
+
+	result, err := adapter.FromCoreRequest(context.Background(), coreReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgReq := result.(*anthropic.MessageRequest)
+	if len(msgReq.Tools) != 1 {
+		t.Fatalf("got %d tools, want 1", len(msgReq.Tools))
+	}
+	if msgReq.Tools[0].Name != "get_weather" {
+		t.Fatalf("tool name = %q, want get_weather", msgReq.Tools[0].Name)
+	}
+	if msgReq.ToolChoice == nil {
+		t.Fatal("ToolChoice is nil")
+	}
+	if msgReq.ToolChoice.Type != "auto" || msgReq.ToolChoice.Name != "" {
+		t.Fatalf("ToolChoice = %+v, want auto", msgReq.ToolChoice)
+	}
+}
+
+func TestFromCoreRequest_SkipsOnlyUnconvertibleToolAndOmitsToolChoice(t *testing.T) {
+	adapter := newTestAdapter()
+	tests := []struct {
+		name       string
+		toolChoice *format.CoreToolChoice
+	}{
+		{
+			name:       "forced skipped tool",
+			toolChoice: &format.CoreToolChoice{Mode: "image_generation"},
+		},
+		{
+			name:       "explicit auto",
+			toolChoice: &format.CoreToolChoice{Mode: "auto"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			coreReq := &format.CoreRequest{
+				Model: "claude-sonnet-4",
+				Messages: []format.CoreMessage{
+					{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "make an image"}}},
+				},
+				Tools: []format.CoreTool{
+					{Extensions: map[string]any{"source_type": "image_generation"}},
+				},
+				ToolChoice: tt.toolChoice,
+			}
+
+			result, err := adapter.FromCoreRequest(context.Background(), coreReq)
+			if err != nil {
+				t.Fatal(err)
+			}
+			msgReq := result.(*anthropic.MessageRequest)
+			if len(msgReq.Tools) != 0 {
+				t.Fatalf("got %d tools, want 0", len(msgReq.Tools))
+			}
+			if msgReq.ToolChoice != nil {
+				t.Fatalf("ToolChoice = %+v, want nil", msgReq.ToolChoice)
+			}
+		})
+	}
+}
+
 func TestFromCoreRequest_ImageMessage(t *testing.T) {
 	adapter := newTestAdapter()
 

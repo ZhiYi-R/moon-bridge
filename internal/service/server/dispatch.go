@@ -2,12 +2,15 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"syscall"
 	"time"
 
 	"moonbridge/internal/config"
@@ -245,6 +248,78 @@ func shouldWriteChatTrace(record mbtrace.Record) bool {
 
 func traceError(stage string, err error) map[string]string {
 	return map[string]string{"stage": stage, "message": err.Error()}
+}
+
+type copyErrorSource string
+
+const (
+	copyErrorSourceRead  copyErrorSource = "read"
+	copyErrorSourceWrite copyErrorSource = "write"
+)
+
+type responseCopyError struct {
+	source copyErrorSource
+	err    error
+}
+
+func (err *responseCopyError) Error() string {
+	return err.err.Error()
+}
+
+func (err *responseCopyError) Unwrap() error {
+	return err.err
+}
+
+func isClientCanceledCopyError(request *http.Request, err error) bool {
+	if err == nil {
+		return false
+	}
+	var copyErr *responseCopyError
+	if errors.As(err, &copyErr) {
+		if copyErr.source == copyErrorSourceRead && (request == nil || !errors.Is(request.Context().Err(), context.Canceled)) {
+			return false
+		}
+	}
+	if errors.Is(err, http.ErrAbortHandler) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) {
+		return true
+	}
+	if request != nil && errors.Is(request.Context().Err(), context.Canceled) {
+		return true
+	}
+	if errors.Is(err, context.Canceled) {
+		return copyErr != nil && copyErr.source == copyErrorSourceWrite
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "context canceled") ||
+		strings.Contains(message, "broken pipe") ||
+		strings.Contains(message, "connection reset by peer") ||
+		strings.Contains(message, "client disconnected") ||
+		strings.Contains(message, "use of closed network connection")
+}
+func copyResponseBody(writer io.Writer, reader io.Reader) (int64, error) {
+	buffer := make([]byte, 32*1024)
+	var written int64
+	for {
+		n, readErr := reader.Read(buffer)
+		if n > 0 {
+			nw, writeErr := writer.Write(buffer[:n])
+			written += int64(nw)
+			if writeErr != nil {
+				return written, &responseCopyError{source: copyErrorSourceWrite, err: writeErr}
+			}
+			if nw != n {
+				return written, &responseCopyError{source: copyErrorSourceWrite, err: io.ErrShortWrite}
+			}
+		}
+		if readErr == io.EOF {
+			return written, nil
+		}
+		if readErr != nil {
+			return written, &responseCopyError{source: copyErrorSourceRead, err: readErr}
+		}
+	}
 }
 func writeJSON(writer http.ResponseWriter, status int, payload any) {
 	writer.Header().Set("Content-Type", "application/json")
@@ -491,7 +566,11 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 		if shouldCapture {
 			target = io.MultiWriter(writer, &captured)
 		}
-		if _, err := io.Copy(target, upstreamResp.Body); err != nil {
+		if _, err := copyResponseBody(target, upstreamResp.Body); err != nil {
+			if isClientCanceledCopyError(request, err) {
+				log.Debug("客户端取消，停止复制上游响应", "error", err)
+				return
+			}
 			hookErr = "copy upstream response"
 			log.Error("复制上游响应失败", "error", err)
 			return

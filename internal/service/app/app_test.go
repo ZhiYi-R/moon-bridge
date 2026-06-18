@@ -309,6 +309,54 @@ func TestResolveModelWebSearchCandidateKeepsEnabledWhenSupported(t *testing.T) {
 	}
 }
 
+func TestResolveModelWebSearchCandidateUsesProbeTimeout(t *testing.T) {
+	oldTimeout := webSearchProbeTimeout
+	webSearchProbeTimeout = 25 * time.Millisecond
+	t.Cleanup(func() {
+		webSearchProbeTimeout = oldTimeout
+	})
+
+	cfg := config.Config{}
+	pm, err := provider.NewProviderManager(
+		map[string]provider.ProviderConfig{
+			"deepseek": {
+				BaseURL: "https://deepseek.example.test",
+				APIKey:  "key-deepseek",
+			},
+		},
+		map[string]provider.ModelRoute{
+			"deepseek-v4-flash": {Provider: "deepseek", Name: "deepseek-v4-flash"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	start := time.Now()
+	resolved := resolveModelWebSearchWithProber(
+		context.Background(),
+		"deepseek-v4-flash",
+		"deepseek",
+		"deepseek-v4-flash",
+		config.WebSearchSupportAuto,
+		pm,
+		cfg,
+		&bytes.Buffer{},
+		probeWebSearchCandidateFunc(func(ctx context.Context, _, _ string) (bool, error) {
+			<-ctx.Done()
+			return false, ctx.Err()
+		}),
+	)
+	elapsed := time.Since(start)
+
+	if resolved != "disabled" {
+		t.Fatalf("resolveModelWebSearchWithProber() = %q, want disabled", resolved)
+	}
+	if elapsed >= time.Second {
+		t.Fatalf("probe elapsed %s, want bounded by short timeout", elapsed)
+	}
+}
+
 func TestPricingIndexIncludesProviderModelSlugs(t *testing.T) {
 	// Simulate the pricing setup from runTransform():
 	// pricing should be indexed by both route aliases AND provider/model slugs.
