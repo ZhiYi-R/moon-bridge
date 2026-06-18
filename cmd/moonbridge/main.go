@@ -111,6 +111,14 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if *addr != "" {
 		cfg.OverrideAddr(*addr)
 	}
+	// -print-* 子命令在 SQLite 覆盖前就会退出，这里先加载持久化中的有效配置，
+	// 使 -print-addr/-print-mode/-print-codex-config 等读到 WebUI 改动后的状态。
+	// 持久化未启用或加载失败时静默回退到 YAML 配置（YAML-only 部署是合法形态）。
+	if effectiveCfg, loadErr := app.TryLoadEffectiveConfig(context.Background(), cfg); loadErr == nil {
+		cfg = effectiveCfg
+	} else {
+		slog.Debug("跳过持久化配置加载，使用 YAML 配置", "error", loadErr)
+	}
 	if *printAddr {
 		fmt.Fprintln(stdout, cfg.Addr)
 		return exitOK

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	stderrors "errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 
 	"log/slog"
 	"moonbridge/internal/config"
-	"moonbridge/internal/db"
 	"moonbridge/internal/extension/codextool"
 	"moonbridge/internal/format"
 	"moonbridge/internal/logger"
@@ -28,7 +26,6 @@ import (
 	"moonbridge/internal/service/server/trace"
 	"moonbridge/internal/service/server/usage"
 	"moonbridge/internal/service/stats"
-	"moonbridge/internal/service/store"
 	mbtrace "moonbridge/internal/service/trace"
 )
 
@@ -122,78 +119,37 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		return plugins.ConsumeGlobalLog(entries)
 	})
 
-	// Initialize persistence layer (db.Registry).
-	dbRegistry := db.NewRegistry(slog.Default())
-	dbProviders := plugins.DBProviders()
-	providers := make([]db.Provider, 0, len(dbProviders))
-	for _, p := range dbProviders {
-		if prov := p.DBProvider(); prov != nil {
-			dbRegistry.RegisterProvider(prov)
-			providers = append(providers, prov)
-		}
+	// === Phase 2: Persistence bootstrap ===
+	// db.Registry 装配、ConfigStore.LoadAll 覆盖、空库 seed 等逻辑统一收敛到
+	// BootstrapPersistence，使 -print-* 子命令（经 TryLoadEffectiveConfig）与
+	// 本路径共享同一份覆盖语义。
+	result, err := BootstrapPersistence(ctx, cfg, plugins)
+	if err != nil {
+		return fmt.Errorf("bootstrap persistence: %w", err)
 	}
-	for _, c := range plugins.DBConsumers() {
-		if cons := c.DBConsumer(); cons != nil {
-			dbRegistry.RegisterConsumer(cons)
-		}
+	if result.Shutdown != nil {
+		defer result.Shutdown()
 	}
-	// Register the config_store consumer for configuration persistence.
-	configStoreConsumer := store.NewConfigStoreConsumer(logger.L())
-	configStoreConsumer.SetExtensionSpecs(BuiltinExtensions().ConfigSpecs())
-	dbRegistry.RegisterConsumer(configStoreConsumer)
-	activePersistenceProvider := ResolvePersistenceActiveProvider(cfg.Persistence.ActiveProvider, providers)
-	if err := dbRegistry.Init(ctx, activePersistenceProvider); err != nil {
-		return fmt.Errorf("init persistence: %w", err)
-	}
-	defer dbRegistry.Shutdown()
+	cfg = result.Cfg
+	cs := result.Store
 
-	// === Phase 2: ConfigStore bootstrap ===
-	// Check if the store is available and has existing data.
-	cs := configStoreConsumer.Store()
-	if cs != nil {
-		if dbCfg, loadErr := cs.LoadAll(); loadErr == nil {
-			if len(dbCfg.ProviderDefs) > 0 || len(dbCfg.Routes) > 0 {
-				// DB has existing configuration: use it as the active config.
-				logger.Info("从持久化存储加载配置",
-					"providers", len(dbCfg.ProviderDefs),
-					"routes", len(dbCfg.Routes))
-				cfg = *dbCfg
-				dbProviderCfg := config.ProviderFromGlobalConfig(&cfg)
-
-				// Rebuild provider manager and pricing from DB-loaded config.
-				providerDefs = provider.BuildProviderDefsFromConfig(dbProviderCfg)
-				modelRoutes = provider.BuildModelRoutesFromConfig(dbProviderCfg)
-				providerMgr, err = provider.NewProviderManager(providerDefs, modelRoutes)
-				if err != nil {
-					return fmt.Errorf("rebuild provider manager from DB: %w", err)
-				}
-				_ = resolveDefaultClient(providerMgr, errors)
-				resolvePerProviderWebSearch(ctx, cfg, providerMgr, errors)
-
-				pricing = provider.BuildPricingFromConfig(dbProviderCfg)
-				if len(pricing) > 0 {
-					sessionStats.SetPricing(pricing)
-				}
-				serverCfg = config.ServerFromGlobalConfig(&cfg)
-			} else {
-				// DB is empty: seed from YAML config.
-				logger.Info("持久化存储为空，从 YAML 导入种子配置")
-				if err := cs.SeedFromConfig(&cfg); err != nil {
-					logger.Warn("config store 种子导入失败", "error", err)
-				}
-			}
-		} else if loadErr != nil {
-			if stderrors.Is(loadErr, store.ErrConfigNotSeeded) {
-				logger.Info("持久化存储为空，从 YAML 导入种子配置")
-				if err := cs.SeedFromConfig(&cfg); err != nil {
-					return fmt.Errorf("seed config store from YAML: %w", err)
-				}
-			} else {
-				logger.Warn("config store 加载失败", "error", loadErr)
-			}
+	// 如果 SQLite 覆盖了 cfg，用覆盖后的配置重建 provider 运行时派生状态。
+	if result.Overridden {
+		dbProviderCfg := config.ProviderFromGlobalConfig(&cfg)
+		providerDefs = provider.BuildProviderDefsFromConfig(dbProviderCfg)
+		modelRoutes = provider.BuildModelRoutesFromConfig(dbProviderCfg)
+		providerMgr, err = provider.NewProviderManager(providerDefs, modelRoutes)
+		if err != nil {
+			return fmt.Errorf("rebuild provider manager from DB: %w", err)
 		}
-	} else {
-		logger.Warn("config store 不可用，跳过持久化引导")
+		_ = resolveDefaultClient(providerMgr, errors)
+		resolvePerProviderWebSearch(ctx, cfg, providerMgr, errors)
+
+		pricing = provider.BuildPricingFromConfig(dbProviderCfg)
+		if len(pricing) > 0 {
+			sessionStats.SetPricing(pricing)
+		}
+		serverCfg = config.ServerFromGlobalConfig(&cfg)
 	}
 
 	// === Phase 3: Build Runtime ===
