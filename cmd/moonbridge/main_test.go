@@ -272,3 +272,121 @@ func TestPublishConfigFileDoesNotOverwriteExistingFinalFile(t *testing.T) {
 		t.Fatalf("temp file stat error = %v, want not exist", err)
 	}
 }
+
+// TestRunPrintCodexConfigReadsSQLiteOverride 是核心回归测试：
+// 验证 -print-codex-config 能读到 SQLite 持久化覆盖后的配置，而非 YAML 源。
+//
+// 场景：config.yml 里是 placeholder provider/model，但 SQLite 中存的是 db-provider。
+// 修复前 print 只读 YAML（半成品）；修复后经 TryLoadEffectiveConfig 读到 DB 覆盖配置。
+//
+// 两阶段：
+//  1. 用含 db-provider 的 config.yml 跑一次 → db_sqlite 自动 seed（库获得 db-provider）
+//  2. 改写 config.yml 为 placeholder provider，再跑 -print-codex-config db-alias
+//     → 应输出 SQLite 里的 db-upstream-model（证明读到了覆盖配置）
+func TestRunPrintCodexConfigReadsSQLiteOverride(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "moonbridge.db")
+	configPath := filepath.Join(dir, "config.yml")
+
+	// 第一阶段：含 db-provider 的配置，用于 seed SQLite。
+	seedConfig := []byte(`
+mode: Transform
+server:
+  addr: "127.0.0.1:0"
+persistence:
+  active_provider: db_sqlite
+extensions:
+  db_sqlite:
+    enabled: true
+    config:
+      path: ` + dbPath + `
+models:
+  db-model:
+    context_window: 200000
+providers:
+  db-provider:
+    base_url: "https://db.example.test"
+    api_key: "db-key"
+    protocol: anthropic
+    offers:
+      - model: db-model
+        upstream_name: db-upstream-model
+routes:
+  db-alias:
+    provider: db-provider
+    model: db-model
+`)
+	if err := os.WriteFile(configPath, seedConfig, 0o600); err != nil {
+		t.Fatalf("WriteFile(seed): %v", err)
+	}
+
+	// 第一次 run：触发 db_sqlite 初始化 + seed（-print-mode 提前退出，但持久化已 seed）。
+	var seedStdout, seedStderr bytes.Buffer
+	if code := run([]string{"-config", configPath, "-print-mode"}, &seedStdout, &seedStderr); code != exitOK {
+		t.Fatalf("seed run exit = %d, want %d; stderr:\n%s", code, exitOK, seedStderr.String())
+	}
+
+	// 确认 SQLite 文件已创建（seed 生效）。
+	if _, err := os.Stat(dbPath); err != nil {
+		t.Fatalf("seed did not create db file %s: %v", dbPath, err)
+	}
+
+	// 第二阶段：改写 config.yml 为完全不同的 placeholder provider/model。
+	// SQLite 中仍是第一阶段 seed 的 db-provider。print 应读 DB 而非这份 YAML。
+	placeholderConfig := []byte(`
+mode: Transform
+server:
+  addr: "127.0.0.1:0"
+persistence:
+  active_provider: db_sqlite
+extensions:
+  db_sqlite:
+    enabled: true
+    config:
+      path: ` + dbPath + `
+models:
+  yaml-model:
+    context_window: 128000
+providers:
+  yaml-placeholder:
+    base_url: "https://yaml.example.test"
+    api_key: "yaml-key"
+    protocol: anthropic
+    offers:
+      - model: yaml-model
+routes:
+  yaml-alias:
+    provider: yaml-placeholder
+    model: yaml-model
+`)
+	if err := os.WriteFile(configPath, placeholderConfig, 0o600); err != nil {
+		t.Fatalf("WriteFile(placeholder): %v", err)
+	}
+
+	// 核心断言：-print-codex-config 应输出 db-alias（DB 里的路由）而非 yaml-alias。
+	// db-alias 在 YAML 中已不存在，只有读到 SQLite 覆盖配置才能生成。
+	var stdout, stderr bytes.Buffer
+	code := run([]string{
+		"-config", configPath,
+		"-print-codex-config", "db-alias",
+	}, &stdout, &stderr)
+	if code != exitOK {
+		t.Fatalf("print run exit = %d, want %d; stderr:\n%s", code, exitOK, stderr.String())
+	}
+
+	output := stdout.String()
+	// db-alias 是 SQLite 中的路由别名；YAML（placeholder）里只有 yaml-alias。
+	// 输出含 db-alias 即证明 print 读到了 SQLite 覆盖配置。
+	if !strings.Contains(output, `model = "db-alias"`) {
+		t.Errorf("print output missing model=\"db-alias\" (proves it read YAML not SQLite):\n%s", output)
+	}
+	// context_window = 200000 来自 DB 的 db-model；YAML 的 yaml-model 是 128000。
+	// 这进一步证明读的是 SQLite 数据而非 YAML。
+	if !strings.Contains(output, "model_context_window = 200000") {
+		t.Errorf("print output missing model_context_window=200000 (DB value; YAML yaml-model is 128000):\n%s", output)
+	}
+	// 反向验证：YAML 的 placeholder 路由不应出现（证明 DB 完全覆盖 YAML）。
+	if strings.Contains(output, "yaml-alias") {
+		t.Errorf("print output contains yaml-alias (should not: DB should override YAML):\n%s", output)
+	}
+}
