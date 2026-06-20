@@ -10,7 +10,7 @@ import (
 	"github.com/invopop/jsonschema"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 const DefaultMainSchemaName = "config.schema.json"
 

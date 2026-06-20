@@ -164,6 +164,12 @@ models:
   #     kimi_workaround:
   #       enabled: true
 
+  # codex-auto-review: Codex auto-review escalation requests model
+  # Used by Codex CLI for automatic review of privilege-elevation
+  # (sandbox escalation) requests. Typically maps to a frontier model.
+  codex-auto-review:
+    extensions: {}
+
 # =============================================================================
 # Providers
 # =============================================================================
@@ -205,8 +211,7 @@ providers:
     api_key: "replace-with-openai-api-key"
     user_agent: "moonbridge/1.0"
     offers:
-      - model: gpt-image-1.5
-      - model: gpt-4o-mini-tts
+      - model: codex-auto-review
 
   anthropic:
     protocol: "anthropic"
@@ -246,9 +251,6 @@ routes:
   moonbridge:
     model: deepseek-v4-pro
     provider: deepseek
-  gpt-image:
-    model: gpt-image-1.5
-    provider: openai
-  gpt-tts:
-    model: gpt-4o-mini-tts
+  codex-auto-review:
+    model: codex-auto-review
     provider: openai

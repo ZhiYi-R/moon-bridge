@@ -94,8 +94,8 @@ type TraceFileConfig struct {
 type ServerFileConfig struct {
 	Addr        string `yaml:"addr" json:"addr,omitempty"`
 	AuthToken   string `yaml:"auth_token" json:"auth_token,omitempty"`
-	MaxSessions int    `yaml:"max_sessions"`
-	SessionTTL  string `yaml:"session_ttl"`
+	MaxSessions int    `yaml:"max_sessions" json:"max_sessions"`
+	SessionTTL  string `yaml:"session_ttl" json:"session_ttl"`
 }
 
 type LogFileConfig struct {
