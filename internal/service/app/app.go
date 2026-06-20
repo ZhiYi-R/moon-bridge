@@ -79,6 +79,33 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	// Build multi-provider infrastructure from YAML config.
 	providerDefs := provider.BuildProviderDefsFromConfig(providerCfg)
 	modelRoutes := provider.BuildModelRoutesFromConfig(providerCfg)
+	// Build a shared proxy-aware HTTP client when egress proxy is configured.
+	var proxyHTTPClient *http.Client
+	if cfg.EgressProxy != "" {
+		proxyURL, err := url.Parse(cfg.EgressProxy)
+		if err != nil {
+			return fmt.Errorf("invalid egress_proxy URL %q: %w", cfg.EgressProxy, err)
+		}
+		transport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			transport = &http.Transport{}
+		} else {
+			transport = transport.Clone()
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
+		proxyHTTPClient = &http.Client{Transport: transport}
+		slog.Info("egress proxy enabled", "url", cfg.EgressProxy)
+	}
+
+	// Inject proxy client into provider configs before building provider manager.
+	if proxyHTTPClient != nil {
+		for key := range providerDefs {
+			def := providerDefs[key]
+			def.ClientOverride = proxyHTTPClient
+			providerDefs[key] = def
+		}
+	}
+
 	providerMgr, err := provider.NewProviderManager(providerDefs, modelRoutes)
 	if err != nil {
 		return fmt.Errorf("init provider manager: %w", err)
@@ -165,7 +192,16 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 				// Rebuild provider manager and pricing from DB-loaded config.
 				providerDefs = provider.BuildProviderDefsFromConfig(dbProviderCfg)
 				modelRoutes = provider.BuildModelRoutesFromConfig(dbProviderCfg)
+				// Inject proxy client before rebuilding provider manager.
+				if proxyHTTPClient != nil {
+					for key := range providerDefs {
+						def := providerDefs[key]
+						def.ClientOverride = proxyHTTPClient
+						providerDefs[key] = def
+					}
+				}
 				providerMgr, err = provider.NewProviderManager(providerDefs, modelRoutes)
+
 				if err != nil {
 					return fmt.Errorf("rebuild provider manager from DB: %w", err)
 				}
@@ -246,34 +282,6 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 
 	slog.Info("Adapter dispatch path enabled", "registry", "format.Registry")
 
-	// Build a shared proxy-aware HTTP client when egress proxy is configured.
-	var proxyHTTPClient *http.Client
-	if cfg.EgressProxy != "" {
-		proxyURL, err := url.Parse(cfg.EgressProxy)
-		if err != nil {
-			return fmt.Errorf("invalid egress_proxy URL %q: %w", cfg.EgressProxy, err)
-		}
-		transport, ok := http.DefaultTransport.(*http.Transport)
-		if !ok {
-			transport = &http.Transport{}
-		} else {
-			transport = transport.Clone()
-		}
-		transport.Proxy = http.ProxyURL(proxyURL)
-		proxyHTTPClient = &http.Client{Transport: transport}
-		slog.Info("egress proxy enabled", "url", cfg.EgressProxy)
-	}
-
-	// Inject proxy client into provider configs.
-	if proxyHTTPClient != nil {
-		for key := range providerDefs {
-			def := providerDefs[key]
-			def.ClientOverride = proxyHTTPClient
-			providerDefs[key] = def
-		}
-	}
-
-	// Build protocol-specific HTTP clients from provider configs.
 	chatClients := make(map[string]any, len(cfg.ProviderDefs))
 	googleClients := make(map[string]any, len(cfg.ProviderDefs))
 	for key, def := range cfg.ProviderDefs {
