@@ -27,6 +27,7 @@ type FileConfig struct {
 	Cache       CacheFileConfig                  `yaml:"cache,omitempty" json:"cache,omitempty"`
 	Persistence PersistenceFileConfig            `yaml:"persistence,omitempty" json:"persistence,omitempty"`
 	Extensions  map[string]ExtensionFileConfig   `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	EgressProxy string                           `yaml:"egress_proxy,omitempty" json:"egress_proxy,omitempty"`
 	Proxy       ProxyFileConfig                  `yaml:"proxy,omitempty" json:"proxy,omitempty"`
 }
 
@@ -57,6 +58,7 @@ func (fc *FileConfig) UnmarshalYAML(value *yaml.Node) error {
 		Cache         CacheFileConfig                  `yaml:"cache,omitempty"`
 		Persistence   PersistenceFileConfig            `yaml:"persistence,omitempty"`
 		Extensions    map[string]ExtensionFileConfig   `yaml:"extensions,omitempty"`
+		EgressProxy   string                           `yaml:"egress_proxy,omitempty"`
 		Proxy         ProxyFileConfig                  `yaml:"proxy,omitempty"`
 	}
 	var raw rawFileConfig
@@ -76,6 +78,7 @@ func (fc *FileConfig) UnmarshalYAML(value *yaml.Node) error {
 		Cache:       raw.Cache,
 		Persistence: raw.Persistence,
 		Extensions:  raw.Extensions,
+		EgressProxy: raw.EgressProxy,
 		Proxy:       raw.Proxy,
 	}
 	if raw.TraceRequests != nil && *raw.TraceRequests {
@@ -465,6 +468,7 @@ func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config,
 		Persistence:      FromPersistenceFileConfig(fileConfig.Persistence),
 		ResponseProxy:    responseProxy,
 		AnthropicProxy:   anthropicProxy,
+		EgressProxy:      strings.TrimSpace(fileConfig.EgressProxy),
 		Extensions:       topExtensions,
 		extensionSpecs:   specs,
 	}

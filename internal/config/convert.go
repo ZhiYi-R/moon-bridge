@@ -37,6 +37,7 @@ func (cfg Config) ToFileConfig() FileConfig {
 		},
 		Cache:       toCacheFileConfig(cfg.Cache),
 		Persistence: PersistenceFileConfig{ActiveProvider: cfg.Persistence.ActiveProvider},
+		EgressProxy: cfg.EgressProxy,
 		Proxy: ProxyFileConfig{
 			Response: ProxyTargetFileConfig{
 				BaseURL: cfg.ResponseProxy.ProviderBaseURL,

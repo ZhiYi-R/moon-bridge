@@ -9,6 +9,8 @@
 package websearchinjected
 
 import (
+	"net/http"
+
 	"moonbridge/internal/extension/websearch"
 	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/anthropic"
@@ -45,11 +47,12 @@ func CoreTools(firecrawlKey string) []format.CoreTool {
 // WrapProvider wraps an Anthropic client with the injected search orchestrator.
 // The returned *websearch.Orchestrator implements the same CreateMessage /
 // StreamMessage interface as *anthropic.Client.
-func WrapProvider(client *anthropic.Client, tavilyKey, firecrawlKey string, maxRounds int) *websearch.Orchestrator {
+func WrapProvider(client *anthropic.Client, tavilyKey, firecrawlKey string, maxRounds int, proxyHTTP *http.Client) *websearch.Orchestrator {
 	return websearch.NewInjectedOrchestrator(websearch.OrchestratorConfig{
 		Anthropic:       client,
 		TavilyKey:       tavilyKey,
 		FirecrawlKey:    firecrawlKey,
 		SearchMaxRounds: maxRounds,
+		HTTPClient:      proxyHTTP,
 	})
 }

@@ -80,6 +80,7 @@ type Config struct {
 	Persistence    PersistenceConfig
 	ResponseProxy  ResponseProxyConfig
 	AnthropicProxy AnthropicProxyConfig
+	EgressProxy    string
 	Extensions     map[string]ExtensionSettings
 
 	extensionSpecs extensionSpecIndex

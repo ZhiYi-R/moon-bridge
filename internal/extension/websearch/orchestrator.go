@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 
 	"log/slog"
@@ -32,19 +33,21 @@ type OrchestratorConfig struct {
 	TavilyKey       string
 	FirecrawlKey    string
 	SearchMaxRounds int
+	HTTPClient      *http.Client
 	ToolHandlers    map[string]ToolHandler
 }
 
 // NewOrchestrator creates a new search orchestrator with default
 // handlers for web_search and web_fetch tool names.
 func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
+	tavilyClient := NewTavilyClientWithHTTP(cfg.TavilyKey, cfg.HTTPClient)
 	o := &Orchestrator{
 		anthropic: cfg.Anthropic,
-		tavily:    NewTavilyClient(cfg.TavilyKey),
+		tavily:    tavilyClient,
 		maxRounds: cfg.SearchMaxRounds,
 	}
 	if cfg.FirecrawlKey != "" {
-		o.firecrawl = NewFirecrawlClient(cfg.FirecrawlKey)
+		o.firecrawl = NewFirecrawlClientWithHTTP(cfg.FirecrawlKey, cfg.HTTPClient)
 	}
 	if o.maxRounds <= 0 {
 		o.maxRounds = 5
@@ -68,13 +71,14 @@ func NewOrchestrator(cfg OrchestratorConfig) *Orchestrator {
 // where tavily_search and firecrawl_fetch are injected as function tools
 // to the provider.
 func NewInjectedOrchestrator(cfg OrchestratorConfig) *Orchestrator {
+	tavilyClient := NewTavilyClientWithHTTP(cfg.TavilyKey, cfg.HTTPClient)
 	o := &Orchestrator{
 		anthropic: cfg.Anthropic,
-		tavily:    NewTavilyClient(cfg.TavilyKey),
+		tavily:    tavilyClient,
 		maxRounds: cfg.SearchMaxRounds,
 	}
 	if cfg.FirecrawlKey != "" {
-		o.firecrawl = NewFirecrawlClient(cfg.FirecrawlKey)
+		o.firecrawl = NewFirecrawlClientWithHTTP(cfg.FirecrawlKey, cfg.HTTPClient)
 	}
 	if o.maxRounds <= 0 {
 		o.maxRounds = 5

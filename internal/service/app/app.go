@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"path/filepath"
 	"sync"
 	"time"
@@ -245,6 +246,33 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 
 	slog.Info("Adapter dispatch path enabled", "registry", "format.Registry")
 
+	// Build a shared proxy-aware HTTP client when egress proxy is configured.
+	var proxyHTTPClient *http.Client
+	if cfg.EgressProxy != "" {
+		proxyURL, err := url.Parse(cfg.EgressProxy)
+		if err != nil {
+			return fmt.Errorf("invalid egress_proxy URL %q: %w", cfg.EgressProxy, err)
+		}
+		transport, ok := http.DefaultTransport.(*http.Transport)
+		if !ok {
+			transport = &http.Transport{}
+		} else {
+			transport = transport.Clone()
+		}
+		transport.Proxy = http.ProxyURL(proxyURL)
+		proxyHTTPClient = &http.Client{Transport: transport}
+		slog.Info("egress proxy enabled", "url", cfg.EgressProxy)
+	}
+
+	// Inject proxy client into provider configs.
+	if proxyHTTPClient != nil {
+		for key := range providerDefs {
+			def := providerDefs[key]
+			def.ClientOverride = proxyHTTPClient
+			providerDefs[key] = def
+		}
+	}
+
 	// Build protocol-specific HTTP clients from provider configs.
 	chatClients := make(map[string]any, len(cfg.ProviderDefs))
 	googleClients := make(map[string]any, len(cfg.ProviderDefs))
@@ -254,6 +282,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 			chatClients[key] = chat.NewClient(chat.ClientConfig{
 				BaseURL:   def.BaseURL,
 				APIKey:    def.APIKey,
+				Client:    proxyHTTPClient,
 				UserAgent: def.UserAgent,
 			})
 			slog.Debug("chat client created", "provider", key)
@@ -261,6 +290,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 			googleClients[key] = google.NewClient(google.ClientConfig{
 				BaseURL:   def.BaseURL,
 				APIKey:    def.APIKey,
+				Client:    proxyHTTPClient,
 				Project:   def.Project,
 				Location:  def.Location,
 				Version:   def.APIVersion,
@@ -276,22 +306,24 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	traceWtr := trace.NewFileWriter(tracer, errors)
 
 	handler := server.New(server.Config{
-		ServerCfg:       serverCfg,
-		Provider:        fallbackProvider,
-		ProviderMgr:     providerMgr,
-		ChatClients:     chatClients,
-		GoogleClients:   googleClients,
-		Tracer:          tracer,
-		TraceErrors:     errors,
-		Stats:           sessionStats,
-		PluginRegistry:  plugins,
-		AppConfig:       serverCfg,
-		Runtime:         rt,
-		Store:           cs,
-		AdapterRegistry: adapterReg,
-		SessionManager:  sessMgr,
-		UsageTracker:    usageTrk,
-		TraceWriter:     traceWtr,
+		ServerCfg:        serverCfg,
+		Provider:         fallbackProvider,
+		ProviderMgr:      providerMgr,
+		ChatClients:      chatClients,
+		GoogleClients:    googleClients,
+		OpenAIHTTPClient: proxyHTTPClient,
+		ProxyHTTPClient:  proxyHTTPClient,
+		Tracer:           tracer,
+		TraceErrors:      errors,
+		Stats:            sessionStats,
+		PluginRegistry:   plugins,
+		AppConfig:        serverCfg,
+		Runtime:          rt,
+		Store:            cs,
+		AdapterRegistry:  adapterReg,
+		SessionManager:   sessMgr,
+		UsageTracker:     usageTrk,
+		TraceWriter:      traceWtr,
 	})
 
 	wrapped := handler

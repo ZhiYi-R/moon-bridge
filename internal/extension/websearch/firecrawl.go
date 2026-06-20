@@ -26,6 +26,17 @@ func NewFirecrawlClient(apiKey string) *FirecrawlClient {
 	}
 }
 
+// NewFirecrawlClientWithHTTP creates a new FirecrawlClient with a custom HTTP client.
+func NewFirecrawlClientWithHTTP(apiKey string, httpClient *http.Client) *FirecrawlClient {
+	if httpClient == nil {
+		return NewFirecrawlClient(apiKey)
+	}
+	return &FirecrawlClient{
+		httpClient: httpClient,
+		apiKey:     apiKey,
+	}
+}
+
 // Fetch scrapes a URL and returns its content as markdown with retry on transient errors.
 func (c *FirecrawlClient) Fetch(ctx context.Context, req FetchRequest) (*FetchResult, error) {
 	if len(req.Formats) == 0 {

@@ -40,6 +40,7 @@ type Config struct {
 	Provider         provider.ProviderClient // fallback provider for non-adapter path
 	ProviderMgr      *provider.ProviderManager
 	OpenAIHTTPClient *http.Client
+	ProxyHTTPClient  *http.Client
 	ChatClients      map[string]any
 	GoogleClients    map[string]any
 	Tracer           *mbtrace.Tracer
@@ -59,6 +60,7 @@ type Server struct {
 	provider        provider.ProviderClient
 	providerMgr     *provider.ProviderManager
 	openAIHTTP      *http.Client
+	proxyHTTP       *http.Client
 	chatClients     map[string]any
 	googleClients   map[string]any
 	tracer          *mbtrace.Tracer
@@ -166,6 +168,7 @@ func New(cfg Config) *Server {
 		provider:        cfg.Provider,
 		providerMgr:     cfg.ProviderMgr,
 		openAIHTTP:      cfg.OpenAIHTTPClient,
+		proxyHTTP:       cfg.ProxyHTTPClient,
 		tracer:          cfg.Tracer,
 		traceErrors:     cfg.TraceErrors,
 		stats:           cfg.Stats,

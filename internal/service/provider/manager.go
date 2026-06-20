@@ -37,6 +37,7 @@ type ProviderConfig struct {
 	ModelNames       []string             // upstream model names for this provider
 	Models           map[string]ModelMeta // full model metadata (upstream name -> meta) [deprecated: use Offers]
 	Offers           []config.OfferEntry  // model offerings with pricing (replaces Models)
+	ClientOverride   *http.Client         // optional HTTP client override (e.g. proxy-aware client)
 }
 
 // modelProviderEntry is a reverse-index entry: provider key + offer priority.
@@ -160,7 +161,10 @@ func NewProviderManager(providerCfgs map[string]ProviderConfig, routes map[strin
 		if cfg.BaseURL == "" {
 			return nil, fmt.Errorf("provider %q: base_url is required", key)
 		}
-		httpClient := newHTTPClient(cfg.HTTP)
+		httpClient := cfg.ClientOverride
+		if httpClient == nil {
+			httpClient = newHTTPClient(cfg.HTTP)
+		}
 		pm.clients[key] = &anthropicClientAdapter{client: anthropic.NewClient(anthropic.ClientConfig{
 			BaseURL:   cfg.BaseURL,
 			APIKey:    cfg.APIKey,

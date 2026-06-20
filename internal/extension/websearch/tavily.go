@@ -26,6 +26,17 @@ func NewTavilyClient(apiKey string) *TavilyClient {
 	}
 }
 
+// NewTavilyClientWithHTTP creates a new TavilyClient with a custom HTTP client.
+func NewTavilyClientWithHTTP(apiKey string, httpClient *http.Client) *TavilyClient {
+	if httpClient == nil {
+		return NewTavilyClient(apiKey)
+	}
+	return &TavilyClient{
+		httpClient: httpClient,
+		apiKey:     apiKey,
+	}
+}
+
 // Search executes a search query against the Tavily API with retry on transient errors.
 func (c *TavilyClient) Search(ctx context.Context, req SearchRequest) (*SearchResult, error) {
 	if req.MaxResults <= 0 {

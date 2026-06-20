@@ -265,7 +265,7 @@ func (s *Server) handleWithAdapters(
 			if acc, ok := effectiveProvider.(provider.AnthropicClientAccessor); ok {
 				wrapped := websearchinjected.WrapProvider(
 					acc.AnthropicClient(),
-					searchCfg.tavilyKey, searchCfg.firecrawlKey, searchCfg.maxRounds,
+					searchCfg.tavilyKey, searchCfg.firecrawlKey, searchCfg.maxRounds, s.proxyHTTP,
 				)
 				effectiveProvider = &searchProviderAdapter{wrapped: wrapped}
 			}
