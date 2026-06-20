@@ -1057,6 +1057,159 @@ func (a *AnthropicProviderAdapter) bufferStreamEvent(ev StreamEvent) {
 	// This is a no-op without a per-stream buffer — use the state.bufferStreamEvent instead.
 }
 
+// flattenSchemaComposition detects composition keywords (oneOf/allOf/anyOf) at
+// the top level of the schema and flattens them into a merged object schema.
+// Returns the flattened schema, or nil if the schema does not need flattening.
+//
+// Each composition branch must itself be an object schema with properties.
+// Properties are merged across all branches by name. The "action" property's
+// enum values across all branches are combined into a single enum list.
+//
+// Example input:
+//
+//	{"type": "object", "oneOf": [
+//	  {"properties": {"action": {"enum": ["a"]}, "x": {}}, "required": ["action","x"]},
+//	  {"properties": {"action": {"enum": ["b"]}, "y": {}}, "required": ["action","y"]}
+//	]}
+//
+// Example output:
+//
+//	{"type": "object", "properties": {
+//	  "action": {"type": "string", "enum": ["a","b"]},
+//	  "x": {},
+//	  "y": {}
+//	}, "additionalProperties": false}
+func flattenSchemaComposition(schema map[string]any) map[string]any {
+	compositionKey := detectCompositionKeyword(schema)
+	if compositionKey == "" {
+		return nil
+	}
+
+	branchesRaw, ok := schema[compositionKey]
+	if !ok {
+		return nil
+	}
+
+	branches, ok := schemaCompositionBranches(branchesRaw)
+	if !ok {
+		return nil
+	}
+	if len(branches) == 0 {
+		return nil
+	}
+
+	// Merge properties across all branches.
+	mergedProperties := make(map[string]any)
+	var actionEnumValues []any
+	seenActionValues := make(map[string]bool)
+	hasAdditionalPropsRestriction := false
+
+	for _, branch := range branches {
+		if props, ok := branch["properties"].(map[string]any); ok {
+			for propName, propSchema := range props {
+				if propName == "action" {
+					// Merge action enum values across all branches.
+					if propMap, ok := propSchema.(map[string]any); ok {
+						for _, val := range schemaEnumValues(propMap["enum"]) {
+							valStr, ok := val.(string)
+							if !ok {
+								continue
+							}
+							if !seenActionValues[valStr] {
+								seenActionValues[valStr] = true
+								actionEnumValues = append(actionEnumValues, val)
+							}
+						}
+					}
+				}
+				// First definition wins (earlier branches take priority).
+				if _, exists := mergedProperties[propName]; !exists {
+					mergedProperties[propName] = propSchema
+				}
+			}
+		}
+
+		// Track if any branch sets additionalProperties.
+		if _, ok := branch["additionalProperties"]; ok {
+			hasAdditionalPropsRestriction = true
+		}
+	}
+
+	// Build flattened schema: preserve all non-composition keys from original.
+	flattened := make(map[string]any)
+	for k, v := range schema {
+		if k == compositionKey || k == "properties" {
+			continue
+		}
+		flattened[k] = v
+	}
+	flattened["type"] = "object"
+
+	// If there's a merged "action" enum, build the action property.
+	if len(actionEnumValues) > 0 {
+		actionSchema := map[string]any{"type": "string", "enum": actionEnumValues}
+		mergedProperties["action"] = actionSchema
+	}
+
+	if len(mergedProperties) > 0 {
+		flattened["properties"] = mergedProperties
+	}
+
+	// Remove "required" — different actions require different fields.
+	delete(flattened, "required")
+
+	if hasAdditionalPropsRestriction {
+		flattened["additionalProperties"] = false
+	}
+
+	return flattened
+}
+
+func schemaCompositionBranches(raw any) ([]map[string]any, bool) {
+	switch branches := raw.(type) {
+	case []map[string]any:
+		return branches, true
+	case []any:
+		result := make([]map[string]any, 0, len(branches))
+		for _, branchRaw := range branches {
+			branch, ok := branchRaw.(map[string]any)
+			if !ok {
+				return nil, false
+			}
+			result = append(result, branch)
+		}
+		return result, true
+	default:
+		return nil, false
+	}
+}
+
+func schemaEnumValues(raw any) []any {
+	switch values := raw.(type) {
+	case []any:
+		return values
+	case []string:
+		result := make([]any, 0, len(values))
+		for _, value := range values {
+			result = append(result, value)
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+// detectCompositionKeyword checks if the schema has oneOf, allOf, or anyOf
+// at the top level and returns the keyword name. Returns empty string if none.
+func detectCompositionKeyword(schema map[string]any) string {
+	for _, kw := range []string{"oneOf", "allOf", "anyOf"} {
+		if _, ok := schema[kw]; ok {
+			return kw
+		}
+	}
+	return ""
+}
+
 // StreamBuffer returns the buffered stream events for trace capture.
 func (a *AnthropicProviderAdapter) StreamBuffer() []StreamEvent {
 	// Deprecated: use StreamResult.StreamBuffer instead.
@@ -1124,10 +1277,22 @@ func (a *AnthropicProviderAdapter) coreCacheControl(c *format.CoreCacheControl) 
 // Empty maps are preserved as-is (e.g. properties:{}) to avoid corrupting
 // the JSON Schema structure. Returns nil when the entire result is empty;
 // callers must supply a {"type":"object"} fallback when needed.
+//
+// Also flattens JSON Schema composition keywords (oneOf / allOf / anyOf) from
+// the top level into a merged properties object. AWS Bedrock rejects
+// input_schema that has these keywords at the root level.
 func cleanSchema(schema map[string]any) map[string]any {
 	if schema == nil {
 		return nil
 	}
+
+	// Flatten composition keywords (oneOf/allOf/anyOf) at the top level.
+	// AWS Bedrock rejects these at the input_schema root even when
+	// "type":"object" is also present.
+	if flattened := flattenSchemaComposition(schema); flattened != nil {
+		return flattened
+	}
+
 	result := make(map[string]any, len(schema))
 	for k, v := range schema {
 		switch val := v.(type) {
