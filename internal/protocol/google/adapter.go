@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"sync"
 
+	"moonbridge/internal/extension/codextool"
 	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/cache"
 )
@@ -173,9 +174,17 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 // The first candidate's content becomes a single assistant message.
 // Token usage is extracted from UsageMetadata.
 func (a *GeminiProviderAdapter) ToCoreResponse(ctx context.Context, resp any) (*format.CoreResponse, error) {
+	return a.ToCoreResponseWithRequest(ctx, nil, resp)
+}
+
+func (a *GeminiProviderAdapter) ToCoreResponseWithRequest(ctx context.Context, req *format.CoreRequest, resp any) (*format.CoreResponse, error) {
 	geminiResp, ok := resp.(*GenerateContentResponse)
 	if !ok {
 		return nil, fmt.Errorf("google adapter: expected *GenerateContentResponse, got %T", resp)
+	}
+	toolMap := codextool.DecodeToolMapFromExtensions(nil)
+	if req != nil {
+		toolMap = codextool.DecodeToolMapFromExtensions(req.Extensions)
 	}
 
 	// Map status from candidates.
@@ -187,6 +196,9 @@ func (a *GeminiProviderAdapter) ToCoreResponse(ctx context.Context, resp any) (*
 		candidate := geminiResp.Candidates[0]
 		stopReason = a.mapFinishReason(candidate.FinishReason)
 		coreContent = a.fromParts(candidate.Content.Parts)
+		for i := range coreContent {
+			codextool.DecodeCoreToolBlockFromProvider(&coreContent[i], toolMap)
+		}
 		switch candidate.FinishReason {
 		case "MAX_TOKENS":
 			status = "incomplete"

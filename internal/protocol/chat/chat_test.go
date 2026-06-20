@@ -1561,6 +1561,53 @@ func TestToCoreResponse_ToolCalls(t *testing.T) {
 	}
 }
 
+func TestToCoreResponseWithRequest_DecodesNestedNamespaceToolCall(t *testing.T) {
+	adapter := newTestAdapter()
+	req := &format.CoreRequest{
+		Extensions: map[string]any{
+			"codex_tool_map": map[string]any{
+				"multi_agent_v1": map[string]any{
+					"kind":        "nested_namespace",
+					"openai_name": "multi_agent_v1",
+					"namespace":   "multi_agent_v1",
+				},
+			},
+		},
+	}
+	chatResp := &chat.ChatResponse{
+		ID: "chatcmpl-ns",
+		Choices: []chat.Choice{{
+			Index: 0,
+			Message: chat.ChatMessage{
+				Role: "assistant",
+				ToolCalls: []chat.ToolCall{{
+					ID: "call_wait", Type: "function",
+					Function: chat.ToolCallFunc{
+						Name:      "multi_agent_v1",
+						Arguments: json.RawMessage(`{"action":"wait_agent","targets":["a"],"timeout_ms":1000}`),
+					},
+				}},
+			},
+			FinishReason: "tool_calls",
+		}},
+	}
+
+	result, err := adapter.ToCoreResponseWithRequest(context.Background(), req, chatResp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 1 || len(result.Messages[0].Content) != 1 {
+		t.Fatalf("unexpected messages: %+v", result.Messages)
+	}
+	block := result.Messages[0].Content[0]
+	if block.ToolName != "wait_agent" || block.ToolNamespace != "multi_agent_v1" {
+		t.Fatalf("tool fields = name %q namespace %q", block.ToolName, block.ToolNamespace)
+	}
+	if string(block.ToolInput) != `{"targets":["a"],"timeout_ms":1000}` {
+		t.Fatalf("tool input = %s", block.ToolInput)
+	}
+}
+
 func TestToCoreResponse_FinishReasonVariants(t *testing.T) {
 	adapter := newTestAdapter()
 	tests := []struct {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"moonbridge/internal/extension/codextool"
 	"moonbridge/internal/format"
 )
 
@@ -376,6 +377,10 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 // The response content blocks become a single assistant message. Cache registry
 // is updated from usage signals via CacheManager.
 func (a *AnthropicProviderAdapter) ToCoreResponse(ctx context.Context, resp any) (*format.CoreResponse, error) {
+	return a.ToCoreResponseWithRequest(ctx, nil, resp)
+}
+
+func (a *AnthropicProviderAdapter) ToCoreResponseWithRequest(ctx context.Context, req *format.CoreRequest, resp any) (*format.CoreResponse, error) {
 	msgResp, err := normalizeAnthropicMessageResponse(resp)
 	if err != nil {
 		return nil, fmt.Errorf("anthropic adapter: %w", err)
@@ -387,6 +392,12 @@ func (a *AnthropicProviderAdapter) ToCoreResponse(ctx context.Context, resp any)
 
 	// Convert content blocks to Core message.
 	coreContent := a.fromContentBlocks(msgResp.Content)
+	if req != nil {
+		toolMap := codextool.DecodeToolMapFromExtensions(req.Extensions)
+		for i := range coreContent {
+			codextool.DecodeCoreToolBlockFromProvider(&coreContent[i], toolMap)
+		}
+	}
 
 	coreResp := &format.CoreResponse{
 		ID:     msgResp.ID,

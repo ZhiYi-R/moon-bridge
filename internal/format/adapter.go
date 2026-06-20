@@ -70,6 +70,13 @@ type ProviderAdapter interface {
 	ToCoreResponse(ctx context.Context, resp any) (*CoreResponse, error)
 }
 
+// ProviderRequestAwareAdapter is an optional extension for provider adapters
+// whose response-to-Core conversion needs request metadata, such as the tool
+// expansion map used for namespace tools.
+type ProviderRequestAwareAdapter interface {
+	ToCoreResponseWithRequest(ctx context.Context, req *CoreRequest, resp any) (*CoreResponse, error)
+}
+
 // ============================================================================
 // ClientStreamAdapter — Core stream events ↦ inbound protocol stream
 // ============================================================================
@@ -102,6 +109,12 @@ type ProviderStreamAdapter interface {
 	// and returns a channel of CoreStreamEvent. The adapter is responsible for
 	// the read-loop inside a goroutine.
 	ToCoreStream(ctx context.Context, src any) (*StreamResult, error)
+}
+
+// ProviderRequestAwareStreamAdapter is an optional extension for streaming
+// provider adapters whose stream-to-Core conversion needs request metadata.
+type ProviderRequestAwareStreamAdapter interface {
+	ToCoreStreamWithRequest(ctx context.Context, req *CoreRequest, src any) (*StreamResult, error)
 }
 
 // ============================================================================

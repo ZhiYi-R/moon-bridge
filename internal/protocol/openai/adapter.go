@@ -1107,6 +1107,7 @@ type inputItem struct {
 	Summary   json.RawMessage `json:"summary"`
 	CallID    string          `json:"call_id"`
 	Name      string          `json:"name"`
+	Namespace string          `json:"namespace"`
 	Arguments string          `json:"arguments"`
 	Output    json.RawMessage `json:"output"`
 	Input     string          `json:"input"`
@@ -1260,10 +1261,11 @@ func convertInput(raw json.RawMessage, model string) ([]format.CoreMessage, []fo
 				toolInput = json.RawMessage(`{}`)
 			}
 			pendingFCBlocks = append(pendingFCBlocks, format.CoreContentBlock{
-				Type:      "tool_use",
-				ToolUseID: firstNonEmpty(item.CallID, item.ID),
-				ToolName:  item.Name,
-				ToolInput: toolInput,
+				Type:          "tool_use",
+				ToolUseID:     firstNonEmpty(item.CallID, item.ID),
+				ToolName:      item.Name,
+				ToolNamespace: item.Namespace,
+				ToolInput:     toolInput,
 			})
 
 		case item.Type == "custom_tool_call" || item.Type == "local_shell_call":
@@ -1284,10 +1286,11 @@ func convertInput(raw json.RawMessage, model string) ([]format.CoreMessage, []fo
 				toolInput = data
 			}
 			pendingFCBlocks = append(pendingFCBlocks, format.CoreContentBlock{
-				Type:      "tool_use",
-				ToolUseID: firstNonEmpty(item.CallID, item.ID),
-				ToolName:  item.Name,
-				ToolInput: toolInput,
+				Type:          "tool_use",
+				ToolUseID:     firstNonEmpty(item.CallID, item.ID),
+				ToolName:      item.Name,
+				ToolNamespace: item.Namespace,
+				ToolInput:     toolInput,
 			})
 
 		case role == "system" || role == "developer":
@@ -1640,6 +1643,18 @@ func localShellActionFromRaw(raw json.RawMessage) *ToolAction {
 // buildToolOutputItem constructs an OutputItem using the codex_tool_map
 // to determine the correct output item type (function_call, custom_tool_call, local_shell_call).
 func buildToolOutputItem(block format.CoreContentBlock, extensions map[string]any) OutputItem {
+	if block.ToolNamespace != "" {
+		return OutputItem{
+			Type:      "function_call",
+			ID:        block.ToolUseID,
+			CallID:    block.ToolUseID,
+			Name:      block.ToolName,
+			Namespace: block.ToolNamespace,
+			Arguments: toolInputString(block.ToolInput),
+			Input:     toolInputString(block.ToolInput),
+			Status:    "completed",
+		}
+	}
 	toolMap := codextool.DecodeToolMapFromExtensions(extensions)
 	itemT, itemN, itemNS, itemInput, isLS, actionJSON := codextool.OutputItemFromBlock(block.ToolName, block.ToolInput, toolMap)
 	if isLS {
@@ -1791,6 +1806,17 @@ func stripPrefixActionFromJSON(raw string, action string) string {
 	return prefix + ", " + afterValue
 }
 func buildToolOutputItemStreaming(block *format.CoreContentBlock, extensions map[string]any, toolUseID string) OutputItem {
+	if block.ToolNamespace != "" {
+		return OutputItem{
+			Type:      "function_call",
+			ID:        toolUseID,
+			CallID:    toolUseID,
+			Name:      block.ToolName,
+			Namespace: block.ToolNamespace,
+			Arguments: toolInputString(block.ToolInput),
+			Status:    "in_progress",
+		}
+	}
 	toolMap := codextool.DecodeToolMapFromExtensions(extensions)
 	itemT, itemN, itemNS, itemInput, isLS, actionJSON := codextool.OutputItemFromBlock(block.ToolName, block.ToolInput, toolMap)
 	_ = itemInput

@@ -61,6 +61,73 @@ func TestToCoreRequest_WithInstructions(t *testing.T) {
 	}
 }
 
+func TestToCoreRequest_FunctionCallPreservesNamespace(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+
+	req := &openai.ResponsesRequest{
+		Model: "gpt-4o",
+		Input: json.RawMessage(`[
+			{
+				"type":"function_call",
+				"id":"fc_1",
+				"call_id":"call_1",
+				"name":"wait_agent",
+				"namespace":"multi_agent_v1",
+				"arguments":"{\"targets\":[\"a\"],\"timeout_ms\":1000}"
+			}
+		]`),
+	}
+
+	result, err := adapter.ToCoreRequest(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Messages) != 1 || len(result.Messages[0].Content) != 1 {
+		t.Fatalf("unexpected messages: %+v", result.Messages)
+	}
+	block := result.Messages[0].Content[0]
+	if block.ToolName != "wait_agent" || block.ToolNamespace != "multi_agent_v1" {
+		t.Fatalf("tool fields = name %q namespace %q", block.ToolName, block.ToolNamespace)
+	}
+	if string(block.ToolInput) != `{"targets":["a"],"timeout_ms":1000}` {
+		t.Fatalf("tool input = %s", block.ToolInput)
+	}
+}
+
+func TestFromCoreResponse_FunctionCallEmitsNamespace(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+	coreResp := &format.CoreResponse{
+		ID:     "resp_1",
+		Status: "completed",
+		Messages: []format.CoreMessage{{
+			Role: "assistant",
+			Content: []format.CoreContentBlock{{
+				Type:          "tool_use",
+				ToolUseID:     "call_1",
+				ToolName:      "wait_agent",
+				ToolNamespace: "multi_agent_v1",
+				ToolInput:     json.RawMessage(`{"targets":["a"],"timeout_ms":1000}`),
+			}},
+		}},
+	}
+
+	raw, err := adapter.FromCoreResponse(context.Background(), coreResp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := raw.(*openai.Response)
+	if len(resp.Output) != 1 {
+		t.Fatalf("output len = %d", len(resp.Output))
+	}
+	item := resp.Output[0]
+	if item.Type != "function_call" || item.Name != "wait_agent" || item.Namespace != "multi_agent_v1" {
+		t.Fatalf("output item = %+v", item)
+	}
+	if item.Arguments != `{"targets":["a"],"timeout_ms":1000}` {
+		t.Fatalf("arguments = %q", item.Arguments)
+	}
+}
+
 func TestToCoreRequest_AppendsInjectedTools(t *testing.T) {
 	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{
 		InjectTools: func(context.Context) []format.CoreTool {

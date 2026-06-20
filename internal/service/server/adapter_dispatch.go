@@ -291,7 +291,7 @@ func (s *Server) handleWithAdapters(
 				} else {
 					// Normal path: convert back to CoreResponse.
 					msgResp := upstreamRespMsg
-					coreResp, err = providerAdapter.ToCoreResponse(ctx, &msgResp)
+					coreResp, err = providerToCoreResponse(ctx, providerAdapter, coreReq, &msgResp)
 				}
 			}
 		}
@@ -433,7 +433,7 @@ func (s *Server) handleWithAdapters(
 		}
 		record.ChatResponse = chatResp
 
-		coreResp, err = providerAdapter.ToCoreResponse(ctx, chatResp)
+		coreResp, err = providerToCoreResponse(ctx, providerAdapter, coreReq, chatResp)
 		if err != nil {
 			log.Error("adapter path: Chat ToCoreResponse failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -563,7 +563,7 @@ func (s *Server) handleWithAdapters(
 		}
 		record.UpstreamResponse = googleResp
 
-		coreResp, err = providerAdapter.ToCoreResponse(ctx, googleResp)
+		coreResp, err = providerToCoreResponse(ctx, providerAdapter, coreReq, googleResp)
 		if err != nil {
 			log.Error("adapter path: Google ToCoreResponse failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -787,10 +787,11 @@ func streamOutputItemToCoreBlocks(item openai.OutputItem) []format.CoreContentBl
 			return nil
 		}
 		return []format.CoreContentBlock{{
-			Type:      "tool_use",
-			ToolUseID: toolUseID,
-			ToolName:  item.Name,
-			ToolInput: streamOutputToolInput(item),
+			Type:          "tool_use",
+			ToolUseID:     toolUseID,
+			ToolName:      item.Name,
+			ToolNamespace: item.Namespace,
+			ToolInput:     streamOutputToolInput(item),
 		}}
 	case "message":
 		blocks := make([]format.CoreContentBlock, 0, len(item.Content))
@@ -1067,7 +1068,7 @@ func (s *Server) handleAdapterStream(
 				writeOpenAIError(w, http.StatusInternalServerError, payload)
 				return
 			}
-			sr, err = providerStream.ToCoreStream(ctx, stream)
+			sr, err = providerToCoreStream(ctx, providerStream, coreReq, stream)
 			if err != nil {
 				log.Error("adapter stream: ToCoreStream failed", "error", err)
 				payload := openai.ErrorResponse{
@@ -1240,7 +1241,7 @@ func (s *Server) handleAdapterStream(
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
-		sr, err = providerStream.ToCoreStream(ctx, chatStream)
+		sr, err = providerToCoreStream(ctx, providerStream, coreReq, chatStream)
 		if err != nil {
 			log.Error("adapter stream: Chat ToCoreStream failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -1391,7 +1392,7 @@ func (s *Server) handleAdapterStream(
 				writeOpenAIError(w, http.StatusInternalServerError, payload)
 				return
 			}
-			coreFinal, convErr := googleAdapter.ToCoreResponse(ctx, googleResp)
+			coreFinal, convErr := toCoreResponseWithOptionalRequest(ctx, googleAdapter, coreReq, googleResp)
 			if convErr != nil {
 				log.Error("adapter stream: injected google ToCoreResponse failed", "error", convErr)
 				payload := openai.ErrorResponse{
@@ -1440,7 +1441,7 @@ func (s *Server) handleAdapterStream(
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
-		sr, err = providerStream.ToCoreStream(ctx, googleStream)
+		sr, err = providerToCoreStream(ctx, providerStream, coreReq, googleStream)
 		if err != nil {
 			log.Error("adapter stream: Google ToCoreStream failed", "error", err)
 			payload := openai.ErrorResponse{
@@ -2031,7 +2032,27 @@ func (p *adapterCoreProvider) CreateCore(ctx context.Context, req *format.CoreRe
 	if msgResp, ok := rawResp.(anthropic.MessageResponse); ok {
 		rawResp = &msgResp
 	}
-	return p.adapter.ToCoreResponse(ctx, rawResp)
+	return providerToCoreResponse(ctx, p.adapter, req, rawResp)
+}
+
+func providerToCoreResponse(ctx context.Context, adapter format.ProviderAdapter, req *format.CoreRequest, resp any) (*format.CoreResponse, error) {
+	return toCoreResponseWithOptionalRequest(ctx, adapter, req, resp)
+}
+
+func toCoreResponseWithOptionalRequest(ctx context.Context, adapter interface {
+	ToCoreResponse(context.Context, any) (*format.CoreResponse, error)
+}, req *format.CoreRequest, resp any) (*format.CoreResponse, error) {
+	if aware, ok := adapter.(format.ProviderRequestAwareAdapter); ok {
+		return aware.ToCoreResponseWithRequest(ctx, req, resp)
+	}
+	return adapter.ToCoreResponse(ctx, resp)
+}
+
+func providerToCoreStream(ctx context.Context, adapter format.ProviderStreamAdapter, req *format.CoreRequest, src any) (*format.StreamResult, error) {
+	if aware, ok := adapter.(format.ProviderRequestAwareStreamAdapter); ok {
+		return aware.ToCoreStreamWithRequest(ctx, req, src)
+	}
+	return adapter.ToCoreStream(ctx, src)
 }
 
 // coreResponseToCoreStream converts a CoreResponse into a synthetic Core stream.

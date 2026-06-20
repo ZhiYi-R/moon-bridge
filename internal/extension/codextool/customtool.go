@@ -128,6 +128,52 @@ func OutputItemFromBlock(
 	}
 }
 
+// CoreToolCallFromProvider converts an upstream-facing tool call back into Core
+// tool fields. Nested namespace wrappers are decoded into namespace + action,
+// while ordinary tools keep their upstream name and input unchanged.
+func CoreToolCallFromProvider(
+	upstreamName string,
+	input json.RawMessage,
+	toolMap ToolMap,
+) (toolName string, toolNamespace string, toolInput json.RawMessage) {
+	if !json.Valid(input) {
+		input = json.RawMessage(`{}`)
+	}
+	spec, ok := toolMap.Lookup(upstreamName)
+	if !ok {
+		return upstreamName, "", input
+	}
+	switch spec.Kind {
+	case ToolNestedOneOf, ToolNestedAnyOf:
+		action, params, err := DecodeNestedCall(input, spec.Kind)
+		if spec.Kind == ToolNestedAnyOf && (err == nil && string(params) == `{}`) {
+			if inlineAction, inlineParams, inlineErr := DecodeNestedCall(input, ToolNestedOneOf); inlineErr == nil && inlineAction != "" {
+				action, params = inlineAction, inlineParams
+			}
+		}
+		if err != nil || action == "" {
+			return upstreamName, spec.Namespace, input
+		}
+		return action, spec.Namespace, params
+	case ToolFunction:
+		return upstreamName, spec.Namespace, input
+	default:
+		return upstreamName, "", input
+	}
+}
+
+// DecodeCoreToolBlockFromProvider applies CoreToolCallFromProvider to a Core
+// tool_use block in place.
+func DecodeCoreToolBlockFromProvider(block *format.CoreContentBlock, toolMap ToolMap) {
+	if block == nil || block.Type != "tool_use" {
+		return
+	}
+	name, namespace, input := CoreToolCallFromProvider(block.ToolName, block.ToolInput, toolMap)
+	block.ToolName = name
+	block.ToolNamespace = namespace
+	block.ToolInput = input
+}
+
 // Proxy schema builders (return map[string]any for format.CoreTool.InputSchema)
 
 func ApplyPatchToolActions() []string {

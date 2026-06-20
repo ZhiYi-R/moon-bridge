@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 
+	"moonbridge/internal/extension/codextool"
 	"moonbridge/internal/format"
 )
 
@@ -173,14 +174,22 @@ func extractReasoningEffort(ext map[string]any) string {
 // Each choice in the response becomes a separate assistant message in
 // Messages. Token usage is extracted from Usage.
 func (a *ChatProviderAdapter) ToCoreResponse(ctx context.Context, resp any) (*format.CoreResponse, error) {
+	return a.ToCoreResponseWithRequest(ctx, nil, resp)
+}
+
+func (a *ChatProviderAdapter) ToCoreResponseWithRequest(ctx context.Context, req *format.CoreRequest, resp any) (*format.CoreResponse, error) {
 	chatResp, ok := resp.(*ChatResponse)
 	if !ok {
 		return nil, fmt.Errorf("chat adapter: expected *ChatResponse, got %T", resp)
 	}
+	toolMap := codextool.DecodeToolMapFromExtensions(nil)
+	if req != nil {
+		toolMap = codextool.DecodeToolMapFromExtensions(req.Extensions)
+	}
 
 	messages := make([]format.CoreMessage, 0, len(chatResp.Choices))
 	for _, choice := range chatResp.Choices {
-		msg := a.choiceToCoreMessage(choice)
+		msg := a.choiceToCoreMessage(choice, toolMap)
 		messages = append(messages, msg)
 	}
 
@@ -246,6 +255,11 @@ func (a *ChatProviderAdapter) StreamBuffer() []ChatStreamChunk {
 //   - core.content_block.done (chunk with finish_reason set)
 //   - core.completed (final chunk with Usage)
 func (a *ChatProviderAdapter) ToCoreStream(ctx context.Context, src any) (*format.StreamResult, error) {
+	return a.ToCoreStreamWithRequest(ctx, nil, src)
+}
+
+func (a *ChatProviderAdapter) ToCoreStreamWithRequest(ctx context.Context, req *format.CoreRequest, src any) (*format.StreamResult, error) {
+	_ = req
 	ch, ok := src.(<-chan ChatStreamChunk)
 	if !ok {
 		return nil, fmt.Errorf("chat adapter: expected <-chan ChatStreamChunk, got %T", src)
@@ -804,7 +818,7 @@ func (a *ChatProviderAdapter) toChatToolChoice(tc format.CoreToolChoice) json.Ra
 // =========================================================================
 
 // choiceToCoreMessage converts a Choice to a CoreMessage.
-func (a *ChatProviderAdapter) choiceToCoreMessage(choice Choice) format.CoreMessage {
+func (a *ChatProviderAdapter) choiceToCoreMessage(choice Choice, toolMap codextool.ToolMap) format.CoreMessage {
 	content := a.fromChatContent(choice.Message.Content)
 
 	// Prepend reasoning block if reasoning_content is present (DeepSeek etc.).
@@ -818,11 +832,14 @@ func (a *ChatProviderAdapter) choiceToCoreMessage(choice Choice) format.CoreMess
 	// Add tool calls as tool_use content blocks.
 	if len(choice.Message.ToolCalls) > 0 {
 		for _, tc := range choice.Message.ToolCalls {
+			toolInput := unquoteArguments(tc.Function.Arguments)
+			toolName, toolNamespace, toolInput := codextool.CoreToolCallFromProvider(tc.Function.Name, toolInput, toolMap)
 			content = append(content, format.CoreContentBlock{
-				Type:      "tool_use",
-				ToolUseID: tc.ID,
-				ToolName:  tc.Function.Name,
-				ToolInput: unquoteArguments(tc.Function.Arguments),
+				Type:          "tool_use",
+				ToolUseID:     tc.ID,
+				ToolName:      toolName,
+				ToolNamespace: toolNamespace,
+				ToolInput:     toolInput,
 			})
 		}
 	}
