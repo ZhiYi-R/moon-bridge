@@ -51,6 +51,9 @@ func DecodeToolMap(raw map[string]any) ToolMap {
 			if ns, ok := specMap["namespace"].(string); ok {
 				spec.Namespace = ns
 			}
+			if rawActions, ok := specMap["actions"].([]string); ok {
+				spec.Actions = append(spec.Actions, rawActions...)
+			}
 			if rawActions, ok := specMap["actions"].([]any); ok {
 				for _, rawAction := range rawActions {
 					if action, ok := rawAction.(string); ok {

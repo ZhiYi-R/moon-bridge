@@ -107,7 +107,7 @@ func TestBareNamespaceActionRoundTripsWhenUnambiguous(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	toolMap := BuildToolMapFromCore(tools)
+	toolMap := DecodeToolMap(BuildToolMapFromCore(tools).Encode())
 
 	name, namespace, input := CoreToolCallFromProvider(
 		"spawn_agent",
