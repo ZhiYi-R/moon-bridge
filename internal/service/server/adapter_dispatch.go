@@ -70,6 +70,7 @@ func (s *Server) handleWithAdapters(
 			},
 		}
 		writeOpenAIError(w, http.StatusBadRequest, payload)
+		s.onRequestCompleted(openAIReq.Model, "", "", time.Now(), zeroUsage("adapter", "none"), 0, "error", "empty_model")
 		return
 	}
 
@@ -77,6 +78,8 @@ func (s *Server) handleWithAdapters(
 	requestStart := time.Now()
 	sess := s.sessionForRequest(r)
 	_ = sess
+	var adapterCompleted bool
+	var adapterHookErr string
 
 	// Initialize trace record.
 	bodyBytes, _ := json.Marshal(openAIReq)
@@ -105,6 +108,7 @@ func (s *Server) handleWithAdapters(
 		record.Error = traceError("client_adapter", fmt.Errorf("no client adapter for openai-response"))
 		record.OpenAIResponse = payload
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
+		s.onRequestCompleted(openAIReq.Model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "client_adapter")
 		return
 	}
 
@@ -124,6 +128,7 @@ func (s *Server) handleWithAdapters(
 		record.Error = traceError("to_core_request", err)
 		record.OpenAIResponse = payload
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
+		s.onRequestCompleted(openAIReq.Model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "to_core_request")
 		return
 	}
 
@@ -143,9 +148,24 @@ func (s *Server) handleWithAdapters(
 		record.Error = traceError("no_candidate", fmt.Errorf("no provider candidate"))
 		record.OpenAIResponse = payload
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
+		s.onRequestCompleted(openAIReq.Model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "no_provider_candidate")
 		return
 	}
 
+	defer func() {
+		if !adapterCompleted {
+			errMsg := adapterHookErr
+			if errMsg == "" {
+				errMsg = "unknown_adapter_error"
+			}
+			s.onRequestCompleted(
+				openAIReq.Model, preferred.UpstreamModel, preferred.ProviderKey,
+				requestStart,
+				zeroUsage(string(preferred.Protocol), "adapter_error"),
+				0, "error", errMsg,
+			)
+		}
+	}()
 	providerAdapter, ok := s.adapterRegistry.GetProvider(preferred.Protocol)
 	if !ok {
 		log.Warn("adapter path: no provider adapter for protocol", "protocol", preferred.Protocol)
@@ -158,6 +178,7 @@ func (s *Server) handleWithAdapters(
 		}
 		record.Error = traceError("provider_adapter", fmt.Errorf("no provider adapter for %q", preferred.Protocol))
 		record.OpenAIResponse = payload
+		adapterHookErr = "provider_adapter"
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
@@ -189,6 +210,7 @@ func (s *Server) handleWithAdapters(
 		}
 		record.Error = traceError("from_core_request", err)
 		record.OpenAIResponse = payload
+		adapterHookErr = "from_core_request"
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
@@ -208,6 +230,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("upstream_type", fmt.Errorf("unexpected anthropic type %T", upstreamAny))
 			record.OpenAIResponse = payload
+			adapterHookErr = "upstream_type"
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
@@ -238,6 +261,7 @@ func (s *Server) handleWithAdapters(
 
 		// If streaming, use streaming path.
 		if openAIReq.Stream {
+			adapterCompleted = true
 			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, upstreamReq, preferred, wsMode, wsInjected)
 			record.OpenAIRequest = nil
 			return
@@ -256,6 +280,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("resolve_provider", fmt.Errorf("no upstream provider for %q", openAIReq.Model))
 			record.OpenAIResponse = payload
+			adapterHookErr = "resolve_provider"
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
@@ -306,6 +331,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("create_message", err)
 			record.OpenAIResponse = payload
+			adapterHookErr = "create_message"
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
@@ -323,6 +349,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("upstream_type", fmt.Errorf("unexpected chat type %T", upstreamAny))
 			record.OpenAIResponse = payload
+			adapterHookErr = "upstream_type"
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
@@ -333,6 +360,7 @@ func (s *Server) handleWithAdapters(
 		}
 
 		if openAIReq.Stream {
+			adapterCompleted = true
 			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, chatReq, preferred, wsMode, wsInjected)
 			record.OpenAIRequest = nil
 			return
@@ -350,6 +378,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("chat_client", fmt.Errorf("no chat client for %q", preferred.ProviderKey))
 			record.OpenAIResponse = payload
+			adapterHookErr = "chat_client"
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
@@ -365,6 +394,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("chat_client_type", fmt.Errorf("invalid chat client for %q", preferred.ProviderKey))
 			record.OpenAIResponse = payload
+			adapterHookErr = "chat_client_type"
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
@@ -405,6 +435,7 @@ func (s *Server) handleWithAdapters(
 				}
 				record.Error = traceError("chat_visual_core", err)
 				record.OpenAIResponse = payload
+				adapterHookErr = "chat_visual_core"
 				writeOpenAIError(w, http.StatusBadGateway, payload)
 				return
 			}
@@ -428,6 +459,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("chat_api", err)
 			record.OpenAIResponse = payload
+			adapterHookErr = "chat_api"
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
@@ -445,6 +477,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("to_core_response", err)
 			record.OpenAIResponse = payload
+			adapterHookErr = "to_core_response"
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
@@ -476,11 +509,13 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("upstream_type", fmt.Errorf("unexpected google type %T", upstreamAny))
 			record.OpenAIResponse = payload
+			adapterHookErr = "upstream_type"
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
 
 		if openAIReq.Stream {
+			adapterCompleted = true
 			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, googleReq, preferred, wsMode, wsInjected)
 			record.OpenAIRequest = nil
 			return
@@ -498,6 +533,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("google_client", fmt.Errorf("no google client for %q", preferred.ProviderKey))
 			record.OpenAIResponse = payload
+			adapterHookErr = "google_client"
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
@@ -513,6 +549,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("google_client_type", fmt.Errorf("invalid google client for %q", preferred.ProviderKey))
 			record.OpenAIResponse = payload
+			adapterHookErr = "google_client_type"
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
@@ -535,6 +572,7 @@ func (s *Server) handleWithAdapters(
 				}
 				record.Error = traceError("google_visual_core", visErr)
 				record.OpenAIResponse = payload
+				adapterHookErr = "google_visual_core"
 				writeOpenAIError(w, http.StatusBadGateway, payload)
 				return
 			}
@@ -558,6 +596,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("google_api", err)
 			record.OpenAIResponse = payload
+			adapterHookErr = "google_api"
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
@@ -575,6 +614,7 @@ func (s *Server) handleWithAdapters(
 			}
 			record.Error = traceError("to_core_response", err)
 			record.OpenAIResponse = payload
+			adapterHookErr = "to_core_response"
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
@@ -590,6 +630,7 @@ func (s *Server) handleWithAdapters(
 		}
 		record.Error = traceError("unsupported_protocol", fmt.Errorf("unsupported protocol %q", preferred.Protocol))
 		record.OpenAIResponse = payload
+		adapterHookErr = "unsupported_protocol"
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
@@ -604,6 +645,7 @@ func (s *Server) handleWithAdapters(
 		}
 		record.Error = traceError("to_core_response", err)
 		record.OpenAIResponse = payload
+		adapterHookErr = "to_core_response"
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
@@ -633,6 +675,7 @@ func (s *Server) handleWithAdapters(
 		}
 		record.Error = traceError("from_core_response", err)
 		record.OpenAIResponse = payload
+		adapterHookErr = "from_core_response"
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
@@ -648,6 +691,7 @@ func (s *Server) handleWithAdapters(
 		}
 		record.Error = traceError("output_type", fmt.Errorf("unexpected output type %T", outAny))
 		record.OpenAIResponse = payload
+		adapterHookErr = "output_type"
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
@@ -660,6 +704,7 @@ func (s *Server) handleWithAdapters(
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(out)
+	adapterCompleted = true
 
 	// Record trace with upstream details and final output.
 	record.OpenAIResponse = out

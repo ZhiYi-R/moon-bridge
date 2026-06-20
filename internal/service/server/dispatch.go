@@ -277,12 +277,13 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 	proxyStart := time.Now()
 	var hookErr string
 	var lastErr error
+	var lastProviderKey string
 	actualModel := "" // updated with the successfully used upstream model
 	pm := server.activeProviderManager()
 	defer func() {
 		if hookErr != "" {
 			server.onRequestCompleted(
-				responsesRequest.Model, "", "", proxyStart,
+				responsesRequest.Model, actualModel, lastProviderKey, proxyStart,
 				zeroUsage(config.ProtocolOpenAIResponse, "none"), 0, "error", hookErr,
 			)
 		}
@@ -327,6 +328,7 @@ func (server *Server) handleOpenAIResponse(writer http.ResponseWriter, request *
 
 	for i, candidate := range openaiCandidates {
 		providerKey := candidate.ProviderKey
+		lastProviderKey = providerKey
 		isLast := i == len(openaiCandidates)-1
 		log := logger.L().With("provider", providerKey, "attempt", i+1)
 		if candidate.Client == nil {
