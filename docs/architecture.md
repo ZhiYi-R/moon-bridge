@@ -99,6 +99,7 @@ flowchart TB
 - `internal/extension/plugin` — 三方插件注册管理（`PluginRegistry` + `CorePluginHooks`）
 - `internal/extension/codex` — Codex 模型目录
 - `internal/extension/codex_tool_proxy` — apply_patch 代理扩展
+ - `internal/extension/codextool` — Codex 自定义工具转换、namespace 工具展开与 bare action 反查
 - `internal/extension/kimi_workaround` — Kimi 工具调用轮次限制
 - `internal/extension/db` — 持久化 Provider（SQLite 本地 / Cloudflare D1 Worker）
 
@@ -178,6 +179,12 @@ type ClientStreamAdapter interface { ... }
 - **OpenAI Response** → `function_call` / `function_call_output` items
 - **OpenAI Chat** → `tool_calls` / `tool` role messages
 - **Google Gemini** → `functionCall` / `functionResponse` parts
+
+### Namespace 工具与 Bare Action 恢复
+
+Codex CLI 的 namespace 工具（如 `multi_agent_v1`）将多个 action 包裹在一个上游工具名下。部分模型（如 DeepSeek V4 Flash）会直接发出裸 action 名称（`spawn_agent`），而非 wrapper 名称。
+
+`internal/extension/codextool` 包的 `ToolMap` 从 flattened `CoreTool` 列表构建反向映射表，通过 `Actions []string` 字段记录每个 namespace wrapper 下声明的 action 列表。当 provider 返回裸 action 时，`LookupNamespaceAction` 只在无歧义时恢复 `ToolNamespace`；若存在同名顶层工具，精确匹配优先。此机制覆盖全部四种上游协议。
 
 ### Web Search 工具注入
 
