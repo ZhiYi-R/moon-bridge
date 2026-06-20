@@ -119,7 +119,7 @@ func TestResolvePerProviderWebSearchDisabledByConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm, &bytes.Buffer{})
+	resolvePerProviderWebSearch(context.Background(), cfg, pm)
 	if got := pm.ResolvedWebSearch("default"); got != "disabled" {
 		t.Fatalf("ResolvedWebSearch(default) = %q, want disabled", got)
 	}
@@ -143,7 +143,7 @@ func TestResolvePerProviderWebSearchEnabledByConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm, &bytes.Buffer{})
+	resolvePerProviderWebSearch(context.Background(), cfg, pm)
 	if got := pm.ResolvedWebSearch("default"); got != "enabled" {
 		t.Fatalf("ResolvedWebSearch(default) = %q, want enabled", got)
 	}
@@ -166,7 +166,7 @@ func TestResolvePerProviderWebSearchOpenAIResponseEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm, &bytes.Buffer{})
+	resolvePerProviderWebSearch(context.Background(), cfg, pm)
 	if got := pm.ResolvedWebSearch("openai"); got != "enabled" {
 		t.Fatalf("ResolvedWebSearch(openai) = %q, want enabled for openai-response protocol", got)
 	}
@@ -191,7 +191,7 @@ func TestResolvePerProviderWebSearchFallsBackToGlobal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm, &bytes.Buffer{})
+	resolvePerProviderWebSearch(context.Background(), cfg, pm)
 	if got := pm.ResolvedWebSearch("default"); got != "disabled" {
 		t.Fatalf("ResolvedWebSearch(default) = %q, want disabled (from global fallback)", got)
 	}
@@ -225,7 +225,7 @@ func TestResolvePerProviderWebSearchAppliesProviderCatalogModelOverride(t *testi
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm, &bytes.Buffer{})
+	resolvePerProviderWebSearch(context.Background(), cfg, pm)
 	if got := pm.ResolvedWebSearch("main"); got != "disabled" {
 		t.Fatalf("ResolvedWebSearch(main) = %q, want disabled", got)
 	}
@@ -253,7 +253,6 @@ func TestResolveModelWebSearchCandidateFallsBackToInjectedWhenUnsupported(t *tes
 		t.Fatal(err)
 	}
 
-	var errors bytes.Buffer
 	resolved := resolveModelWebSearchWithProber(
 		context.Background(),
 		"deepseek-v4-pro",
@@ -262,7 +261,6 @@ func TestResolveModelWebSearchCandidateFallsBackToInjectedWhenUnsupported(t *tes
 		config.WebSearchSupportAuto,
 		pm,
 		cfg,
-		&errors,
 		probeWebSearchCandidateFunc(func(context.Context, string, string) (bool, error) {
 			return false, nil
 		}),
@@ -298,7 +296,6 @@ func TestResolveModelWebSearchCandidateKeepsEnabledWhenSupported(t *testing.T) {
 		config.WebSearchSupportAuto,
 		pm,
 		cfg,
-		&bytes.Buffer{},
 		probeWebSearchCandidateFunc(func(context.Context, string, string) (bool, error) {
 			return true, nil
 		}),

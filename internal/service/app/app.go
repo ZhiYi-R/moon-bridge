@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"log/slog"
@@ -84,7 +85,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 
 	// Resolve a fallback client for web search probing and server fallback.
 	defaultClient := resolveDefaultClient(providerMgr, errors)
-	resolvePerProviderWebSearch(ctx, cfg, providerMgr, errors)
+	resolvePerProviderWebSearch(ctx, cfg, providerMgr)
 
 	sessionStats := stats.NewSessionStats()
 	pricing := provider.BuildPricingFromConfig(providerCfg)
@@ -168,7 +169,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 					return fmt.Errorf("rebuild provider manager from DB: %w", err)
 				}
 				_ = resolveDefaultClient(providerMgr, errors)
-				resolvePerProviderWebSearch(ctx, cfg, providerMgr, errors)
+				resolvePerProviderWebSearch(ctx, cfg, providerMgr)
 
 				pricing = provider.BuildPricingFromConfig(dbProviderCfg)
 				if len(pricing) > 0 {
@@ -316,21 +317,19 @@ func resolveDefaultClient(pm *provider.ProviderManager, errors io.Writer) *anthr
 	return nil
 }
 
-// webSearchProber interface and following functions are unchanged.
-type webSearchProber interface {
-	ProbeWebSearch(context.Context, string) (bool, error)
-}
-
 type webSearchCandidateProber interface {
 	ProbeWebSearchCandidate(context.Context, string, string) (bool, error)
 }
 
 // resolvePerProviderWebSearch resolves web_search support for each provider and
 // each model that has a model-level override.
-func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *provider.ProviderManager, errors io.Writer) {
+func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *provider.ProviderManager) {
 	if pm == nil {
 		return
 	}
+	// Parallelize Anthropic probe goroutines (the slow path) while handling
+	// non-probe protocol branches inline.
+	var wg sync.WaitGroup
 	// 1. Resolve provider-level defaults.
 	for _, key := range pm.ProviderKeys() {
 		protocol := pm.ProtocolForKey(key)
@@ -348,12 +347,23 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 				pm.SetResolvedWebSearch(key, "injected")
 				slog.Info("网页搜索注入模式已启用", "provider", key)
 			default:
-				resolved := probeProviderWebSearch(ctx, key, pm, errors)
-				if resolved == "disabled" && cfg.TavilyAPIKey != "" {
-					resolved = "injected"
-					slog.Info("网页搜索自动探测失败，回退到注入模式", "provider", key)
-				}
-				pm.SetResolvedWebSearch(key, resolved)
+				// Launch probe in a goroutine to parallelize across providers.
+				keyCopy := key
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					resolved := probeProviderWebSearch(ctx, keyCopy, pm)
+					if resolved == "disabled" && cfg.TavilyAPIKey != "" {
+						resolved = "injected"
+						slog.Info("网页搜索自动探测失败，回退到注入模式", "provider", keyCopy)
+					}
+					// Also write the candidate key so model-level dedup can find it.
+					if upstreamModel := pm.FirstUpstreamModelForKey(keyCopy); upstreamModel != "" {
+						candidateKey := provider.WebSearchCandidateKey(keyCopy, upstreamModel)
+						pm.SetResolvedWebSearch(candidateKey, resolved)
+					}
+					pm.SetResolvedWebSearch(keyCopy, resolved)
+				}()
 			}
 		case config.ProtocolOpenAIResponse:
 			switch support {
@@ -375,16 +385,16 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 			}
 		}
 	}
+	// Wait for all parallel Anthropic probes to complete before model-level resolution.
+	wg.Wait()
 	// 2. Resolve model-level overrides for provider catalog slugs and route aliases.
 	for providerKey, def := range cfg.ProviderDefs {
 		for modelName := range def.Models {
 			alias := providerKey + "/" + modelName
 			newAlias := modelName + "(" + providerKey + ")"
 			modelWS := cfg.WebSearchForModel(alias)
-			resolveModelWebSearch(ctx, alias, providerKey, modelName, modelWS, pm, cfg, errors)
-			resolveModelWebSearch(ctx, newAlias, providerKey, modelName, modelWS, pm, cfg, errors)
-			pureWS := cfg.WebSearchForModel(modelName)
-			resolveModelWebSearch(ctx, modelName, providerKey, modelName, pureWS, pm, cfg, errors)
+			resolveModelWebSearch(ctx, alias, providerKey, modelName, modelWS, pm, cfg)
+			resolveModelWebSearch(ctx, newAlias, providerKey, modelName, modelWS, pm, cfg)
 		}
 	}
 	for alias, route := range cfg.Routes {
@@ -393,11 +403,11 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 		if providerKey == "" {
 			providerKey = pm.DefaultKey()
 		}
-		resolveModelWebSearch(ctx, alias, providerKey, route.Model, modelWS, pm, cfg, errors)
+		resolveModelWebSearch(ctx, alias, providerKey, route.Model, modelWS, pm, cfg)
 	}
 }
 
-func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config, errors io.Writer) {
+func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config) {
 	if alias == "" || providerKey == "" || upstreamModel == "" {
 		return
 	}
@@ -438,13 +448,23 @@ func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamMode
 		pm.SetResolvedWebSearch(candidateKey, "injected")
 		slog.Info("模型配置启用网页搜索注入模式", "model", alias)
 	default:
-		resolved := resolveModelWebSearchWithProber(ctx, alias, providerKey, upstreamModel, modelWS, pm, cfg, errors, pm)
+		// Dedup: skip probe if candidate key already resolved (from provider-level probe or earlier alias).
+		if existing := pm.ResolvedWebSearch(candidateKey); existing != "" {
+			slog.Debug("模型网页搜索已解析，跳过探测",
+				"model", alias,
+				"candidate", candidateKey,
+				"existing", existing,
+			)
+			pm.SetResolvedWebSearch(modelKey, existing)
+			return
+		}
+		resolved := resolveModelWebSearchWithProber(ctx, alias, providerKey, upstreamModel, modelWS, pm, cfg, pm)
 		pm.SetResolvedWebSearch(modelKey, resolved)
 		pm.SetResolvedWebSearch(candidateKey, resolved)
 	}
 }
 
-func probeProviderWebSearch(ctx context.Context, key string, pm *provider.ProviderManager, errors io.Writer) string {
+func probeProviderWebSearch(ctx context.Context, key string, pm *provider.ProviderManager) string {
 	pc, err := pm.ClientForKey(key)
 	if err != nil {
 		slog.Warn("网页搜索探测跳过：客户端不可用", "provider", key, "error", err)
@@ -468,56 +488,16 @@ func probeProviderWebSearch(ctx context.Context, key string, pm *provider.Provid
 	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
 	if err != nil {
 		slog.Warn("网页搜索自动探测失败", "provider", key, "error", err)
-		fmt.Fprintf(errors, "网页搜索自动探测失败（提供商 %s）: %v\n", key, err)
 		return "disabled"
 	}
 	if !supported {
 		slog.Warn("提供商不支持网页搜索", "provider", key, "model", upstreamModel)
-		fmt.Fprintf(errors, "提供商 %s 不支持网页搜索\n", key)
 		return "disabled"
 	}
 	slog.Info("提供商支持网页搜索", "provider", key, "model", upstreamModel)
 	return "enabled"
 }
-
-func probeModelWebSearch(ctx context.Context, modelAlias string, pm *provider.ProviderManager, errors io.Writer) string {
-	upstreamModel, pc, err := pm.ClientFor(modelAlias)
-	if err != nil {
-		slog.Warn("网页搜索模型探测跳过：客户端不可用", "model", modelAlias, "error", err)
-		return "disabled"
-	}
-	acc, ok := pc.(provider.AnthropicClientAccessor)
-	if !ok {
-		slog.Warn("网页搜索模型探测跳过：客户端不支持访问", "model", modelAlias)
-		return "disabled"
-	}
-	client := acc.AnthropicClient()
-	if err != nil {
-		slog.Warn("网页搜索模型探测跳过：客户端不可用", "model", modelAlias, "error", err)
-		return "disabled"
-	}
-	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
-	if err != nil {
-		slog.Warn("网页搜索模型探测失败", "model", modelAlias, "error", err)
-		fmt.Fprintf(errors, "网页搜索模型探测失败（%s）: %v\n", modelAlias, err)
-		return "disabled"
-	}
-	if !supported {
-		slog.Warn("模型不支持网页搜索", "model", modelAlias)
-		fmt.Fprintf(errors, "模型 %s 不支持网页搜索\n", modelAlias)
-		return "disabled"
-	}
-	slog.Info("模型支持网页搜索", "model", modelAlias)
-	return "enabled"
-}
-
-func probeModelWebSearchCandidate(ctx context.Context, modelAlias, providerKey, upstreamModel string, pm *provider.ProviderManager, cfg config.Config, errors io.Writer) string {
-	return resolveModelWebSearchWithProber(ctx, modelAlias, providerKey, upstreamModel, config.WebSearchSupportAuto, pm, cfg, errors, pm)
-}
-
-func resolveModelWebSearchWithProber(ctx context.Context, modelAlias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config, errors io.Writer, prober webSearchCandidateProber) string {
+func resolveModelWebSearchWithProber(ctx context.Context, modelAlias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config, prober webSearchCandidateProber) string {
 	switch modelWS {
 	case config.WebSearchSupportDisabled:
 		return "disabled"
@@ -538,7 +518,6 @@ func resolveModelWebSearchWithProber(ctx context.Context, modelAlias, providerKe
 	supported, err := prober.ProbeWebSearchCandidate(probeCtx, providerKey, upstreamModel)
 	if err != nil {
 		slog.Warn("网页搜索模型探测失败", "model", modelAlias, "provider", providerKey, "upstream_model", upstreamModel, "error", err)
-		fmt.Fprintf(errors, "网页搜索模型探测失败（%s via %s/%s）: %v\n", modelAlias, providerKey, upstreamModel, err)
 		if injectedSearchConfigured(cfg, modelAlias, providerKey) {
 			slog.Info("网页搜索模型探测失败，回退到注入模式", "model", modelAlias, "provider", providerKey, "upstream_model", upstreamModel)
 			return "injected"
@@ -554,7 +533,6 @@ func resolveModelWebSearchWithProber(ctx context.Context, modelAlias, providerKe
 		return "injected"
 	}
 	slog.Warn("模型不支持网页搜索", "model", modelAlias, "provider", providerKey, "upstream_model", upstreamModel)
-	fmt.Fprintf(errors, "模型 %s（%s/%s）不支持网页搜索\n", modelAlias, providerKey, upstreamModel)
 	return "disabled"
 }
 

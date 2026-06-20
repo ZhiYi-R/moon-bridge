@@ -614,6 +614,8 @@ func WebSearchCandidateKey(providerKey, upstreamModel string) string {
 // SetResolvedWebSearch stores the resolved web search support for a provider key.
 // Also accepts model aliases for per-model resolution.
 func (pm *ProviderManager) SetResolvedWebSearch(key string, support string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
 	pm.resolvedWS[key] = support
 }
 
