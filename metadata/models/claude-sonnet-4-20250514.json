@@ -1,0 +1,15 @@
+{
+  "context_window": 200000,
+  "max_output_tokens": 64000,
+  "display_name": "Claude Sonnet 4",
+  "description": "Frontier model for everyday coding.",
+  "default_reasoning_level": "medium",
+  "supported_reasoning_levels": [
+    {"effort": "low", "description": "Fast responses with lighter reasoning"},
+    {"effort": "medium", "description": "Balances speed and reasoning depth for everyday tasks"},
+    {"effort": "high", "description": "Greater reasoning depth for complex problems"},
+    {"effort": "xhigh", "description": "Extra high reasoning depth for complex problems"}
+  ],
+  "input_modalities": ["text", "image"],
+  "supports_image_detail_original": true
+}
