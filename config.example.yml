@@ -1,87 +1,52 @@
 # yaml-language-server: $schema=./config.schema.json
-mode: "Transform" # Transform / CaptureAnthropic / CaptureResponse
+# =============================================================================
+# MoonBridge Configuration Example
+# =============================================================================
+# This file documents every configurable field and serves as a live reference.
+# Uncomment and adjust values for your own deployment.
 
+# --- Operating Mode ----------------------------------------------------------
+mode: "Transform"   # Transform | CaptureAnthropic | CaptureResponse
+
+# --- Tracing -----------------------------------------------------------------
+trace:
+  enabled: false    # Dump full request/response traces to data/trace/
+
+# --- Logging -----------------------------------------------------------------
 log:
-  level: "info"  # debug / info / warn / error
-  format: "text" # text / json
+  level: "info"     # debug | info | warn | error | off
+  format: "text"    # text | json
 
-# system_prompt: ""
-
+# --- Server ------------------------------------------------------------------
 server:
   addr: "127.0.0.1:38440"
-  # Set a Bearer token for API authentication. When non-empty, all requests
-  # must include an Authorization: Bearer <token> header. If empty, auth is disabled.
-  # auth_token: "replace-with-your-secret-token"
+  # auth_token: "replace-with-your-secret-token"   # Bearer auth (omit for none)
+  # max_sessions: 100                               # 0 = unlimited
+  # session_ttl: "24h"                              # idle session timeout
 
-persistence:
-  active_provider: db_sqlite
+# --- Defaults ----------------------------------------------------------------
+defaults:
+  model: "moonbridge"
+  max_tokens: 65536
+  # system_prompt: ""                               # prepended to every request
 
-extensions:
-  deepseek_v4:
-    config:
-      # Injects a reminder before user input to reinforce system prompt adherence.
-      reinforce_instructions: true
-      # Custom prompt text (default used if omitted). Set to empty string to disable.
-      reinforce_prompt: "[System Reminder]: Please pay close attention to the system
-        instructions, AGENTS.md files, and any other context provided. Follow them
-        carefully and completely in your response.\n[User]:"
-  visual:
-    config:
-      provider: "kimi"
-      model: "kimi-for-coding"
-      max_rounds: 4
-      max_tokens: 2048
-  # Kimi model tool call round limiter: injects progress/limit prompts
-  # after each tool_result batch to prevent runaway information gathering.
-  #
-  # Enable at model level to activate:
-  #   models:
-  #     my-kimi-model:
-  #       extensions:
-  #         kimi_workaround:
-  #           enabled: true
-  kimi_workaround:
-    config:
-      max_tool_rounds: 50
-      convergence_margin: 0.8
-  # Example model with kimi_workaround enabled:
-  # my-kimi-model:
-  #   context_window: 128000
-  #   extensions:
-  #     kimi_workaround:
-  #       enabled: true
+# --- Top-Level Web Search ----------------------------------------------------
+# These values apply when no provider/model/route-level override is set.
+# web_search:
+#   support: "auto"              # auto | enabled | disabled | injected
+#   tavily_api_key: "tvly-..."
+#   firecrawl_api_key: "fc-..."
+#   search_max_rounds: 5
 
-  # Database provider: SQLite
-  db_sqlite:
-    enabled: true
-    config:
-      path: ./data/moonbridge.db
-      wal: true
-      busy_timeout_ms: 5000
-      max_open_conns: 1
+# --- Outbound Proxy ----------------------------------------------------------
+# HTTP(S) proxy for all upstream API calls. Two comma-separated values:
+# first = HTTP(S), second = SOCKS5 fallback.
+egress_proxy: "http://127.0.0.1:7890"
 
-  # Database provider: Cloudflare D1 (Worker only)
-  # db_d1:
-  #   enabled: true
-  #   config:
-  #     binding: MOONBRIDGE_DB
-
-  # Persistence consumer: request metrics
-  # apply_patch 代理扩展：控制 Codex 文件编辑工具是否展开为结构化代理工具。
-  # 默认关闭，开启后 apply_patch 被拆分为 add_file/delete_file/update_file/replace_file/batch
-  # codex_tool_proxy:
-  #   enabled: true
-
-  metrics:
-    enabled: true
-    config:
-      default_limit: 100
-      max_limit: 1000
-
-
+# --- Cache -------------------------------------------------------------------
 cache:
-  mode: "explicit"  # off / automatic / explicit / hybrid
-  ttl: "5m"         # 5m / 1h
+  mode: "explicit"               # off | automatic | explicit | hybrid
+  ttl: "5m"                      # 5m | 1h
   prompt_caching: true
   automatic_prompt_cache: false
   explicit_cache_breakpoints: true
@@ -92,85 +57,119 @@ cache:
   minimum_value_score: 2048
   min_breakpoint_tokens: 1024
 
-defaults:
-  model: "moonbridge"
-  max_tokens: 65536
-trace:
-  enabled: false
+# --- Persistence (management API storage) ------------------------------------
+persistence:
+  active_provider: db_sqlite     # db_sqlite | db_d1
+
+# --- Proxy (Capture modes only) ----------------------------------------------
+# Required when mode is CaptureResponse or CaptureAnthropic.
 proxy:
   response:
     base_url: "https://api.openai.com"
-    api_key: "replace-with-real-openai-responses-api-key"
-    model: "gpt-5.4"
+    api_key: "replace-with-real-openai-key"
+    model: "gpt-5.5"             # default model for /v1/responses pass-through
   anthropic:
-    base_url: "https://provider.example.com"
-    api_key: "replace-with-real-anthropic-compatible-api-key"
+    base_url: "https://api.anthropic.com"
+    api_key: "replace-with-real-anthropic-key"
     version: "2023-06-01"
+
+# --- Extensions --------------------------------------------------------------
+extensions:
+  # DeepSeek V4: re-inforce system instructions on each user turn
+  deepseek_v4:
+    config:
+      reinforce_instructions: true
+      reinforce_prompt: "[System Reminder]: Please pay close attention to the system
+        instructions, AGENTS.md files, and any other context provided. Follow them
+        carefully and completely in your response.\n[User]:"
+
+  # Visual: auto-route image tasks to a vision model (e.g. Kimi)
+  visual:
+    config:
+      provider: "kimi"
+      model: "kimi-for-coding"
+      max_rounds: 4
+      max_tokens: 2048
+
+  # Kimi tool-call round limiter
+  kimi_workaround:
+    config:
+      max_tool_rounds: 50
+      convergence_margin: 0.8
+    # Enable per-model via extensions block:
+    # models:
+    #   kimi-for-coding:
+    #     extensions:
+    #       kimi_workaround:
+    #         enabled: true
+
+  # apply_patch proxy: split apply_patch into structured sub-tools
+  # codex_tool_proxy:
+  #   enabled: true
+
+  # Database: SQLite (local persistence)
+  db_sqlite:
+    enabled: true
+    config:
+      path: ./data/moonbridge.db
+      wal: true
+      busy_timeout_ms: 5000
+      max_open_conns: 1
+
+  # Database: Cloudflare D1 (edge deployment only)
+  # db_d1:
+  #   enabled: true
+  #   config:
+  #     binding: MOONBRIDGE_DB
+
+  # Metrics: request analytics (optional)
+  metrics:
+    enabled: true
+    config:
+      default_limit: 100
+      max_limit: 1000
+
+# =============================================================================
+# Models
+# =============================================================================
+# Model metadata (context_window, display_name, reasoning_levels, modalities,
+# pricing, etc.) is stored in metadata/models/<slug>.json. The models section
+# below only contains runtime behaviour overrides: extension toggles and
+# web_search configuration at the model level.
 models:
   deepseek-v4-pro:
-    context_window: 1000000
-    max_output_tokens: 384000
-    display_name: "DeepSeek V4 Pro"
-    description: "DeepSeek V4 with selectable high/xhigh reasoning effort."
-    default_reasoning_level: "high"
-    supported_reasoning_levels:
-      - effort: "high"
-        description: "High reasoning effort"
-      - effort: "xhigh"
-        description: "Extra high reasoning effort (maps to DeepSeek max)"
-    supports_reasoning_summaries: true
-    default_reasoning_summary: "auto"
     web_search:
-      support: "auto"        # model-level override (auto / enabled / disabled / injected)
+      support: "auto"
     extensions:
       deepseek_v4:
         enabled: true
       visual:
         enabled: true
+
   deepseek-v4-flash:
-    context_window: 1000000
-    max_output_tokens: 384000
-    display_name: "DeepSeek V4 Flash"
-    description: "DeepSeek V4 Flash with selectable high/xhigh reasoning effort."
-    default_reasoning_level: "high"
-    supported_reasoning_levels:
-      - effort: "high"
-        description: "High reasoning effort"
-      - effort: "xhigh"
-        description: "Extra high reasoning effort (maps to DeepSeek max)"
-    supports_reasoning_summaries: true
-    default_reasoning_summary: "auto"
     web_search:
-      support: "auto"        # model-level override (auto / enabled / disabled / injected)
+      support: "auto"
     extensions:
       deepseek_v4:
         enabled: true
       visual:
         enabled: true
+
   claude-sonnet-4-20250514:
-    context_window: 200000
-    max_output_tokens: 64000
-    display_name: "Claude Sonnet 4"
-    description: "Frontier model for everyday coding."
-    default_reasoning_level: "medium"
-    supported_reasoning_levels:
-      - effort: "low"
-        description: "Fast responses with lighter reasoning"
-      - effort: "medium"
-        description: "Balances speed and reasoning depth for everyday tasks"
-      - effort: "high"
-        description: "Greater reasoning depth for complex problems"
-      - effort: "xhigh"
-        description: "Extra high reasoning depth for complex problems"
-          # Declare this model as multimodal (supports image input).
-          # Codex reads these from models_catalog.json to decide whether
-          # image attachments can be included in user turns.
-    input_modalities:
-      - "text"
-      - "image"
-    supports_image_detail_original: true
+    extensions: {}   # no overrides, metadata only
+
+  # kimi-for-coding:
+  #   context_window: 128000
+  #   extensions:
+  #     kimi_workaround:
+  #       enabled: true
+
+# =============================================================================
+# Providers
+# =============================================================================
 providers:
   deepseek:
+    protocol: "anthropic"            # anthropic (default) | openai-response | google-genai | openai-chat
     base_url: "https://api.deepseek.com/anthropic"
     api_key: "replace-with-deepseek-api-key"
     version: "2023-06-01"
@@ -190,23 +189,27 @@ providers:
           output_price: 2
           cache_write_price: 1
           cache_read_price: 0.02
+
   kimi:
-      # Anthropic-compatible base URL for Kimi/Moonshot.
+    protocol: "anthropic"
     base_url: "https://api.kimi.com/coding/"
     api_key: "replace-with-kimi-api-key"
     version: "2023-06-01"
     user_agent: "moonbridge/1.0"
     offers:
       - model: kimi-for-coding
+
   openai:
+    protocol: "openai-response"
     base_url: "https://api.openai.com"
     api_key: "replace-with-openai-api-key"
-    protocol: "openai-response"
     user_agent: "moonbridge/1.0"
     offers:
       - model: gpt-image-1.5
       - model: gpt-4o-mini-tts
+
   anthropic:
+    protocol: "anthropic"
     base_url: "https://api.anthropic.com"
     api_key: "replace-with-anthropic-api-key"
     version: "2023-06-01"
@@ -221,9 +224,25 @@ providers:
           cache_write_price: 3.75
           cache_read_price: 0.30
 
+  # Google Gemini (Vertex AI via GenAI SDK)
+  # gemini:
+  #   protocol: "google-genai"
+  #   base_url: "https://generativelanguage.googleapis.com"
+  #   api_key: "replace-with-gemini-api-key"
+  #   project: "my-gcp-project"
+  #   location: "us-central1"
+  #   api_version: "v1"
+  #   offers:
+  #     - model: gemini-2.5-flash
+
+# =============================================================================
+# Routes
+# =============================================================================
+# Optional aliases. Provider models are listed directly in the Codex catalog
+# as model(provider) format (e.g. deepseek-v4-pro(deepseek)). Routes only
+# add friendly fallback names like "moonbridge".
+# Backward-compatible shorthand: <route>: "provider/upstream-model"
 routes:
-    # Optional aliases. Provider models are listed directly in the Codex catalog
-    # as model(provider) format; routes only add friendly fallback names.
   moonbridge:
     model: deepseek-v4-pro
     provider: deepseek
