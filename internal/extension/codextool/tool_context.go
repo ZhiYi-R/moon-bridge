@@ -26,6 +26,7 @@ type ToolSpec struct {
 	Kind       ToolKind `json:"kind"`
 	OpenAIName string   `json:"openai_name"`
 	Namespace  string   `json:"namespace,omitempty"`
+	Actions    []string `json:"actions,omitempty"`
 }
 
 // ToolMap maps from expanded (upstream-facing) tool names back to
@@ -50,6 +51,13 @@ func DecodeToolMap(raw map[string]any) ToolMap {
 			if ns, ok := specMap["namespace"].(string); ok {
 				spec.Namespace = ns
 			}
+			if rawActions, ok := specMap["actions"].([]any); ok {
+				for _, rawAction := range rawActions {
+					if action, ok := rawAction.(string); ok {
+						spec.Actions = append(spec.Actions, action)
+					}
+				}
+			}
 			m[k] = spec
 		}
 	}
@@ -67,6 +75,7 @@ func (m ToolMap) Encode() map[string]any {
 			"kind":        string(spec.Kind),
 			"openai_name": spec.OpenAIName,
 			"namespace":   spec.Namespace,
+			"actions":     spec.Actions,
 		}
 	}
 	return out
@@ -79,6 +88,43 @@ func (m ToolMap) Lookup(name string) (ToolSpec, bool) {
 	}
 	spec, ok := m[name]
 	return spec, ok
+}
+
+// LookupNamespaceAction returns the namespace wrapper spec for a bare nested
+// action name when it can be inferred without ambiguity.
+func (m ToolMap) LookupNamespaceAction(action string) (ToolSpec, bool) {
+	if m == nil || action == "" {
+		return ToolSpec{}, false
+	}
+	if _, ok := m[action]; ok {
+		return ToolSpec{}, false
+	}
+	var match ToolSpec
+	found := false
+	for _, spec := range m {
+		if spec.Namespace == "" || (spec.Kind != ToolNestedOneOf && spec.Kind != ToolNestedAnyOf) {
+			continue
+		}
+		if !spec.HasAction(action) {
+			continue
+		}
+		if found && match.Namespace != spec.Namespace {
+			return ToolSpec{}, false
+		}
+		match = spec
+		found = true
+	}
+	return match, found
+}
+
+// HasAction reports whether action is declared by a nested namespace tool spec.
+func (s ToolSpec) HasAction(action string) bool {
+	for _, candidate := range s.Actions {
+		if candidate == action {
+			return true
+		}
+	}
+	return false
 }
 
 // DecodeToolMapFromExtensions extracts the "codex_tool_map" entry from

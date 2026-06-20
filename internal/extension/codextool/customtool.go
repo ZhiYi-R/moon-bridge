@@ -90,6 +90,7 @@ func BuildToolMapFromCore(original []format.CoreTool) ToolMap {
 			Kind:       ToolKind(kind),
 			OpenAIName: openaiName,
 			Namespace:  ns,
+			Actions:    actionNamesFromSchema(t.InputSchema),
 		}
 	}
 	return m
@@ -105,6 +106,9 @@ func OutputItemFromBlock(
 ) (itemType, itemName, itemNamespace, toolInputStr string, isLocalShell bool, actionJSON json.RawMessage) {
 	spec, ok := toolMap.Lookup(blockName)
 	if !ok {
+		if spec, ok := toolMap.LookupNamespaceAction(blockName); ok {
+			return "function_call", blockName, spec.Namespace, string(toolInput), false, nil
+		}
 		return "function_call", blockName, "", string(toolInput), false, nil
 	}
 	switch spec.Kind {
@@ -141,6 +145,9 @@ func CoreToolCallFromProvider(
 	}
 	spec, ok := toolMap.Lookup(upstreamName)
 	if !ok {
+		if spec, ok := toolMap.LookupNamespaceAction(upstreamName); ok {
+			return upstreamName, spec.Namespace, input
+		}
 		return upstreamName, "", input
 	}
 	switch spec.Kind {
@@ -159,6 +166,62 @@ func CoreToolCallFromProvider(
 		return upstreamName, spec.Namespace, input
 	default:
 		return upstreamName, "", input
+	}
+}
+
+func actionNamesFromSchema(schema map[string]any) []string {
+	if schema == nil {
+		return nil
+	}
+	seen := make(map[string]struct{})
+	var actions []string
+	add := func(action string) {
+		if action == "" {
+			return
+		}
+		if _, ok := seen[action]; ok {
+			return
+		}
+		seen[action] = struct{}{}
+		actions = append(actions, action)
+	}
+
+	if oneOf, ok := schema["oneOf"].([]map[string]any); ok {
+		for _, branch := range oneOf {
+			addActionsFromProperties(branch, add)
+		}
+	}
+	if oneOf, ok := schema["oneOf"].([]any); ok {
+		for _, rawBranch := range oneOf {
+			if branch, ok := rawBranch.(map[string]any); ok {
+				addActionsFromProperties(branch, add)
+			}
+		}
+	}
+	addActionsFromProperties(schema, add)
+	return actions
+}
+
+func addActionsFromProperties(schema map[string]any, add func(string)) {
+	props, ok := schema["properties"].(map[string]any)
+	if !ok {
+		return
+	}
+	actionSchema, ok := props["action"].(map[string]any)
+	if !ok {
+		return
+	}
+	if enumVals, ok := actionSchema["enum"].([]string); ok {
+		for _, action := range enumVals {
+			add(action)
+		}
+	}
+	if enumVals, ok := actionSchema["enum"].([]any); ok {
+		for _, raw := range enumVals {
+			if action, ok := raw.(string); ok {
+				add(action)
+			}
+		}
 	}
 }
 

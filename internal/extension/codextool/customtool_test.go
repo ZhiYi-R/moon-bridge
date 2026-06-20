@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"moonbridge/internal/format"
 )
 
 func TestRebuildApplyPatchGrammarUpdateFileIncludesValidPatchMarkers(t *testing.T) {
@@ -83,5 +85,81 @@ func TestRebuildGrammarUsesRawInputForGenericCustomTools(t *testing.T) {
 	got := RebuildGrammar("custom_tool", json.RawMessage(`{"input":"plain freeform body"}`))
 	if got != "plain freeform body" {
 		t.Fatalf("RebuildGrammar() = %q, want raw input", got)
+	}
+}
+
+func TestBareNamespaceActionRoundTripsWhenUnambiguous(t *testing.T) {
+	tools, err := BuildNamespaceTools(
+		[]string{"spawn_agent", "wait_agent"},
+		map[string]format.CoreTool{
+			"spawn_agent": {
+				Name:        "spawn_agent",
+				InputSchema: map[string]any{"type": "object"},
+			},
+			"wait_agent": {
+				Name:        "wait_agent",
+				InputSchema: map[string]any{"type": "object"},
+			},
+		},
+		"multi_agent_v1",
+		NestedAnyOf,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	toolMap := BuildToolMapFromCore(tools)
+
+	name, namespace, input := CoreToolCallFromProvider(
+		"spawn_agent",
+		json.RawMessage(`{"agent_type":"planner"}`),
+		toolMap,
+	)
+	if name != "spawn_agent" || namespace != "multi_agent_v1" {
+		t.Fatalf("core fields = name %q namespace %q", name, namespace)
+	}
+	if string(input) != `{"agent_type":"planner"}` {
+		t.Fatalf("input = %s", input)
+	}
+
+	itemType, itemName, itemNamespace, itemInput, isLocalShell, _ := OutputItemFromBlock(
+		"spawn_agent",
+		json.RawMessage(`{"agent_type":"planner"}`),
+		toolMap,
+	)
+	if itemType != "function_call" || itemName != "spawn_agent" || itemNamespace != "multi_agent_v1" || isLocalShell {
+		t.Fatalf("output item fields = type %q name %q namespace %q local_shell %v", itemType, itemName, itemNamespace, isLocalShell)
+	}
+	if itemInput != `{"agent_type":"planner"}` {
+		t.Fatalf("item input = %q", itemInput)
+	}
+}
+
+func TestBareNamespaceActionDoesNotOverrideExactTopLevelTool(t *testing.T) {
+	tools, err := BuildNamespaceTools(
+		[]string{"spawn_agent"},
+		map[string]format.CoreTool{
+			"spawn_agent": {
+				Name:        "spawn_agent",
+				InputSchema: map[string]any{"type": "object"},
+			},
+		},
+		"multi_agent_v1",
+		NestedAnyOf,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	topLevel := format.CoreTool{Name: "spawn_agent"}
+	AnnotateCoreTool(&topLevel, ToolFunction, "spawn_agent", "")
+	tools = append(tools, topLevel)
+	toolMap := BuildToolMapFromCore(tools)
+
+	_, namespace, _ := CoreToolCallFromProvider(
+		"spawn_agent",
+		json.RawMessage(`{"agent_type":"planner"}`),
+		toolMap,
+	)
+	if namespace != "" {
+		t.Fatalf("namespace = %q, want exact top-level tool to win", namespace)
 	}
 }
