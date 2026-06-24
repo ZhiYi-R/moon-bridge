@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -540,8 +541,10 @@ func TestGenerateConfigTomlWritesAuthJSONWithOwnerOnlyPermissions(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Stat() error = %v", err)
 	}
-	if perm := info.Mode().Perm(); perm != 0600 {
-		t.Fatalf("auth.json perm = %04o, want 0600", perm)
+	if runtime.GOOS != "windows" {
+		if perm := info.Mode().Perm(); perm != 0600 {
+			t.Fatalf("auth.json perm = %04o, want 0600", perm)
+		}
 	}
 }
 

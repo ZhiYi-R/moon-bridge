@@ -250,7 +250,20 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	oaiAdapter := openai.NewOpenAIAdapter(coreHooks, codextool.NestedOneOf)
 	_ = adapterReg.RegisterClient(oaiAdapter)
 	_ = adapterReg.RegisterClientStream(oaiAdapter)
+	// Inbound: Anthropic Messages client adapter.
+	anthClientAdapter := anthropic.NewAnthropicClientAdapter(coreHooks)
+	_ = adapterReg.RegisterClient(anthClientAdapter)
+	_ = adapterReg.RegisterClientStream(anthClientAdapter)
 
+	// Inbound: OpenAI Chat client adapter.
+	chatClientAdapter := chat.NewChatClientAdapter(coreHooks)
+	_ = adapterReg.RegisterClient(chatClientAdapter)
+	_ = adapterReg.RegisterClientStream(chatClientAdapter)
+
+	// Inbound: Google Gemini client adapter.
+	googleClientAdapter := google.NewGeminiClientAdapter(coreHooks)
+	_ = adapterReg.RegisterClient(googleClientAdapter)
+	_ = adapterReg.RegisterClientStream(googleClientAdapter)
 	// Upstream: Anthropic provider adapter with cache manager.
 	cacheMgr := anthropic.NewCacheManager(&cfg.Cache, cacheReg)
 	anthAdapter := anthropic.NewAnthropicProviderAdapter(cfg.DefaultMaxTokens, cacheMgr, coreHooks)
@@ -280,10 +293,16 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	_ = adapterReg.RegisterProvider(chatAdapter)
 	_ = adapterReg.RegisterProviderStream(chatAdapter)
 
+	// Upstream: OpenAI Responses provider adapter.
+	responsesAdapter := openai.NewOpenAIProviderAdapter(coreHooks)
+	_ = adapterReg.RegisterProvider(responsesAdapter)
+	_ = adapterReg.RegisterProviderStream(responsesAdapter)
+
 	slog.Info("Adapter dispatch path enabled", "registry", "format.Registry")
 
 	chatClients := make(map[string]any, len(cfg.ProviderDefs))
 	googleClients := make(map[string]any, len(cfg.ProviderDefs))
+	responsesClients := make(map[string]any, len(cfg.ProviderDefs))
 	for key, def := range cfg.ProviderDefs {
 		switch def.Protocol {
 		case config.ProtocolOpenAIChat:
@@ -305,6 +324,14 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 				UserAgent: def.UserAgent,
 			})
 			slog.Debug("google client created", "provider", key)
+		case config.ProtocolOpenAIResponse:
+			responsesClients[key] = openai.NewClient(openai.ClientConfig{
+				BaseURL:   def.BaseURL,
+				APIKey:    def.APIKey,
+				Client:    proxyHTTPClient,
+				UserAgent: def.UserAgent,
+			})
+			slog.Debug("responses client created", "provider", key)
 		}
 	}
 
@@ -319,6 +346,7 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		ProviderMgr:      providerMgr,
 		ChatClients:      chatClients,
 		GoogleClients:    googleClients,
+		ResponsesClients: responsesClients,
 		OpenAIHTTPClient: proxyHTTPClient,
 		ProxyHTTPClient:  proxyHTTPClient,
 		Tracer:           tracer,

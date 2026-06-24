@@ -43,6 +43,7 @@ type Config struct {
 	ProxyHTTPClient  *http.Client
 	ChatClients      map[string]any
 	GoogleClients    map[string]any
+	ResponsesClients map[string]any
 	Tracer           *mbtrace.Tracer
 	TraceErrors      io.Writer
 	Stats            *stats.SessionStats
@@ -63,6 +64,7 @@ type Server struct {
 	proxyHTTP       *http.Client
 	chatClients     map[string]any
 	googleClients   map[string]any
+	responsesClients map[string]any
 	tracer          *mbtrace.Tracer
 	traceErrors     io.Writer
 	stats           *stats.SessionStats
@@ -79,10 +81,12 @@ type Server struct {
 
 	// clientCaches holds lazily-created HTTP clients for runtime-reloaded providers.
 	// Keyed by provider key, invalidated when Runtime reloads.
-	clientCache   map[string]*chat.Client
-	googleCache   map[string]*google.Client
-	clientCacheMu sync.RWMutex
-	googleCacheMu sync.RWMutex
+	clientCache      map[string]*chat.Client
+	googleCache      map[string]*google.Client
+	responsesCache   map[string]*openai.Client
+	clientCacheMu    sync.RWMutex
+	googleCacheMu    sync.RWMutex
+	responsesCacheMu sync.RWMutex
 }
 
 func (s *Server) runtimeSnapshot() *runtime.ConfigSnapshot {
@@ -159,6 +163,31 @@ func (s *Server) activeGoogleClient(providerKey string) any {
 	return s.googleClients[providerKey]
 }
 
+func (s *Server) activeResponsesClient(providerKey string) any {
+	s.responsesCacheMu.RLock()
+	if cached, ok := s.responsesCache[providerKey]; ok {
+		s.responsesCacheMu.RUnlock()
+		return cached
+	}
+	s.responsesCacheMu.RUnlock()
+
+	if snap := s.runtimeSnapshot(); snap != nil {
+		if def, ok := snap.Config.ProviderDefs[providerKey]; ok && def.Protocol == config.ProtocolOpenAIResponse {
+			client := openai.NewClient(openai.ClientConfig{
+				BaseURL:   def.BaseURL,
+				APIKey:    def.APIKey,
+				UserAgent: def.UserAgent,
+				Client:    s.openAIHTTP,
+			})
+			s.responsesCacheMu.Lock()
+			s.responsesCache[providerKey] = client
+			s.responsesCacheMu.Unlock()
+			return client
+		}
+	}
+	return s.responsesClients[providerKey]
+}
+
 func New(cfg Config) *Server {
 	if cfg.SessionManager == nil {
 		cfg.SessionManager = newDefaultSessionManager(cfg)
@@ -176,20 +205,27 @@ func New(cfg Config) *Server {
 		mux:             http.NewServeMux(),
 		appConfig:       cfg.AppConfig,
 		serverCfg:       cfg.ServerCfg,
-		chatClients:     cfg.ChatClients,
-		googleClients:   cfg.GoogleClients,
-		runtime:         cfg.Runtime,
+		chatClients:      cfg.ChatClients,
+		googleClients:    cfg.GoogleClients,
+		responsesClients: cfg.ResponsesClients,
+		runtime:          cfg.Runtime,
 		store:           cfg.Store,
 		sessionManager:  cfg.SessionManager,
 		usageTracker:    cfg.UsageTracker,
 		traceWriter:     cfg.TraceWriter,
 		clientCache:     make(map[string]*chat.Client),
 		googleCache:     make(map[string]*google.Client),
+		responsesCache:  make(map[string]*openai.Client),
 	}
 	s.mux.HandleFunc("/v1/responses", s.handleResponses)
 	s.mux.HandleFunc("/responses", s.handleResponses)
+	s.mux.HandleFunc("/v1/chat/completions", s.handleChatCompletions)
+	s.mux.HandleFunc("/chat/completions", s.handleChatCompletions)
+	s.mux.HandleFunc("/v1/messages", s.handleAnthropicMessages)
+	s.mux.HandleFunc("/messages", s.handleAnthropicMessages)
 	s.mux.HandleFunc("/v1/models", s.handleModels)
 	s.mux.HandleFunc("/models", s.handleModels)
+	s.mux.HandleFunc("/v1beta/models/", s.handleGeminiGenerate)
 	s.mux.Handle("/console/", webui.Embedded())
 	s.registerPluginRoutes()
 	if cfg.Runtime != nil && cfg.Store != nil {

@@ -71,6 +71,7 @@ webui/playwright-report/
 # Wrangler dev vars
 .dev.vars
 /moonbridge
+/moonbridge.exe
 /logs/
 logs/
 !/webui/src/features/logs/

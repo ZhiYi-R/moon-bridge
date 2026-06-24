@@ -55,6 +55,23 @@ func (a *OpenAIAdapter) ClientProtocol() string {
 	return "openai-response"
 }
 
+// DecodeRequest unmarshals the raw HTTP body into an OpenAI ResponsesRequest
+// and reports whether the request asks for streaming.
+//
+// OpenAI carries the model and stream flag in the JSON body, so pathModel
+// and endpoint are unused — they exist for protocols like Gemini that encode
+// these in the URL path.
+func (a *OpenAIAdapter) DecodeRequest(raw []byte, _, _ string) (any, bool, error) {
+	if len(raw) == 0 {
+		return nil, false, fmt.Errorf("empty request body")
+	}
+	var req ResponsesRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return nil, false, fmt.Errorf("decode openai response request: %w", err)
+	}
+	return &req, req.Stream, nil
+}
+
 // ============================================================================
 // ToCoreRequest — OpenAI ResponsesRequest → CoreRequest
 // ============================================================================
@@ -368,6 +385,23 @@ type OpenAIStreamResult struct {
 // Chan returns the underlying channel of StreamEvents.
 func (r *OpenAIStreamResult) Chan() <-chan StreamEvent {
 	return r.ch
+}
+
+// Frames returns a channel of protocol-agnostic SSE frames.
+// Each StreamEvent is mapped to an SSEFrame with the event name and data.
+// The channel is closed when the underlying StreamEvent channel is exhausted.
+func (r *OpenAIStreamResult) Frames() <-chan format.SSEFrame {
+	out := make(chan format.SSEFrame)
+	go func() {
+		defer close(out)
+		for ev := range r.ch {
+			out <- format.SSEFrame{
+				Event: ev.Event,
+				Data:  ev.Data,
+			}
+		}
+	}()
+	return out
 }
 
 // Buffer returns the captured stream events for post-stream processing.

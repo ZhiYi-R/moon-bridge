@@ -31,6 +31,44 @@ type Message struct {
 	Content []ContentBlock `json:"content"`
 }
 
+// UnmarshalJSON implements json.Unmarshaler for Message.
+// Anthropic allows content to be either a string ("hello") or an array
+// ([{"type": "text", "text": "hello"}]). This handles both formats.
+func (m *Message) UnmarshalJSON(data []byte) error {
+	// Raw struct to capture Role and optionally Content as raw JSON.
+	var raw struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.Role = raw.Role
+
+	if len(raw.Content) == 0 {
+		m.Content = nil
+		return nil
+	}
+
+	// Try as array of ContentBlock first.
+	var blocks []ContentBlock
+	if err := json.Unmarshal(raw.Content, &blocks); err == nil {
+		m.Content = blocks
+		return nil
+	}
+
+	// Try as plain string.
+	var text string
+	if err := json.Unmarshal(raw.Content, &text); err == nil && text != "" {
+		m.Content = []ContentBlock{{Type: "text", Text: text}}
+		return nil
+	}
+
+	// Fall through: return the original array-parse error.
+	// (The standard library default error is more descriptive than ours.)
+	return json.Unmarshal(raw.Content, &blocks)
+}
+
 type ContentBlock struct {
 	Type         string          `json:"type"`
 	Text         string          `json:"text,omitempty"`
@@ -50,6 +88,64 @@ type ImageSource struct {
 	URL       string `json:"url,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
 	Data      string `json:"data,omitempty"`
+}
+
+// UnmarshalJSON implements json.Unmarshaler for MessageRequest.
+// Anthropic allows system to be either a string or an array of ContentBlock.
+func (m *MessageRequest) UnmarshalJSON(data []byte) error {
+	// Raw struct mirrors MessageRequest but accepts system as raw JSON.
+	type rawMessageRequest struct {
+		Model         string          `json:"model"`
+		MaxTokens     int             `json:"max_tokens"`
+		System        json.RawMessage `json:"system,omitempty"`
+		Messages      []Message       `json:"messages"`
+		Tools         []Tool          `json:"tools,omitempty"`
+		ToolChoice    *ToolChoice     `json:"tool_choice,omitempty"`
+		Temperature   *float64        `json:"temperature,omitempty"`
+		TopP          *float64        `json:"top_p,omitempty"`
+		TopK          *int            `json:"top_k,omitempty"`
+		StopSequences []string        `json:"stop_sequences,omitempty"`
+		Metadata      map[string]any  `json:"metadata,omitempty"`
+		Stream        bool            `json:"stream,omitempty"`
+		CacheControl  *CacheControl   `json:"cache_control,omitempty"`
+		Raw           json.RawMessage `json:"-"`
+		Thinking      *ThinkingConfig `json:"thinking,omitempty"`
+		OutputConfig  *OutputConfig   `json:"output_config,omitempty"`
+	}
+	var raw rawMessageRequest
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	m.Model = raw.Model
+	m.MaxTokens = raw.MaxTokens
+	m.Messages = raw.Messages
+	m.Tools = raw.Tools
+	m.ToolChoice = raw.ToolChoice
+	m.Temperature = raw.Temperature
+	m.TopP = raw.TopP
+	m.TopK = raw.TopK
+	m.StopSequences = raw.StopSequences
+	m.Metadata = raw.Metadata
+	m.Stream = raw.Stream
+	m.CacheControl = raw.CacheControl
+	m.Raw = raw.Raw
+	m.Thinking = raw.Thinking
+	m.OutputConfig = raw.OutputConfig
+
+	// Handle system: string or []ContentBlock.
+	if len(raw.System) > 0 {
+		var blocks []ContentBlock
+		if err := json.Unmarshal(raw.System, &blocks); err == nil {
+			m.System = blocks
+			return nil
+		}
+		var text string
+		if err := json.Unmarshal(raw.System, &text); err == nil && text != "" {
+			m.System = []ContentBlock{{Type: "text", Text: text}}
+			return nil
+		}
+	}
+	return nil
 }
 
 func (block ContentBlock) MarshalJSON() ([]byte, error) {

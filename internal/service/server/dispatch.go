@@ -12,6 +12,7 @@ import (
 
 	"moonbridge/internal/config"
 	"moonbridge/internal/extension/plugin"
+	"moonbridge/internal/format"
 	"moonbridge/internal/logger"
 	"moonbridge/internal/protocol/openai"
 	"moonbridge/internal/service/provider"
@@ -78,23 +79,11 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		return
 	}
 
-	var responsesRequest openai.ResponsesRequest
-	if err := json.Unmarshal(body, &responsesRequest); err != nil {
-		log.Warn("无效的 JSON 请求体", "error", err)
-		payload := openai.ErrorResponse{Error: openai.ErrorObject{
-			Message: "无效的 JSON 请求体",
-			Type:    "invalid_request_error",
-			Code:    "invalid_json",
-		}}
-		record.Error = traceError("decode_openai_request", err)
-		record.OpenAIResponse = payload
-		server.writeTrace(record)
-		writeOpenAIError(writer, http.StatusBadRequest, payload)
-		return
-	}
+	// Extract model from raw body for routing (lightweight, before full decode).
+	model := modelFromRawJSON(body)
+	record.Model = model
 
-	record.Model = responsesRequest.Model
-	resolvedRoute, resolveErr := server.resolveModelOrFallback(responsesRequest.Model)
+	resolvedRoute, resolveErr := server.resolveModelOrFallback(model)
 	if resolveErr == nil {
 		var candidateInfo string
 		for i, c := range resolvedRoute.Candidates {
@@ -103,16 +92,16 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 			}
 			candidateInfo += c.ProviderKey + "=" + c.UpstreamModel + "(p" + fmt.Sprint(i) + ")"
 		}
-		log.Debug("路由解析结果", "model", responsesRequest.Model, "candidates", candidateInfo)
+		log.Debug("路由解析结果", "model", model, "candidates", candidateInfo)
 	}
 	if resolveErr != nil {
-		log.Warn("请求了未知模型", "model", responsesRequest.Model)
+		log.Warn("请求了未知模型", "model", model)
 		payload := openai.ErrorResponse{Error: openai.ErrorObject{
-			Message: fmt.Sprintf("unknown model: %q", responsesRequest.Model),
+			Message: fmt.Sprintf("unknown model: %q", model),
 			Type:    "invalid_request_error",
 			Code:    "model_not_found",
 		}}
-		record.Error = traceError("model_not_found", fmt.Errorf("model %q not found", responsesRequest.Model))
+		record.Error = traceError("model_not_found", fmt.Errorf("model %q not found", model))
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, http.StatusNotFound, payload)
@@ -120,11 +109,11 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	}
 
 	// Filter candidates by request features (e.g., image input).
-	filteredCandidates, filterReason := server.filterCandidatesByInput(resolvedRoute.Candidates, responsesRequest.Input)
+	filteredCandidates, filterReason := server.filterCandidatesByInput(resolvedRoute.Candidates, json.RawMessage(body))
 	if len(filteredCandidates) == 0 {
-		log.Warn("过滤后无可用提供商", "model", responsesRequest.Model, "reason", filterReason)
+		log.Warn("过滤后无可用提供商", "model", model, "reason", filterReason)
 		payload := openai.ErrorResponse{Error: openai.ErrorObject{
-			Message: fmt.Sprintf("no available provider for model %q with the requested features", responsesRequest.Model),
+			Message: fmt.Sprintf("no available provider for model %q with the requested features", model),
 			Type:    "invalid_request_error",
 			Code:    "provider_error",
 		}}
@@ -136,22 +125,22 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	}
 	resolvedRoute.Candidates = filteredCandidates
 	if filterReason != "" {
-		log.Info("候选过滤", "model", responsesRequest.Model, "reason", filterReason)
+		log.Info("候选过滤", "model", model, "reason", filterReason)
 	}
 
 	// Protocol branch: get preferred candidate.
 	preferred, ok := resolvedRoute.Preferred()
 	if ok {
-		log.Debug("选中提供商", "model", responsesRequest.Model, "provider", preferred.ProviderKey, "upstream", preferred.UpstreamModel)
+		log.Debug("选中提供商", "model", model, "provider", preferred.ProviderKey, "upstream", preferred.UpstreamModel)
 	}
 	if !ok {
-		log.Error("模型解析结果无可用提供商", "model", responsesRequest.Model)
+		log.Error("模型解析结果无可用提供商", "model", model)
 		payload := openai.ErrorResponse{Error: openai.ErrorObject{
-			Message: fmt.Sprintf("no available provider for model %q", responsesRequest.Model),
+			Message: fmt.Sprintf("no available provider for model %q", model),
 			Type:    "server_error",
 			Code:    "provider_error",
 		}}
-		record.Error = traceError("provider_error", fmt.Errorf("no available provider for %q", responsesRequest.Model))
+		record.Error = traceError("provider_error", fmt.Errorf("no available provider for %q", model))
 		record.OpenAIResponse = payload
 		server.writeTrace(record)
 		writeOpenAIError(writer, http.StatusBadGateway, payload)
@@ -159,6 +148,21 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	}
 
 	if preferred.Protocol == config.ProtocolOpenAIResponse {
+		// Direct OpenAI Response proxy path — full decode.
+		var responsesRequest openai.ResponsesRequest
+		if err := json.Unmarshal(body, &responsesRequest); err != nil {
+			log.Warn("无效的 JSON 请求体", "error", err)
+			payload := openai.ErrorResponse{Error: openai.ErrorObject{
+				Message: "无效的 JSON 请求体",
+				Type:    "invalid_request_error",
+				Code:    "invalid_json",
+			}}
+			record.Error = traceError("decode_openai_request", err)
+			record.OpenAIResponse = payload
+			server.writeTrace(record)
+			writeOpenAIError(writer, http.StatusBadRequest, payload)
+			return
+		}
 		server.handleOpenAIResponse(writer, request, responsesRequest, resolvedRoute.Candidates, record)
 		return
 	}
@@ -166,13 +170,42 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	// Adapter dispatch path for all non-OpenAI-Response protocols.
 	if server.adapterRegistry != nil {
 		if _, ok := server.adapterRegistry.GetProvider(preferred.Protocol); ok {
-			server.handleWithAdapters(writer, request, responsesRequest, resolvedRoute)
+			// Decode via the inbound client adapter (generic, returns any).
+			client, cok := server.adapterRegistry.GetClient(config.ProtocolOpenAIResponse)
+			if !cok {
+				log.Error("adapter path: no client adapter for openai-response")
+				payload := openai.ErrorResponse{Error: openai.ErrorObject{
+					Message: "adapter path precondition failed: no fallback available",
+					Type:    "server_error",
+					Code:    "adapter_fallback",
+				}}
+				record.Error = traceError("client_adapter", fmt.Errorf("no client adapter for openai-response"))
+				record.OpenAIResponse = payload
+				server.writeTrace(record)
+				writeOpenAIError(writer, http.StatusInternalServerError, payload)
+				return
+			}
+			decodedReq, isStream, dErr := client.DecodeRequest(body, "", request.URL.Path)
+			if dErr != nil {
+				log.Warn("adapter path: DecodeRequest failed", "error", dErr)
+				payload := openai.ErrorResponse{Error: openai.ErrorObject{
+					Message: "invalid request body",
+					Type:    "invalid_request_error",
+					Code:    "invalid_json",
+				}}
+				record.Error = traceError("decode_adapter_request", dErr)
+				record.OpenAIResponse = payload
+				server.writeTrace(record)
+				writeOpenAIError(writer, http.StatusBadRequest, payload)
+				return
+			}
+			server.handleWithAdapters(writer, request, decodedReq, isStream, body, resolvedRoute, config.ProtocolOpenAIResponse, model)
 			return
 		}
 	}
 
 	// No adapter path available.
-	log.Error("no adapter path configured", "model", responsesRequest.Model, "protocol", preferred.Protocol)
+	log.Error("no adapter path configured", "model", model, "protocol", preferred.Protocol)
 	payload := openai.ErrorResponse{Error: openai.ErrorObject{
 		Message: fmt.Sprintf("no adapter path configured for protocol %q", preferred.Protocol),
 		Type:    "server_error",
@@ -183,9 +216,24 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	server.writeTrace(record)
 	writeOpenAIError(writer, http.StatusInternalServerError, payload)
 	server.onRequestCompleted(
-		responsesRequest.Model, "", "", requestStart,
+		model, "", "", requestStart,
 		zeroUsage("anthropic", "none"), 0, "error", "no adapter path",
 	)
+}
+
+// modelFromRawJSON extracts the "model" field from a JSON body using a lightweight
+// unmarshal — avoids full decode of protocol-specific request structs at the routing stage.
+func modelFromRawJSON(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var m struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(body, &m); err != nil {
+		return ""
+	}
+	return m.Model
 }
 func (server *Server) writeTrace(record mbtrace.Record) {
 	if server.tracer == nil || !server.tracer.Enabled() {
@@ -263,6 +311,48 @@ func writeSSE(writer http.ResponseWriter, event openai.StreamEvent) error {
 	}
 	if _, err := writer.Write([]byte("event: " + event.Event + "\n")); err != nil {
 		return err
+	}
+	if _, err := writer.Write([]byte("data: " + string(payload) + "\n\n")); err != nil {
+		return err
+	}
+	if flusher, ok := writer.(http.Flusher); ok {
+		flusher.Flush()
+	}
+	return nil
+}
+
+// writeSSEFrame writes a protocol-agnostic SSE frame to the response writer.
+//
+// Framing rules:
+//   - Done == true → writes "data: [DONE]\n\n" and ignores Data/Event.
+//   - Event != ""  → writes "event: <Event>\n" before the data line.
+//   - Event == ""  → no event line (OpenAI Chat / Gemini style).
+//   - Data is JSON-marshalled; nil Data produces "data: {}\n\n".
+func writeSSEFrame(writer http.ResponseWriter, frame format.SSEFrame) error {
+	// Terminal marker (OpenAI Chat style).
+	if frame.Done {
+		if _, err := writer.Write([]byte("data: [DONE]\n\n")); err != nil {
+			return err
+		}
+		if flusher, ok := writer.(http.Flusher); ok {
+			flusher.Flush()
+		}
+		return nil
+	}
+
+	// Event line (OpenAI Responses / Anthropic style).
+	if frame.Event != "" {
+		if _, err := writer.Write([]byte("event: " + frame.Event + "\n")); err != nil {
+			return err
+		}
+	}
+
+	// Data line.
+	var payload []byte
+	if frame.Data == nil {
+		payload = []byte("{}")
+	} else {
+		payload, _ = json.Marshal(frame.Data)
 	}
 	if _, err := writer.Write([]byte("data: " + string(payload) + "\n\n")); err != nil {
 		return err

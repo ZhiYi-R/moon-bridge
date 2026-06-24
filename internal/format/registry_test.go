@@ -12,6 +12,9 @@ import (
 type mockClient struct{ protocol string }
 
 func (m *mockClient) ClientProtocol() string { return m.protocol }
+func (m *mockClient) DecodeRequest(_ []byte, _, _ string) (any, bool, error) {
+	return nil, false, nil
+}
 func (m *mockClient) ToCoreRequest(_ context.Context, _ any) (*CoreRequest, error) {
 	return &CoreRequest{}, nil
 }

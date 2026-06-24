@@ -44,6 +44,19 @@ type ClientAdapter interface {
 	// (e.g. "openai-response").
 	ClientProtocol() string
 
+	// DecodeRequest unmarshals the raw HTTP body into the protocol's native
+	// request DTO and reports whether the request asks for streaming.
+	//
+	// pathModel carries the model parsed from the URL path for protocols that
+	// encode it there (Gemini's /v1beta/models/{model}:generateContent); it is
+	// "" for protocols that carry the model in the body.
+	//
+	// endpoint is the request URL path. Gemini uses its ":streamGenerateContent"
+	// suffix to signal streaming; other protocols read a body field.
+	//
+	// The returned value is passed verbatim to ToCoreRequest.
+	DecodeRequest(raw []byte, pathModel, endpoint string) (req any, isStream bool, err error)
+
 	// ToCoreRequest converts an inbound protocol request DTO into a CoreRequest.
 	ToCoreRequest(ctx context.Context, req any) (*CoreRequest, error)
 
@@ -89,7 +102,33 @@ type ClientStreamAdapter interface {
 
 	// FromCoreStream consumes a channel of CoreStreamEvent and produces
 	// the inbound protocol's stream representation.
+	//
+	// The returned value must implement SSEStream so the server can write the
+	// stream generically across protocols (event+data, data-only, data+[DONE]).
 	FromCoreStream(ctx context.Context, req *CoreRequest, events <-chan CoreStreamEvent) (any, error)
+}
+
+// SSEFrame is a single protocol-agnostic Server-Sent Events frame.
+//
+// It lets the server serialize any inbound protocol's stream uniformly:
+//   - Event == ""  → no "event:" line is written (OpenAI Chat / Gemini style)
+//   - Event != ""  → an "event: <Event>" line precedes the data line (OpenAI
+//     Responses / Anthropic style)
+//   - Done == true → the terminal marker "data: [DONE]" is written instead of
+//     Data (OpenAI Chat style); Data is ignored.
+type SSEFrame struct {
+	Event string
+	Data  any
+	Done  bool
+}
+
+// SSEStream is implemented by the value returned from
+// ClientStreamAdapter.FromCoreStream. It exposes a channel of protocol-agnostic
+// SSE frames the server writes via a single generic writer.
+type SSEStream interface {
+	// Frames returns the channel of SSEFrame produced by the adapter. The
+	// adapter owns the goroutine feeding it and closes the channel when done.
+	Frames() <-chan SSEFrame
 }
 
 // ============================================================================

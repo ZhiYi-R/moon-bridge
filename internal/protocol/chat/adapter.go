@@ -590,6 +590,33 @@ func (a *ChatProviderAdapter) toChatSystemContent(blocks []format.CoreContentBlo
 
 // toChatMessage converts a CoreMessage to a ChatMessage.
 func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage {
+	// If every content block is tool_result (the common Anthropic SDK case),
+	// this is a pure tool role message regardless of what mapRoleToChat says.
+	// Mixed content (e.g. image + tool_result) falls through to normal
+	// processing so the non-tool blocks render correctly as ContentParts.
+	allToolResult := len(msg.Content) > 0
+	for _, b := range msg.Content {
+		if b.Type != "tool_result" {
+			allToolResult = false
+			break
+		}
+	}
+	if allToolResult {
+		return ChatMessage{
+			Role:       "tool",
+			Content: func() string {
+				var s string
+				for _, b := range msg.Content {
+					for _, tc := range b.ToolResultContent {
+						s += tc.Text
+					}
+				}
+				return s
+			}(),
+			ToolCallID: msg.Content[0].ToolUseID,
+		}
+	}
+
 	chatMsg := ChatMessage{
 		Role: a.mapRoleToChat(msg.Role),
 	}
@@ -604,6 +631,8 @@ func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage 
 		case "tool_use":
 			toolUseBlocks = append(toolUseBlocks, b)
 		case "tool_result":
+			// When mixed with non-tool blocks, render as a text part.
+			// Pure tool_result messages are handled by the early return above.
 			textBlocks = append(textBlocks, b)
 		case "reasoning":
 			// Reasoning blocks become ReasoningContent for providers like DeepSeek

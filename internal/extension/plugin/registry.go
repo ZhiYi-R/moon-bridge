@@ -573,6 +573,20 @@ func (r *Registry) CorePluginHooks() format.CorePluginHooks {
 				return tools
 			}
 		}
+		// PreprocessInput — wire from InputPreprocessor capability
+		if ip, ok := p.(InputPreprocessor); ok {
+			prev := hooks.PreprocessInput
+			pluginImpl := p
+			hooks.PreprocessInput = func(ctx context.Context, model string, raw json.RawMessage) json.RawMessage {
+				if prev != nil {
+					raw = prev(ctx, model, raw)
+				}
+				if !pluginImpl.EnabledForModel(model) {
+					return raw
+				}
+				return ip.PreprocessInput(&RequestContext{ModelAlias: model}, raw)
+			}
+		}
 		// RememberCoreContent
 		if rmem, ok := p.(CoreContentRememberer); ok {
 			prev := hooks.RememberContent

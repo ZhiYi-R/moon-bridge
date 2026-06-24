@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"moonbridge/internal/config"
@@ -48,19 +49,26 @@ import (
 //     → write SSE events to ResponseWriter
 
 // handleWithAdapters dispatches a request through the adapter path.
+// The inbound request is already decoded by the client adapter's DecodeRequest;
+// for the OpenAI Responses protocol, decodedReq is *openai.ResponsesRequest.
 // Falls back to error when the required adapter is not found in the registry.
 func (s *Server) handleWithAdapters(
 	w http.ResponseWriter,
 	r *http.Request,
-	openAIReq openai.ResponsesRequest,
+	decodedReq any,
+	isStream bool,
+	rawBody []byte,
 	route *provider.ResolvedRoute,
+	clientProtocol string,
+	model string,
 ) {
 	ctx := r.Context()
-	log := slog.Default().With("model", openAIReq.Model, "path", "adapter")
 	pm := s.activeProviderManager()
 
+	log := slog.Default().With("model", model, "path", "adapter")
+
 	// Defense-in-depth: ensure model is non-empty.
-	if openAIReq.Model == "" {
+	if model == "" {
 		log.Warn("adapter path: empty model")
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
@@ -70,7 +78,7 @@ func (s *Server) handleWithAdapters(
 			},
 		}
 		writeOpenAIError(w, http.StatusBadRequest, payload)
-		s.onRequestCompleted(openAIReq.Model, "", "", time.Now(), zeroUsage("adapter", "none"), 0, "error", "empty_model")
+		s.onRequestCompleted(model, "", "", time.Now(), zeroUsage("adapter", "none"), 0, "error", "empty_model")
 		return
 	}
 
@@ -81,23 +89,22 @@ func (s *Server) handleWithAdapters(
 	var adapterCompleted bool
 	var adapterHookErr string
 
-	// Initialize trace record.
-	bodyBytes, _ := json.Marshal(openAIReq)
+	// Initialize trace record — use raw body bytes instead of re-marshalling.
 	record := mbtrace.Record{
 		HTTPRequest:   mbtrace.NewHTTPRequest(r),
-		OpenAIRequest: mbtrace.RawJSONOrString(bodyBytes),
-		Model:         openAIReq.Model,
+		OpenAIRequest: mbtrace.RawJSONOrString(rawBody),
+		Model:         model,
 	}
 	defer func() {
 		s.writeTrace(record)
 	}()
 
 	// ------------------------------------------------------------------
-	// 1. Resolve inbound client adapter (always openai-response).
+	// 1. Resolve inbound client adapter.
 	// ------------------------------------------------------------------
-	client, ok := s.adapterRegistry.GetClient(config.ProtocolOpenAIResponse)
+	client, ok := s.adapterRegistry.GetClient(clientProtocol)
 	if !ok {
-		log.Warn("adapter path: no client adapter for openai-response")
+		log.Warn("adapter path: no client adapter", "protocol", clientProtocol)
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
 				Message: "adapter path precondition failed: no fallback available",
@@ -105,17 +112,17 @@ func (s *Server) handleWithAdapters(
 				Code:    "adapter_fallback",
 			},
 		}
-		record.Error = traceError("client_adapter", fmt.Errorf("no client adapter for openai-response"))
+		record.Error = traceError("client_adapter", fmt.Errorf("no client adapter for %q", clientProtocol))
 		record.OpenAIResponse = payload
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
-		s.onRequestCompleted(openAIReq.Model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "client_adapter")
+		s.onRequestCompleted(model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "client_adapter")
 		return
 	}
 
 	// ------------------------------------------------------------------
-	// 2. Convert inbound OpenAI request → CoreRequest.
+	// 2. Convert inbound request → CoreRequest.
 	// ------------------------------------------------------------------
-	coreReq, err := client.ToCoreRequest(ctx, &openAIReq)
+	coreReq, err := client.ToCoreRequest(ctx, decodedReq)
 	if err != nil {
 		log.Error("adapter path: ToCoreRequest failed", "error", err)
 		payload := openai.ErrorResponse{
@@ -128,7 +135,7 @@ func (s *Server) handleWithAdapters(
 		record.Error = traceError("to_core_request", err)
 		record.OpenAIResponse = payload
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
-		s.onRequestCompleted(openAIReq.Model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "to_core_request")
+		s.onRequestCompleted(model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "to_core_request")
 		return
 	}
 
@@ -148,7 +155,7 @@ func (s *Server) handleWithAdapters(
 		record.Error = traceError("no_candidate", fmt.Errorf("no provider candidate"))
 		record.OpenAIResponse = payload
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
-		s.onRequestCompleted(openAIReq.Model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "no_provider_candidate")
+		s.onRequestCompleted(model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "no_provider_candidate")
 		return
 	}
 
@@ -159,7 +166,7 @@ func (s *Server) handleWithAdapters(
 				errMsg = "unknown_adapter_error"
 			}
 			s.onRequestCompleted(
-				openAIReq.Model, preferred.UpstreamModel, preferred.ProviderKey,
+				model, preferred.UpstreamModel, preferred.ProviderKey,
 				requestStart,
 				zeroUsage(string(preferred.Protocol), "adapter_error"),
 				0, "error", errMsg,
@@ -191,12 +198,12 @@ func (s *Server) handleWithAdapters(
 	// the upstream provider receives the correct model identifier.
 	coreReq.Model = preferred.UpstreamModel
 
-	wsMode := resolvedWebSearchMode(pm, openAIReq.Model, preferred)
+	wsMode := resolvedWebSearchMode(pm, model, preferred)
 
 	// Inject web search tools at Core level if mode is "injected".
 	// This replaces web_search/web_search_preview with tavily_search/firecrawl_fetch tools.
-	wsInjected := s.injectCoreWebSearch(ctx, coreReq, preferred, openAIReq, wsMode)
-	searchCfg := s.resolvedSearchConfig(preferred.ProviderKey, openAIReq.Model)
+	wsInjected := s.injectCoreWebSearch(ctx, coreReq, preferred, model, wsMode)
+	searchCfg := s.resolvedSearchConfig(preferred.ProviderKey, model)
 
 	upstreamAny, err := providerAdapter.FromCoreRequest(ctx, coreReq)
 	if err != nil {
@@ -260,9 +267,9 @@ func (s *Server) handleWithAdapters(
 		}
 
 		// If streaming, use streaming path.
-		if openAIReq.Stream {
+		if isStream {
 			adapterCompleted = true
-			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, upstreamReq, preferred, wsMode, wsInjected)
+			s.handleAdapterStream(w, r, ctx, model, rawBody, coreReq, upstreamReq, preferred, clientProtocol, wsMode, wsInjected)
 			record.OpenAIRequest = nil
 			return
 		}
@@ -273,12 +280,12 @@ func (s *Server) handleWithAdapters(
 			log.Error("adapter path: no upstream provider resolved")
 			payload := openai.ErrorResponse{
 				Error: openai.ErrorObject{
-					Message: fmt.Sprintf("no upstream provider for model %q", openAIReq.Model),
+					Message: fmt.Sprintf("no upstream provider for model %q", model),
 					Type:    "server_error",
 					Code:    "provider_error",
 				},
 			}
-			record.Error = traceError("resolve_provider", fmt.Errorf("no upstream provider for %q", openAIReq.Model))
+			record.Error = traceError("resolve_provider", fmt.Errorf("no upstream provider for %q", model))
 			record.OpenAIResponse = payload
 			adapterHookErr = "resolve_provider"
 			writeOpenAIError(w, http.StatusBadGateway, payload)
@@ -298,7 +305,7 @@ func (s *Server) handleWithAdapters(
 
 		// Wrap with visual orchestrator at Core level if enabled for this model.
 		// This uses CoreProvider, which is protocol-agnostic.
-		if visProv := s.wrapWithVisual(ctx, openAIReq.Model, preferred, providerAdapter, finalizeAnthropicUpstream); visProv != nil {
+		if visProv := s.wrapWithVisual(ctx, model, preferred, providerAdapter, finalizeAnthropicUpstream); visProv != nil {
 			var coreRespApi *format.CoreResponse
 			coreRespApi, err = visProv.CreateCore(ctx, coreReq)
 			if err == nil {
@@ -359,9 +366,9 @@ func (s *Server) handleWithAdapters(
 			prependCachedReasoningForChat(chatReq, sess)
 		}
 
-		if openAIReq.Stream {
+		if isStream {
 			adapterCompleted = true
-			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, chatReq, preferred, wsMode, wsInjected)
+			s.handleAdapterStream(w, r, ctx, model, rawBody, coreReq, chatReq, preferred, clientProtocol, wsMode, wsInjected)
 			record.OpenAIRequest = nil
 			return
 		}
@@ -422,7 +429,7 @@ func (s *Server) handleWithAdapters(
 		// the chat-protocol endpoint instead.
 		visualCandidate := preferred
 		visualCandidate.Client = &chatProviderClient{c: chatClient}
-		if visProv := s.wrapWithVisual(ctx, openAIReq.Model, visualCandidate, providerAdapter, finalizeChatUpstream); visProv != nil {
+		if visProv := s.wrapWithVisual(ctx, model, visualCandidate, providerAdapter, finalizeChatUpstream); visProv != nil {
 			coreResp, err = visProv.CreateCore(ctx, coreReq)
 			if err != nil {
 				log.Error("adapter path: chat visual CreateCore failed", "error", err)
@@ -514,9 +521,9 @@ func (s *Server) handleWithAdapters(
 			return
 		}
 
-		if openAIReq.Stream {
+		if isStream {
 			adapterCompleted = true
-			s.handleAdapterStream(w, r, ctx, openAIReq, coreReq, googleReq, preferred, wsMode, wsInjected)
+			s.handleAdapterStream(w, r, ctx, model, rawBody, coreReq, googleReq, preferred, clientProtocol, wsMode, wsInjected)
 			record.OpenAIRequest = nil
 			return
 		}
@@ -558,7 +565,7 @@ func (s *Server) handleWithAdapters(
 		// Wrap with visual orchestrator if enabled for this model.
 		googlePreferred := preferred
 		googlePreferred.Client = &googleProviderClient{c: googleClient, model: googlePreferred.UpstreamModel}
-		if visProv := s.wrapWithVisual(ctx, openAIReq.Model, googlePreferred, providerAdapter, nil); visProv != nil {
+		if visProv := s.wrapWithVisual(ctx, model, googlePreferred, providerAdapter, nil); visProv != nil {
 			var visErr error
 			coreResp, visErr = visProv.CreateCore(ctx, coreReq)
 			if visErr != nil {
@@ -608,6 +615,100 @@ func (s *Server) handleWithAdapters(
 			payload := openai.ErrorResponse{
 				Error: openai.ErrorObject{
 					Message: fmt.Sprintf("google response conversion failed: %v", err),
+					Type:    "server_error",
+					Code:    "conversion_error",
+				},
+			}
+			record.Error = traceError("to_core_response", err)
+			record.OpenAIResponse = payload
+			adapterHookErr = "to_core_response"
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+
+	case config.ProtocolOpenAIResponse:
+		responsesReq, ok := upstreamAny.(*openai.ResponsesRequest)
+		if !ok {
+			log.Error("adapter path: unexpected openai-response upstream type", "type", fmt.Sprintf("%T", upstreamAny))
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: "unexpected openai-response upstream request type",
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			record.Error = traceError("upstream_type", fmt.Errorf("unexpected openai-response type %T", upstreamAny))
+			record.OpenAIResponse = payload
+			adapterHookErr = "upstream_type"
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+
+		if isStream {
+			adapterCompleted = true
+			s.handleAdapterStream(w, r, ctx, model, rawBody, coreReq, responsesReq, preferred, clientProtocol, wsMode, wsInjected)
+			record.OpenAIRequest = nil
+			return
+		}
+
+		responsesClientRaw := s.activeResponsesClient(preferred.ProviderKey)
+		if responsesClientRaw == nil {
+			log.Error("adapter path: no responses client", "provider", preferred.ProviderKey)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("no responses client for provider %q", preferred.ProviderKey),
+					Type:    "server_error",
+					Code:    "provider_error",
+				},
+			}
+			record.Error = traceError("responses_client", fmt.Errorf("no responses client for %q", preferred.ProviderKey))
+			record.OpenAIResponse = payload
+			adapterHookErr = "responses_client"
+			writeOpenAIError(w, http.StatusBadGateway, payload)
+			return
+		}
+		responsesClient, ok := responsesClientRaw.(*openai.Client)
+		if !ok {
+			log.Error("adapter path: invalid responses client type", "provider", preferred.ProviderKey)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("invalid responses client for provider %q", preferred.ProviderKey),
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			record.Error = traceError("responses_client_type", fmt.Errorf("invalid responses client for %q", preferred.ProviderKey))
+			record.OpenAIResponse = payload
+			adapterHookErr = "responses_client_type"
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+
+		var responsesResp *openai.Response
+		responsesResp, err = responsesClient.CreateResponse(ctx, responsesReq)
+		if err != nil {
+			log.Error("adapter path: Responses API call failed", "error", err)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("responses upstream error: %v", err),
+					Type:    "server_error",
+					Code:    "provider_error",
+				},
+			}
+			record.Error = traceError("responses_api", err)
+			record.OpenAIResponse = payload
+			adapterHookErr = "responses_api"
+			writeOpenAIError(w, http.StatusBadGateway, payload)
+			return
+		}
+		record.UpstreamResponse = responsesResp
+
+		coreResp, err = providerToCoreResponse(ctx, providerAdapter, coreReq, responsesResp)
+		if err != nil {
+			log.Error("adapter path: Responses ToCoreResponse failed", "error", err)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("responses response conversion failed: %v", err),
 					Type:    "server_error",
 					Code:    "conversion_error",
 				},
@@ -679,35 +780,91 @@ func (s *Server) handleWithAdapters(
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
-	out, ok := outAny.(*openai.Response)
-	if !ok {
-		log.Error("adapter path: unexpected output type", "type", fmt.Sprintf("%T", outAny))
+	rememberAdapterResponseContent(s.pluginRegistry, sess, model, coreResp)
+
+	// ------------------------------------------------------------------
+	// 8. Write the response in the inbound protocol format.
+	// ------------------------------------------------------------------
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+
+	switch clientProtocol {
+	case config.ProtocolOpenAIResponse:
+		out, ok := outAny.(*openai.Response)
+		if !ok {
+			log.Error("adapter path: unexpected output type", "type", fmt.Sprintf("%T", outAny))
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: "unexpected output response type",
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			record.Error = traceError("output_type", fmt.Errorf("unexpected output type %T", outAny))
+			record.OpenAIResponse = payload
+			adapterHookErr = "output_type"
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+		json.NewEncoder(w).Encode(out)
+		record.OpenAIResponse = out
+
+	case config.ProtocolAnthropic:
+		out, ok := outAny.(*anthropic.MessageResponse)
+		if !ok {
+			log.Error("adapter path: unexpected output type for anthropic", "type", fmt.Sprintf("%T", outAny))
+			writeAnthropicError(w, http.StatusInternalServerError, "server_error", "unexpected output response type")
+			return
+		}
+		json.NewEncoder(w).Encode(out)
+		record.OpenAIResponse = out
+
+	case config.ProtocolOpenAIChat:
+		out, ok := outAny.(*chat.ChatResponse)
+		if !ok {
+			log.Error("adapter path: unexpected output type for chat", "type", fmt.Sprintf("%T", outAny))
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: "unexpected output response type",
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			record.Error = traceError("output_type", fmt.Errorf("unexpected output type %T", outAny))
+			record.OpenAIResponse = payload
+			adapterHookErr = "output_type"
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+		json.NewEncoder(w).Encode(out)
+		record.OpenAIResponse = out
+
+	case config.ProtocolGoogleGenAI:
+		out, ok := outAny.(*google.GenerateContentResponse)
+		if !ok {
+			log.Error("adapter path: unexpected output type for gemini", "type", fmt.Sprintf("%T", outAny))
+			writeGeminiError(w, http.StatusInternalServerError, "Internal Error", "unexpected output response type", "INTERNAL")
+			return
+		}
+		json.NewEncoder(w).Encode(out)
+		record.OpenAIResponse = out
+
+	default:
+		log.Error("adapter path: unsupported client protocol for output", "protocol", clientProtocol)
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
-				Message: "unexpected output response type",
+				Message: fmt.Sprintf("unsupported client protocol %q", clientProtocol),
 				Type:    "server_error",
 				Code:    "internal_error",
 			},
 		}
-		record.Error = traceError("output_type", fmt.Errorf("unexpected output type %T", outAny))
+		record.Error = traceError("output_type", fmt.Errorf("unsupported client protocol %q", clientProtocol))
 		record.OpenAIResponse = payload
 		adapterHookErr = "output_type"
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
-
-	rememberAdapterResponseContent(s.pluginRegistry, sess, openAIReq.Model, coreResp)
-
-	// ------------------------------------------------------------------
-	// 8. Write the response.
-	// ------------------------------------------------------------------
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(out)
 	adapterCompleted = true
-
-	// Record trace with upstream details and final output.
-	record.OpenAIResponse = out
 
 	// Record completion via plugin hooks (placeholder).
 	if s.pluginRegistry != nil {
@@ -740,9 +897,9 @@ func (s *Server) handleWithAdapters(
 			CacheCreationInputTokens: 0,
 			CacheReadInputTokens:     cachedInput,
 		}
-		reqCost := computeCostWithProviderPricing(pm, s.stats, openAIReq.Model, preferred.UpstreamModel, preferred.ProviderKey, billingUsage)
+		reqCost := computeCostWithProviderPricing(pm, s.stats, model, preferred.UpstreamModel, preferred.ProviderKey, billingUsage)
 		log.Info("请求完成",
-			"request_model", openAIReq.Model,
+			"request_model", model,
 			"actual_model", preferred.UpstreamModel,
 			"provider", preferred.ProviderKey,
 			"input_total", inputTotal,
@@ -756,14 +913,14 @@ func (s *Server) handleWithAdapters(
 		)
 
 		s.onRequestCompleted(
-			openAIReq.Model, preferred.UpstreamModel, preferred.ProviderKey,
+			model, preferred.UpstreamModel, preferred.ProviderKey,
 			requestStart, usage,
 			reqCost, "success", "",
 		)
 
 		// Record usage statistics.
 		if s.stats != nil {
-			s.stats.Record(openAIReq.Model, preferred.UpstreamModel, stats.Usage{
+			s.stats.Record(model, preferred.UpstreamModel, stats.Usage{
 				InputTokens:              coreResp.Usage.InputTokens,
 				OutputTokens:             coreResp.Usage.OutputTokens,
 				CacheReadInputTokens:     coreResp.Usage.CachedInputTokens,
@@ -904,14 +1061,16 @@ func (s *Server) handleAdapterStream(
 	w http.ResponseWriter,
 	r *http.Request,
 	ctx context.Context,
-	openAIReq openai.ResponsesRequest,
+	model string,
+	rawBody []byte,
 	coreReq *format.CoreRequest,
 	upstreamReq any,
 	candidate provider.ProviderCandidate,
+	clientProtocol string,
 	wsMode string,
 	wsInjected bool,
 ) {
-	log := slog.Default().With("model", openAIReq.Model, "path", "adapter_stream")
+	log := slog.Default().With("model", model, "path", "adapter_stream")
 	pm := s.activeProviderManager()
 
 	// Track when the request started for latency measurement.
@@ -922,11 +1081,10 @@ func (s *Server) handleAdapterStream(
 	_ = sess
 
 	// Initialize trace record.
-	bodyBytes, _ := json.Marshal(openAIReq)
 	streamRecord := mbtrace.Record{
 		HTTPRequest:   mbtrace.NewHTTPRequest(r),
-		OpenAIRequest: mbtrace.RawJSONOrString(bodyBytes),
-		Model:         openAIReq.Model,
+		OpenAIRequest: mbtrace.RawJSONOrString(rawBody),
+		Model:         model,
 	}
 	defer func() {
 		s.writeTrace(streamRecord)
@@ -947,7 +1105,7 @@ func (s *Server) handleAdapterStream(
 				}
 				return &msgReq, nil
 			}
-			if visProv := s.wrapWithVisual(ctx, openAIReq.Model, candidate, providerAdapter, finalizeAnthropicUpstream); visProv != nil {
+			if visProv := s.wrapWithVisual(ctx, model, candidate, providerAdapter, finalizeAnthropicUpstream); visProv != nil {
 				coreResp, err := visProv.CreateCore(ctx, coreReq)
 				if err != nil {
 					log.Error("adapter stream visual fallback: CreateCore failed", "error", err)
@@ -963,7 +1121,7 @@ func (s *Server) handleAdapterStream(
 					writeOpenAIError(w, http.StatusBadGateway, payload)
 					return
 				}
-				s.writeCoreResponseAsOpenAIStream(w, ctx, openAIReq, coreReq, coreResp, candidate, requestStart, &streamRecord)
+				s.writeCoreResponseAsOpenAIStream(w, ctx, model, coreReq, coreResp, candidate, clientProtocol, requestStart, &streamRecord)
 				return
 			}
 		}
@@ -1001,12 +1159,12 @@ func (s *Server) handleAdapterStream(
 			log.Error("adapter stream: no upstream provider resolved")
 			payload := openai.ErrorResponse{
 				Error: openai.ErrorObject{
-					Message: fmt.Sprintf("no upstream provider for model %q", openAIReq.Model),
+					Message: fmt.Sprintf("no upstream provider for model %q", model),
 					Type:    "server_error",
 					Code:    "provider_error",
 				},
 			}
-			streamRecord.Error = traceError("stream_resolve_provider", fmt.Errorf("no upstream provider for %q", openAIReq.Model))
+			streamRecord.Error = traceError("stream_resolve_provider", fmt.Errorf("no upstream provider for %q", model))
 			streamRecord.OpenAIResponse = payload
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
@@ -1029,7 +1187,7 @@ func (s *Server) handleAdapterStream(
 					}
 					return &msgReq, nil
 				}
-				if visProv := s.wrapWithVisual(ctx, openAIReq.Model, candidate, provAdapter, finalizeAnthropicUpstream); visProv != nil {
+				if visProv := s.wrapWithVisual(ctx, model, candidate, provAdapter, finalizeAnthropicUpstream); visProv != nil {
 					visCoreProvider = visProv
 				}
 			}
@@ -1055,9 +1213,9 @@ func (s *Server) handleAdapterStream(
 		// Strip image blocks from anthropic request if visual extension is enabled
 		// and images are present. This prevents base64 image data from being sent to
 		// text-only models while keeping pure-text requests on the real streaming path.
-		if hasImage && s.pluginRegistry != nil && s.runtime != nil && openAIReq.Model != "" {
+		if hasImage && s.pluginRegistry != nil && s.runtime != nil && model != "" {
 			cfgV := s.runtime.Current().Config
-			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, openAIReq.Model)
+			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, model)
 			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
 				strippedReq, _ := visualpkg.StripImagesFromAnthropic(*anthReq)
 				anthReq = &strippedReq
@@ -1156,9 +1314,9 @@ func (s *Server) handleAdapterStream(
 		// streaming path; without stripping, raw base64 image data would be
 		// forwarded to a text-only upstream that cannot consume it and would
 		// burn input tokens. Mirrors the anthropic streaming behavior above.
-		if s.pluginRegistry != nil && s.runtime != nil && openAIReq.Model != "" {
+		if s.pluginRegistry != nil && s.runtime != nil && model != "" {
 			cfgV := s.runtime.Current().Config
-			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, openAIReq.Model)
+			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, model)
 			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
 				strippedReq, _ := visualpkg.StripImagesFromChat(*chatReq)
 				chatReq = &strippedReq
@@ -1212,9 +1370,9 @@ func (s *Server) handleAdapterStream(
 
 		// Visual orchestrator for streaming path: non-streaming orchestration
 		// → synthetic stream events, matching the anthropic streaming pattern.
-		if s.pluginRegistry != nil && s.runtime != nil && openAIReq.Model != "" && ok && providerAdapter != nil {
+		if s.pluginRegistry != nil && s.runtime != nil && model != "" && ok && providerAdapter != nil {
 			cfgV := s.runtime.Current().Config
-			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, openAIReq.Model)
+			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, model)
 			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
 				finalizeUpstream := func(_ context.Context, upstream any) (any, error) {
 					req, ok := upstream.(*chat.ChatRequest)
@@ -1228,7 +1386,7 @@ func (s *Server) handleAdapterStream(
 				}
 				visCandidate := candidate
 				visCandidate.Client = &chatProviderClient{c: chatClient}
-				if visProv := s.wrapWithVisual(ctx, openAIReq.Model, visCandidate, providerAdapter, finalizeUpstream); visProv != nil {
+				if visProv := s.wrapWithVisual(ctx, model, visCandidate, providerAdapter, finalizeUpstream); visProv != nil {
 					coreResp, visErr := visProv.CreateCore(ctx, coreReq)
 					if visErr != nil {
 						log.Error("adapter stream: chat visual CreateCore failed", "error", visErr)
@@ -1251,7 +1409,7 @@ func (s *Server) handleAdapterStream(
 		}
 
 		if wsInjected {
-			searchCfg := s.resolvedSearchConfig(candidate.ProviderKey, openAIReq.Model)
+			searchCfg := s.resolvedSearchConfig(candidate.ProviderKey, model)
 			chatStream, err = s.chatSearchBufferedStream(ctx, chatClient, chatReq, searchCfg.tavilyKey, searchCfg.firecrawlKey, searchCfg.maxRounds)
 		} else {
 			chatStream, err = chatClient.StreamChat(ctx, chatReq)
@@ -1359,13 +1517,13 @@ func (s *Server) handleAdapterStream(
 		// Visual orchestrator for streaming path: non-streaming orchestration
 		// → synthetic stream events, matching the anthropic/chat streaming pattern.
 		providerAdapter, ok := s.adapterRegistry.GetProvider(config.ProtocolGoogleGenAI)
-		if ok && providerAdapter != nil && s.runtime != nil && openAIReq.Model != "" {
+		if ok && providerAdapter != nil && s.runtime != nil && model != "" {
 			cfgV := s.runtime.Current().Config
-			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, openAIReq.Model)
+			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, model)
 			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
 				visCandidate := candidate
 				visCandidate.Client = &googleProviderClient{c: googleClient, model: candidate.UpstreamModel}
-				if visProv := s.wrapWithVisual(ctx, openAIReq.Model, visCandidate, providerAdapter, nil); visProv != nil {
+				if visProv := s.wrapWithVisual(ctx, model, visCandidate, providerAdapter, nil); visProv != nil {
 					coreResp, visErr := visProv.CreateCore(ctx, coreReq)
 					if visErr != nil {
 						log.Error("adapter stream: google visual CreateCore failed", "error", visErr)
@@ -1388,7 +1546,7 @@ func (s *Server) handleAdapterStream(
 		}
 
 		if wsInjected {
-			searchCfg := s.resolvedSearchConfig(candidate.ProviderKey, openAIReq.Model)
+			searchCfg := s.resolvedSearchConfig(candidate.ProviderKey, model)
 			googleResp, err := s.executeGoogleSearchLoop(ctx, googleClient, candidate.UpstreamModel, googleReq, searchCfg.tavilyKey, searchCfg.firecrawlKey, searchCfg.maxRounds)
 			if err != nil {
 				log.Error("adapter stream: injected google search loop failed", "error", err)
@@ -1506,6 +1664,106 @@ func (s *Server) handleAdapterStream(
 			providerBuf = sr.StreamBuffer
 		}
 
+	case config.ProtocolOpenAIResponse:
+		responsesReq, ok := upstreamReq.(*openai.ResponsesRequest)
+		if !ok {
+			log.Error("adapter stream: unexpected openai-response type")
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: "unexpected openai-response upstream type",
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			streamRecord.Error = traceError("stream_type", fmt.Errorf("unexpected openai-response type"))
+			streamRecord.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+
+		responsesClientRaw := s.activeResponsesClient(candidate.ProviderKey)
+		if responsesClientRaw == nil {
+			log.Error("adapter stream: no responses client", "provider", candidate.ProviderKey)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("no responses client for provider %q", candidate.ProviderKey),
+					Type:    "server_error",
+					Code:    "provider_error",
+				},
+			}
+			streamRecord.Error = traceError("stream_responses_client", fmt.Errorf("no responses client for %q", candidate.ProviderKey))
+			streamRecord.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusBadGateway, payload)
+			return
+		}
+		responsesClient, ok := responsesClientRaw.(*openai.Client)
+		if !ok {
+			log.Error("adapter stream: invalid responses client type", "provider", candidate.ProviderKey)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("invalid responses client for provider %q", candidate.ProviderKey),
+					Type:    "server_error",
+					Code:    "internal_error",
+				},
+			}
+			streamRecord.Error = traceError("stream_responses_client_type", fmt.Errorf("invalid responses client for %q", candidate.ProviderKey))
+			streamRecord.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+
+		responsesStream, sErr := responsesClient.StreamResponse(ctx, responsesReq)
+		if sErr != nil {
+			log.Error("adapter stream: StreamResponse failed", "error", sErr)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("responses stream error: %v", sErr),
+					Type:    "server_error",
+					Code:    "provider_error",
+				},
+			}
+			streamRecord.Error = traceError("stream_responses", sErr)
+			streamRecord.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusBadGateway, payload)
+			return
+		}
+
+		providerStream, ok = s.adapterRegistry.GetProviderStream(config.ProtocolOpenAIResponse)
+		if !ok {
+			log.Warn("adapter stream: no openai-response provider stream adapter")
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: "responses stream adapter not available",
+					Type:    "server_error",
+					Code:    "adapter_fallback",
+				},
+			}
+			streamRecord.Error = traceError("stream_responses_adapter", fmt.Errorf("no openai-response provider stream adapter"))
+			streamRecord.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+		sr, sErr = providerToCoreStream(ctx, providerStream, coreReq, responsesStream)
+		if sErr != nil {
+			log.Error("adapter stream: Responses ToCoreStream failed", "error", sErr)
+			payload := openai.ErrorResponse{
+				Error: openai.ErrorObject{
+					Message: fmt.Sprintf("responses stream conversion failed: %v", sErr),
+					Type:    "server_error",
+					Code:    "conversion_error",
+				},
+			}
+			streamRecord.Error = traceError("stream_responses_tocore", sErr)
+			streamRecord.OpenAIResponse = payload
+			writeOpenAIError(w, http.StatusInternalServerError, payload)
+			return
+		}
+		coreEvents = sr.Events
+		if sr.StreamBuffer != nil {
+			providerBuf = sr.StreamBuffer
+		}
+
+
 	default:
 		log.Error("adapter stream: unsupported protocol", "protocol", candidate.Protocol)
 		payload := openai.ErrorResponse{
@@ -1521,8 +1779,12 @@ func (s *Server) handleAdapterStream(
 		return
 	}
 
-	// Get client stream adapter.
-	clientStream, ok := s.adapterRegistry.GetClientStream(config.ProtocolOpenAIResponse)
+	// Get client stream adapter for the inbound protocol.
+	// NOTE: CorePluginHooks.OnStreamEvent/OnStreamComplete/NewStreamState are
+	// no-ops in all current adapters — no plugin wires into them via
+	// CorePluginHooks(). Post-stream content remembering (below) provides
+	// protocol-specific thinking replay via providerBuf.
+	clientStream, ok := s.adapterRegistry.GetClientStream(clientProtocol)
 	if !ok {
 		log.Warn("adapter stream: no client stream adapter")
 		payload := openai.ErrorResponse{
@@ -1555,14 +1817,15 @@ func (s *Server) handleAdapterStream(
 		return
 	}
 
-	var streamChan <-chan openai.StreamEvent
+	// Obtain per-stream buffer before iterating SSE frames.
 	if oaiResult, ok := streamChanAny.(*openai.OpenAIStreamResult); ok {
-		streamChan = oaiResult.Chan()
 		clientBuf = oaiResult.Buffer
-	} else if ch, ok := streamChanAny.(<-chan openai.StreamEvent); ok {
-		streamChan = ch
-	} else {
-		log.Error("adapter stream: unexpected stream channel type", "type", fmt.Sprintf("%T", streamChanAny))
+	}
+
+	// Use the protocol-agnostic SSEStream interface for writing.
+	sseStream, ok := streamChanAny.(format.SSEStream)
+	if !ok {
+		log.Error("adapter stream: result does not implement SSEStream", "type", fmt.Sprintf("%T", streamChanAny))
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
 				Message: "unexpected stream channel type",
@@ -1570,13 +1833,13 @@ func (s *Server) handleAdapterStream(
 				Code:    "internal_error",
 			},
 		}
-		streamRecord.Error = traceError("stream_channel_type", fmt.Errorf("unexpected stream channel type %T", streamChanAny))
+		streamRecord.Error = traceError("stream_sse_type", fmt.Errorf("result %T does not implement SSEStream", streamChanAny))
 		streamRecord.OpenAIResponse = payload
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
 
-	// Write SSE events.
+	// Write SSE events using generic frames.
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
@@ -1584,15 +1847,15 @@ func (s *Server) handleAdapterStream(
 	// Track usage from the final response.completed event.
 	var finalUsage openai.Usage
 	var finalResp *openai.Response
-	for ev := range streamChan {
-		if ev.Event == "response.completed" {
-			if lf, ok := ev.Data.(openai.ResponseLifecycleEvent); ok {
+	for frame := range sseStream.Frames() {
+		if frame.Event == "response.completed" {
+			if lf, ok := frame.Data.(openai.ResponseLifecycleEvent); ok {
 				finalUsage = lf.Response.Usage
 				lfResp := lf.Response
 				finalResp = &lfResp
 			}
 		}
-		if err := writeSSE(w, ev); err != nil {
+		if err := writeSSEFrame(w, frame); err != nil {
 			log.Warn("adapter stream: SSE write failed, aborting stream", "error", err)
 			break
 		}
@@ -1603,7 +1866,7 @@ func (s *Server) handleAdapterStream(
 	// Remember reasoning content for DeepSeek thinking replay via StreamInterceptor.
 	// This must not depend on trace being enabled.
 	if s.pluginRegistry != nil && sess != nil {
-		remembered := rememberStreamResponseContent(s.pluginRegistry, sess, openAIReq.Model, finalResp)
+		remembered := rememberStreamResponseContent(s.pluginRegistry, sess, model, finalResp)
 		if !remembered {
 			if anthProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolAnthropic); ok {
 				if _, ok := anthProvider.(*anthropic.AnthropicProviderAdapter); ok {
@@ -1616,7 +1879,7 @@ func (s *Server) handleAdapterStream(
 						}
 					}
 					if len(events) > 0 {
-						states := s.pluginRegistry.NewStreamStates(openAIReq.Model)
+						states := s.pluginRegistry.NewStreamStates(model)
 						for _, ev := range events {
 							pluginType := ""
 							switch {
@@ -1630,7 +1893,7 @@ func (s *Server) handleAdapterStream(
 							if pluginType == "" {
 								continue
 							}
-							s.pluginRegistry.OnStreamEvent(openAIReq.Model, plugin.StreamEvent{
+							s.pluginRegistry.OnStreamEvent(model, plugin.StreamEvent{
 								Type:  pluginType,
 								Index: ev.Index,
 								Block: anthropicContentBlockPtrToFormat(ev.ContentBlock),
@@ -1641,7 +1904,7 @@ func (s *Server) handleAdapterStream(
 						if finalResp != nil {
 							outputText = finalResp.OutputText
 						}
-						s.pluginRegistry.OnStreamComplete(openAIReq.Model, states, outputText, sess.ExtensionData)
+						s.pluginRegistry.OnStreamComplete(model, states, outputText, sess.ExtensionData)
 					}
 				}
 			}
@@ -1693,6 +1956,18 @@ func (s *Server) handleAdapterStream(
 		}
 	}
 
+		// Google post-stream content remembering.
+		if sess != nil {
+			if googleProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolGoogleGenAI); ok {
+				if _, ok := googleProvider.(*google.GeminiProviderAdapter); ok {
+					// Google GenerateContentResponse has no thinking/reasoning field today.
+					// This block is a placeholder for future use when/if Google adds
+					// reasoning support, maintaining symmetry with Anthropic/Chat blocks.
+					_ = providerBuf
+				}
+			}
+		}
+
 	// Capture stream events for trace.
 	if s.tracer != nil && s.tracer.Enabled() {
 		// Provider stream buffer (anthropic/chat/google raw events)
@@ -1732,7 +2007,7 @@ func (s *Server) handleAdapterStream(
 		}
 	}
 	if s.stats != nil && (finalUsage.InputTokens > 0 || finalUsage.OutputTokens > 0) {
-		s.stats.Record(openAIReq.Model, candidate.UpstreamModel, stats.Usage{
+		s.stats.Record(model, candidate.UpstreamModel, stats.Usage{
 			InputTokens:              finalUsage.InputTokens,
 			OutputTokens:             finalUsage.OutputTokens,
 			CacheCreationInputTokens: 0,
@@ -1759,9 +2034,9 @@ func (s *Server) handleAdapterStream(
 		CacheCreationInputTokens: 0,
 		CacheReadInputTokens:     cachedInput,
 	}
-	reqCost := computeCostWithProviderPricing(pm, s.stats, openAIReq.Model, candidate.UpstreamModel, candidate.ProviderKey, billingUsage)
+	reqCost := computeCostWithProviderPricing(pm, s.stats, model, candidate.UpstreamModel, candidate.ProviderKey, billingUsage)
 	log.Info("流式请求完成",
-		"model", openAIReq.Model,
+		"model", model,
 		"actual_model", candidate.UpstreamModel,
 		"provider", candidate.ProviderKey,
 		"input_total", inputTotal,
@@ -1777,7 +2052,7 @@ func (s *Server) handleAdapterStream(
 	if finalResp != nil {
 		streamRecord.OpenAIResponse = finalResp
 	} else {
-		streamRecord.OpenAIResponse = &openai.Response{Model: openAIReq.Model, Status: "completed"}
+		streamRecord.OpenAIResponse = &openai.Response{Model: model, Status: "completed"}
 	}
 
 	// Notify plugin hooks for metrics tracking.
@@ -1790,9 +2065,9 @@ func (s *Server) handleAdapterStream(
 				CachedInputTokens: finalUsage.InputTokensDetails.CachedTokens,
 			}, true) // input tokens now include cache (normalized at adapter level)
 		}
-		reqCost := computeCostWithProviderPricing(pm, s.stats, openAIReq.Model, candidate.UpstreamModel, candidate.ProviderKey, billingUsage)
+		reqCost := computeCostWithProviderPricing(pm, s.stats, model, candidate.UpstreamModel, candidate.ProviderKey, billingUsage)
 		s.onRequestCompleted(
-			openAIReq.Model, candidate.UpstreamModel, candidate.ProviderKey,
+			model, candidate.UpstreamModel, candidate.ProviderKey,
 			requestStart, usage,
 			reqCost, "success", "",
 		)
@@ -1810,16 +2085,17 @@ func (s *Server) adapterRegistryProvider(protocol string) format.ProviderAdapter
 func (s *Server) writeCoreResponseAsOpenAIStream(
 	w http.ResponseWriter,
 	ctx context.Context,
-	openAIReq openai.ResponsesRequest,
+	model string,
 	coreReq *format.CoreRequest,
 	coreResp *format.CoreResponse,
 	candidate provider.ProviderCandidate,
+	clientProtocol string,
 	requestStart time.Time,
 	streamRecord *mbtrace.Record,
 ) {
-	log := slog.Default().With("model", openAIReq.Model, "path", "adapter_stream_visual")
+	log := slog.Default().With("model", model, "path", "adapter_stream_visual")
 
-	clientStream, ok := s.adapterRegistry.GetClientStream(config.ProtocolOpenAIResponse)
+	clientStream, ok := s.adapterRegistry.GetClientStream(clientProtocol)
 	if !ok {
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
@@ -1848,12 +2124,9 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
-	var streamChan <-chan openai.StreamEvent
-	if oaiResult, ok := streamChanAny.(*openai.OpenAIStreamResult); ok {
-		streamChan = oaiResult.Chan()
-	} else if ch, ok := streamChanAny.(<-chan openai.StreamEvent); ok {
-		streamChan = ch
-	} else {
+	// Use the protocol-agnostic SSEStream interface for writing.
+	sseStream, ok := streamChanAny.(format.SSEStream)
+	if !ok {
 		payload := openai.ErrorResponse{
 			Error: openai.ErrorObject{
 				Message: "unexpected stream channel type",
@@ -1861,7 +2134,7 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 				Code:    "internal_error",
 			},
 		}
-		streamRecord.Error = traceError("stream_channel_type", fmt.Errorf("unexpected stream channel type %T", streamChanAny))
+		streamRecord.Error = traceError("stream_sse_type", fmt.Errorf("result %T does not implement SSEStream", streamChanAny))
 		streamRecord.OpenAIResponse = payload
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
@@ -1872,14 +2145,14 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 	w.WriteHeader(http.StatusOK)
 
 	var finalResp *openai.Response
-	for ev := range streamChan {
-		if ev.Event == "response.completed" {
-			if lf, ok := ev.Data.(openai.ResponseLifecycleEvent); ok {
+	for frame := range sseStream.Frames() {
+		if frame.Event == "response.completed" {
+			if lf, ok := frame.Data.(openai.ResponseLifecycleEvent); ok {
 				lfResp := lf.Response
 				finalResp = &lfResp
 			}
 		}
-		if err := writeSSE(w, ev); err != nil {
+		if err := writeSSEFrame(w, frame); err != nil {
 			log.Warn("adapter stream visual fallback: SSE write failed", "error", err)
 			break
 		}
@@ -1888,15 +2161,15 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 	if finalResp != nil {
 		streamRecord.OpenAIResponse = finalResp
 	} else {
-		streamRecord.OpenAIResponse = &openai.Response{Model: openAIReq.Model, Status: "completed"}
+		streamRecord.OpenAIResponse = &openai.Response{Model: model, Status: "completed"}
 	}
 
 	usage := coreResp.Usage
 	billingUsage := billingUsageFromAnthropic(usage)
 	if s.stats != nil && (usage.InputTokens > 0 || usage.OutputTokens > 0) {
-		s.stats.Record(openAIReq.Model, candidate.UpstreamModel, statsUsageFromAnthropic(usage, true))
+		s.stats.Record(model, candidate.UpstreamModel, statsUsageFromAnthropic(usage, true))
 	}
-	reqCost := computeCostWithProviderPricing(s.providerMgr, s.stats, openAIReq.Model, candidate.UpstreamModel, candidate.ProviderKey, billingUsage)
+	reqCost := computeCostWithProviderPricing(s.providerMgr, s.stats, model, candidate.UpstreamModel, candidate.ProviderKey, billingUsage)
 	log.Info("流式视觉请求完成",
 		"actual_model", candidate.UpstreamModel,
 		"provider", candidate.ProviderKey,
@@ -1906,7 +2179,7 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 	)
 	if s.pluginRegistry != nil {
 		s.onRequestCompleted(
-			openAIReq.Model, candidate.UpstreamModel, candidate.ProviderKey,
+			model, candidate.UpstreamModel, candidate.ProviderKey,
 			requestStart, usageFromAnthropic(string(config.ProtocolAnthropic), "core_visual_stream", usage, true),
 			reqCost, "success", "",
 		)
@@ -2441,7 +2714,7 @@ func normalizeAnthropicRequest(upstream any) (anthropic.MessageRequest, error) {
 // injectCoreWebSearch replaces web_search tools in coreReq.Tools with injected
 // tavily_search/firecrawl_fetch tools when the resolved web search mode is "injected".
 // Returns true if injection was applied.
-func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRequest, preferred provider.ProviderCandidate, openAIReq openai.ResponsesRequest, wsMode string) bool {
+func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRequest, preferred provider.ProviderCandidate, model string, wsMode string) bool {
 	_ = ctx
 	if wsMode != "injected" {
 		return false
@@ -2449,7 +2722,7 @@ func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRe
 	if s.runtime == nil {
 		return false
 	}
-	searchCfg := s.resolvedSearchConfig(preferred.ProviderKey, openAIReq.Model)
+	searchCfg := s.resolvedSearchConfig(preferred.ProviderKey, model)
 	if searchCfg.tavilyKey == "" && searchCfg.firecrawlKey == "" {
 		return false
 	}
@@ -2834,6 +3107,315 @@ func anthropicContentSliceToFormat(blocks []anthropic.ContentBlock) []format.Cor
 	}
 	return result
 }
+
+
+// ============================================================================
+// Anthropic inbound — /v1/messages
+// ============================================================================
+
+// handleAnthropicMessages handles inbound Anthropic-format requests at
+// /v1/messages, converting them through the Core adapter dispatch path.
+func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request) {
+	log := slog.Default().With("path", r.URL.Path, "method", r.Method, "remote", r.RemoteAddr)
+	log.Debug("anthropic request")
+
+	if r.Method != http.MethodPost {
+		writeAnthropicError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Only POST requests are supported")
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Failed to read request body")
+		return
+	}
+
+	// Extract model for routing.
+	model := modelFromRawJSON(body)
+
+	resolvedRoute, resolveErr := s.resolveModelOrFallback(model)
+	if resolveErr != nil {
+		log.Warn("anthropic: unknown model", "model", model)
+		writeAnthropicError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("unknown model: %q", model))
+		return
+	}
+
+	preferred, ok := resolvedRoute.Preferred()
+	if !ok {
+		log.Error("anthropic: no provider candidate", "model", model)
+		writeAnthropicError(w, http.StatusBadGateway, "provider_error", "No available provider")
+		return
+	}
+
+	// Only the adapter path is supported for inbound Anthropic.
+	if s.adapterRegistry == nil {
+		writeAnthropicError(w, http.StatusInternalServerError, "server_error", "Adapter dispatch not configured")
+		return
+	}
+	if _, ok := s.adapterRegistry.GetProvider(preferred.Protocol); !ok {
+		log.Error("anthropic: no provider adapter for protocol", "protocol", preferred.Protocol)
+		writeAnthropicError(w, http.StatusInternalServerError, "adapter_not_configured", fmt.Sprintf("No adapter for protocol %q", preferred.Protocol))
+		return
+	}
+
+	// Decode via the Anthropic client adapter.
+	client, cok := s.adapterRegistry.GetClient(config.ProtocolAnthropic)
+	if !cok {
+		log.Error("anthropic: no client adapter for anthropic")
+		writeAnthropicError(w, http.StatusInternalServerError, "server_error", "Client adapter not available")
+		return
+	}
+	decodedReq, isStream, dErr := client.DecodeRequest(body, "", r.URL.Path)
+	if dErr != nil {
+		log.Warn("anthropic: DecodeRequest failed", "error", dErr)
+		writeAnthropicError(w, http.StatusBadRequest, "invalid_request_error", "Invalid request body")
+		return
+	}
+
+	s.handleWithAdapters(w, r, decodedReq, isStream, body, resolvedRoute, config.ProtocolAnthropic, model)
+}
+
+// writeAnthropicError writes an Anthropic-format JSON error response.
+func writeAnthropicError(w http.ResponseWriter, status int, errType, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{
+		"type": "error",
+		"error": anthropic.ErrorObject{
+			Type:    errType,
+			Message: message,
+		},
+	})
+}
+
+
+// ============================================================================
+// OpenAI Chat inbound — /v1/chat/completions
+// ============================================================================
+
+// handleChatCompletions handles inbound OpenAI Chat Completions requests at
+// /v1/chat/completions, converting them through the Core adapter dispatch path.
+func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
+	log := slog.Default().With("path", r.URL.Path, "method", r.Method, "remote", r.RemoteAddr)
+	log.Debug("chat request")
+
+	if r.Method != http.MethodPost {
+		writeOpenAIError(w, http.StatusMethodNotAllowed, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "Only POST requests are supported",
+			Type:    "invalid_request_error",
+			Code:    "method_not_allowed",
+		}})
+		return
+	}
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "Failed to read request body",
+			Type:    "invalid_request_error",
+			Code:    "invalid_request_body",
+		}})
+		return
+	}
+
+	// Extract model for routing.
+	model := modelFromRawJSON(body)
+
+	resolvedRoute, resolveErr := s.resolveModelOrFallback(model)
+	if resolveErr != nil {
+		log.Warn("chat: unknown model", "model", model)
+		writeOpenAIError(w, http.StatusNotFound, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: fmt.Sprintf("unknown model: %q", model),
+			Type:    "invalid_request_error",
+			Code:    "model_not_found",
+		}})
+		return
+	}
+
+	preferred, ok := resolvedRoute.Preferred()
+	if !ok {
+		log.Error("chat: no provider candidate", "model", model)
+		writeOpenAIError(w, http.StatusBadGateway, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "No available provider",
+			Type:    "server_error",
+			Code:    "provider_error",
+		}})
+		return
+	}
+
+	// Only the adapter path is supported for inbound Chat.
+	if s.adapterRegistry == nil {
+		writeOpenAIError(w, http.StatusInternalServerError, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "Adapter dispatch not configured",
+			Type:    "server_error",
+			Code:    "adapter_not_configured",
+		}})
+		return
+	}
+	if _, ok := s.adapterRegistry.GetProvider(preferred.Protocol); !ok {
+		log.Error("chat: no provider adapter for protocol", "protocol", preferred.Protocol)
+		writeOpenAIError(w, http.StatusInternalServerError, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: fmt.Sprintf("No adapter for protocol %q", preferred.Protocol),
+			Type:    "server_error",
+			Code:    "adapter_not_configured",
+		}})
+		return
+	}
+
+	// Decode via the Chat client adapter.
+	client, cok := s.adapterRegistry.GetClient(config.ProtocolOpenAIChat)
+	if !cok {
+		log.Error("chat: no client adapter for openai-chat")
+		writeOpenAIError(w, http.StatusInternalServerError, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "Client adapter not available",
+			Type:    "server_error",
+			Code:    "internal_error",
+		}})
+		return
+	}
+	decodedReq, isStream, dErr := client.DecodeRequest(body, "", r.URL.Path)
+	if dErr != nil {
+		log.Warn("chat: DecodeRequest failed", "error", dErr)
+		writeOpenAIError(w, http.StatusBadRequest, openai.ErrorResponse{Error: openai.ErrorObject{
+			Message: "Invalid request body",
+			Type:    "invalid_request_error",
+			Code:    "invalid_json",
+		}})
+		return
+	}
+
+	s.handleWithAdapters(w, r, decodedReq, isStream, body, resolvedRoute, config.ProtocolOpenAIChat, model)
+}
+
+
+// ============================================================================
+// Google Gemini inbound — /v1beta/models/{model}:generateContent
+// ============================================================================
+
+// handleGeminiGenerate handles inbound Google Gemini API requests at
+// /v1beta/models/{model}:generateContent and :streamGenerateContent,
+// converting them through the Core adapter dispatch path.
+//
+// The model name is extracted from the URL path; streaming is signaled by
+// the ":streamGenerateContent" suffix (not a body field).
+func (s *Server) handleGeminiGenerate(w http.ResponseWriter, r *http.Request) {
+	log := slog.Default().With("path", r.URL.Path, "method", r.Method, "remote", r.RemoteAddr)
+	log.Debug("gemini request")
+
+	if r.Method != http.MethodPost {
+		writeGeminiError(w, http.StatusMethodNotAllowed, "Method Not Allowed", "Only POST requests are supported", "UNSUPPORTED_METHOD")
+		return
+	}
+
+	// Extract model from URL path: /v1beta/models/{model}:generateContent
+	pathModel := extractGeminiModel(r.URL.Path)
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeGeminiError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body", "INVALID_ARGUMENT")
+		return
+	}
+
+	// Try to extract model from body first (some SDKs send it in the body),
+	// falling back to the path-extracted model.
+	model := modelFromRawJSON(body)
+	if model == "" {
+		model = pathModel
+	}
+
+	if model == "" {
+		log.Warn("gemini: no model specified")
+		writeGeminiError(w, http.StatusBadRequest, "Bad Request", "model is required", "INVALID_ARGUMENT")
+		return
+	}
+
+	resolvedRoute, resolveErr := s.resolveModelOrFallback(model)
+	if resolveErr != nil {
+		log.Warn("gemini: unknown model", "model", model)
+		writeGeminiError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("unknown model: %q", model), "NOT_FOUND")
+		return
+	}
+
+	preferred, ok := resolvedRoute.Preferred()
+	if !ok {
+		log.Error("gemini: no provider candidate", "model", model)
+		writeGeminiError(w, http.StatusBadGateway, "Bad Gateway", "No available provider", "UNAVAILABLE")
+		return
+	}
+
+	// Only the adapter path is supported for inbound Gemini.
+	if s.adapterRegistry == nil {
+		writeGeminiError(w, http.StatusInternalServerError, "Internal Server Error", "Adapter dispatch not configured", "INTERNAL")
+		return
+	}
+	if _, ok := s.adapterRegistry.GetProvider(preferred.Protocol); !ok {
+		log.Error("gemini: no provider adapter for protocol", "protocol", preferred.Protocol)
+		writeGeminiError(w, http.StatusInternalServerError, "Internal Server Error", fmt.Sprintf("No adapter for protocol %q", preferred.Protocol), "INTERNAL")
+		return
+	}
+
+	// Decode via the Gemini client adapter, passing pathModel and endpoint.
+	client, cok := s.adapterRegistry.GetClient(config.ProtocolGoogleGenAI)
+	if !cok {
+		log.Error("gemini: no client adapter for google-genai")
+		writeGeminiError(w, http.StatusInternalServerError, "Internal Server Error", "Client adapter not available", "INTERNAL")
+		return
+	}
+	decodedReq, isStream, dErr := client.DecodeRequest(body, pathModel, r.URL.Path)
+	if dErr != nil {
+		log.Warn("gemini: DecodeRequest failed", "error", dErr)
+		writeGeminiError(w, http.StatusBadRequest, "Bad Request", "Invalid request body", "INVALID_ARGUMENT")
+		return
+	}
+
+	s.handleWithAdapters(w, r, decodedReq, isStream, body, resolvedRoute, config.ProtocolGoogleGenAI, model)
+}
+
+// extractGeminiModel parses the model name from a Gemini URL path.
+//
+//	/v1beta/models/gemini-2.0-flash:generateContent → "gemini-2.0-flash"
+//	/v1beta/models/gemini-2.0-flash:streamGenerateContent → "gemini-2.0-flash"
+func extractGeminiModel(path string) string {
+	const prefix = "/v1beta/models/"
+	idx := strings.Index(path, prefix)
+	if idx < 0 {
+		return ""
+	}
+	rest := path[idx+len(prefix):]
+	// Split on ':' to separate model name from action.
+	if colonIdx := strings.Index(rest, ":"); colonIdx > 0 {
+		return rest[:colonIdx]
+	}
+	// No colon — the model might be the whole remainder.
+	if rest != "" {
+		return rest
+	}
+	return ""
+}
+
+// writeGeminiError writes a Gemini-format JSON error response.
+//
+// Gemini error format:
+//
+//	{
+//	  "error": {
+//	    "code": 400,
+//	    "message": "...",
+//	    "status": "INVALID_ARGUMENT"
+//	  }
+//	}
+func writeGeminiError(w http.ResponseWriter, status int, title, message, statusCode string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]any{
+		"error": map[string]any{
+			"code":    status,
+			"message": fmt.Sprintf("%s: %s", title, message),
+			"status":  statusCode,
+		},
+	})
+}
+
 
 // formatContentSliceToAnthropic converts []format.CoreContentBlock to []anthropic.ContentBlock.
 func formatContentSliceToAnthropic(blocks []format.CoreContentBlock) []anthropic.ContentBlock {

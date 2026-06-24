@@ -217,7 +217,7 @@ func TestInjectCoreWebSearchAutoInjectedAddsToolsWithoutExplicitRequestTools(t *
 	ok := srv.injectCoreWebSearch(context.Background(), coreReq, provider.ProviderCandidate{
 		ProviderKey:   "opencode",
 		UpstreamModel: "deepseek-v4-pro",
-	}, openAIReq, "injected")
+	}, openAIReq.Model, "injected")
 	if !ok {
 		t.Fatal("injectCoreWebSearch() = false, want true")
 	}
@@ -257,7 +257,7 @@ func TestInjectCoreWebSearchSkipsWhenCandidateHasNativeSearch(t *testing.T) {
 	ok := srv.injectCoreWebSearch(context.Background(), coreReq, provider.ProviderCandidate{
 		ProviderKey:   "deepseek",
 		UpstreamModel: "deepseek-v4-flash",
-	}, openAIReq, "enabled")
+	}, openAIReq.Model, "enabled")
 	if ok {
 		t.Fatal("injectCoreWebSearch() = true, want false for native search candidate")
 	}
