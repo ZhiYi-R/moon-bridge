@@ -55,6 +55,9 @@ internal/
 # 构建二进制
 go build -o moonbridge ./cmd/moonbridge
 
+# Windows 构建
+go build -o moonbridge.exe ./cmd/moonbridge
+
 # 构建 Cloudflare Worker（WASM）
 go build -o worker.wasm ./cmd/cloudflare
 ```
@@ -141,6 +144,24 @@ make test
 3. 在 `internal/service/app/app.go` 中注册 Adapter 到 Registry
 4. 在 `internal/service/server/adapter_dispatch.go` 中添加协议分支
 5. 添加对应的 E2E 测试到 `internal/e2e/`
+
+## 添加新 Client Adapter（入站协议）
+
+Client Adapter 处理**入站**方向：将客户端请求从各协议格式转换为 Core 中间格式，并将 Core 响应转换回入站协议。
+
+1. 在 `internal/protocol/<protocol>/` 包中实现 `format.ClientAdapter` 和 `format.ClientStreamAdapter` 接口
+2. 在 `internal/service/app/app.go` 的 `AdapterRegistry` 中注册 Client Adapter
+3. 在 `internal/service/server/adapter_dispatch.go` 中添加对应路由处理函数（如 `handleResponses` 之于 Responses、`handleAnthropic` 之于 Anthropic）
+4. 路由处理函数需：
+   - 使用 `ClientAdapter.DecodeRequest(r)` 解析请求体
+   - 调用 `handleWithAdapters(ctx, w, r, clientReq, clientProtocol, ...)` 进入统一分发流水线
+5. 处理 JSON Schema 类型差异（如 Google 用大写 `"STRING"` 而 OpenAI Chat 用小写 `"string"`）：
+   - 如协议 SDK 使用非标准类型名，在 `ToCoreRequest` 中添加 `normalizeSchemaTypes()` 递归转换
+6. 处理协议特有的无 ID 工具调用（如 Google Gemini）：
+   - 在 `ToCoreRequest` 中为每个 `FunctionCall` 分配唯一 ID
+   - 通过函数名匹配 `FunctionResponse` 并重用同一 ID
+
+> 入站协议的具体差异参见 `docs/architecture.md` 的"入站协议对比"表格。
 
 ## 管理 API 开发
 

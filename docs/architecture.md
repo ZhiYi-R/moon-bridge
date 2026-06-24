@@ -101,33 +101,54 @@ flowchart TB
 - `internal/extension/kimi_workaround` — Kimi 工具调用轮次限制
 - `internal/extension/db` — 持久化 Provider（SQLite 本地 / Cloudflare D1 Worker）
 
-## 三种运行模式
+## 多协议入站（any2any）
 
-| 模式 | 入口协议 → 上游协议 | 描述 |
-|------|---------------------|------|
-| `Transform`（默认） | OpenAI Responses → 任意 Adapter | 完整协议转换流水线 |
-| `CaptureAnthropic` | Anthropic Messages → Anthropic | 透明投递 |
-| `CaptureResponse` | OpenAI Responses → OpenAI | 透明投递 |
+Moon Bridge 支持 **4 种入站协议 × 3 种出站协议** 的任意组合（any2any）。入站协议自动识别（通过 URL 路径和请求体格式），出站协议由 Provider 配置决定。
 
-## 请求生命周期数据流（Transform 模式）
+| 入站方向 | 端点 | SDK | 状态 |
+|---------|------|-----|------|
+| **OpenAI Responses** | `POST /v1/responses` | `openai.responses.create()` | ✅ 完整支持 |
+| **OpenAI Chat** | `POST /v1/chat/completions` | `openai.chat.completions.create()` | ✅ 完整支持 |
+| **Anthropic Messages** | `POST /v1/messages` | `anthropic.messages.create()` | ✅ 完整支持 |
+| **Google Gemini** | `POST /v1beta/models/{model}:generateContent`<br/>`POST /v1beta/models/{model}:streamGenerateContent` | `google.genai.models.generate_content()` | ✅ 完整支持 |
+
+出站方向由 Provider 配置中的 `protocol` 字段决定，支持 `anthropic`、`openai-response`、`openai-chat`、`google-genai` 四种上游协议。
+
+## 请求生命周期数据流（any2any 模式）
 
 ```mermaid
 flowchart TD
-  A["客户端 (Codex CLI)"]
-  A -->|"POST /v1/responses<br/>(OpenAI Responses 格式)"| B["server.handleResponses()"]
-  B -->|"认证 / 日志 / 统计初始化 / 路由解析"| C["adapter_dispatch.go (Adapter 分发)"]
-  C -->|"preferred.Protocol 决定上游协议"| D{"协议分支"}
-  D -->|"ProtocolAnthropic"| E["anthropic adapter"]
-  D -->|"ProtocolGoogleGenAI"| F["google adapter"]
-  D -->|"ProtocolOpenAIChat"| G["chat adapter"]
-  D -->|"ProtocolOpenAIResponse"| H["直通（无协议转换）"]
-  E --> I["插件拦截 (PluginHooks)"]
-  F --> I
-  G --> I
-  H --> I
-  I --> J["MutateCoreRequest → [Adapter] → RememberContent → OnStreamEvent"]
-  J --> K["客户端<br/>← OpenAI Responses 响应"]
+  A1["OpenAI Responses 客户端"]
+  A2["OpenAI Chat 客户端"]
+  A3["Anthropic 客户端"]
+  A4["Google Gemini 客户端"]
+
+  A1 -->|"POST /v1/responses"| B["server 路由"]
+  A2 -->|"POST /v1/chat/completions"| B
+  A3 -->|"POST /v1/messages"| B
+  A4 -->|"POST /v1beta/models/...:generateContent"| B
+
+  B -->|"认证/路由解析"| C["adapter_dispatch.go"]
+  C -->|"ClientAdapter.ToCoreRequest()"| D["CoreRequest\n（中间格式）"]
+  D -->|"插件拦截 (CorePluginHooks)"| E["MutateCoreRequest / RewriteMessages / InjectTools"]
+  E --> F["ProviderAdapter.FromCoreRequest()"]
+  F -->|"出站协议格式"| G["上游 Provider"]
+  G -->|"原生响应"| H["ProviderAdapter.ToCoreResponse()"]
+  H -->|"CoreResponse"| I["PostProcessCoreResponse / RememberContent"]
+  I -->|"ClientAdapter.FromCoreResponse()"| J["客户端 ← 入站协议响应"]
 ```
+
+每种入站协议都有自己的路由端点，但在 `adapter_dispatch.go` 内部统一为 `handleWithAdapters()` 函数，经过以下流水线：
+
+1. **入站解码** — `ClientAdapter.ToCoreRequest(ctx, inboundReq)` → `*CoreRequest`
+2. **插件拦截** — `CorePluginHooks`（MutateCoreRequest、RewriteMessages、InjectTools 等）
+3. **出站编码** — `ProviderAdapter.FromCoreRequest(ctx, coreReq)` → outbound request
+4. **请求上游** — HTTP 调用 Provider
+5. **出站解码** — `ProviderAdapter.ToCoreResponse(ctx, rawResp)` → `*CoreResponse`
+6. **插件后处理** — `CorePluginHooks`（PostProcessCoreResponse、RememberContent）
+7. **入站编码** — `ClientAdapter.FromCoreResponse(ctx, coreResp)` → inbound protocol response
+
+流式路径类似，使用 `ClientStreamAdapter` 和 `ProviderStreamAdapter` 接口，核心转换也是通过 `CoreStreamEvent` 中间格式。
 
 ## 模型路由
 
@@ -148,26 +169,56 @@ flowchart TD
 | `google-genai` | Google Generative AI (Gemini) API | `internal/protocol/google` |
 | `openai-chat` | OpenAI Chat Completions API | `internal/protocol/chat` |
 
-## Adapter 体系
+## 适配器接口体系
 
-所有 Adapter 实现 `internal/format/adapter.go` 中定义的接口，通过 `internal/format/registry.go` 中的 `Registry` 管理注册：
+所有 Adapter 实现 `internal/format/adapter.go` 中定义的四组接口，通过 `internal/format/registry.go` 中的 `Registry` 管理注册：
+
+### 入站适配器（Client 侧）
 
 ```go
-
 type ClientAdapter interface {
     ClientProtocol() string
-    ToCoreRequest(context.Context, any) (*CoreRequest, error)
-    FromCoreResponse(context.Context, *CoreResponse) (any, error)
+    DecodeRequest(r *http.Request) (any, error)
+    ToCoreRequest(ctx context.Context, req any) (*CoreRequest, error)
+    FromCoreResponse(ctx context.Context, resp *CoreResponse) (any, error)
 }
 
+type ClientStreamAdapter interface {
+    ClientProtocol() string
+    DecodeRequest(r *http.Request) (any, error)
+    ToCoreRequest(ctx context.Context, req any) (*CoreRequest, error)
+    FromCoreStream(ctx context.Context, respChan <-chan CoreStreamEvent) (<-chan any, error)
+}
+```
+
+### 出站适配器（Provider 侧）
+
+```go
 type ProviderAdapter interface {
     ProviderProtocol() string
-    FromCoreRequest(context.Context, *CoreRequest) (any, error)
-    ToCoreResponse(context.Context, any) (*CoreResponse, error)
+    FromCoreRequest(ctx context.Context, req *CoreRequest) (any, error)
+    ToCoreResponse(ctx context.Context, resp any) (*CoreResponse, error)
 }
-type ProviderStreamAdapter interface { ... }
-type ClientStreamAdapter interface { ... }
+
+type ProviderStreamAdapter interface {
+    ProviderProtocol() string
+    FromCoreRequest(ctx context.Context, req *CoreRequest) (any, error)
+    ToCoreStream(ctx context.Context, upstream io.ReadCloser) (<-chan CoreStreamEvent, error)
+}
 ```
+
+### 入站协议对比
+
+各协议在工具调用编码上的关键差异：
+
+| 协议 | 工具调用表示 | 工具结果表示 | 工具调用是否有 ID |
+|------|------------|------------|----------------|
+| OpenAI Responses | `output` 中 `function_call` 条目 | `function_call_output` 条目 | ✅ 有 `call_id` |
+| OpenAI Chat | 消息中的 `tool_calls` 字段 | `role: "tool"` 消息 | ✅ 有 `tool_call_id` |
+| Anthropic Messages | `content` 中 `tool_use` 块 | `tool_result` 内容块 | ✅ 有 `id` |
+| Google Gemini | `parts` 中 `functionCall` | `functionResponse` | ❌ **无 ID，仅按名称匹配** |
+
+> Google Gemini 的 `FunctionCall` 没有 ID 字段，工具调用与结果通过函数名关联。Moon Bridge 在 Google 入站适配器中通过两遍扫描为每个 `FunctionCall` 分配唯一 ID（格式 `toolu_gemini_<name>_<n>`），并在匹配的 `FunctionResponse` 中使用同一 ID，确保上下游的 tool_call_id 一致。
 
 ### 跨协议工具调用
 

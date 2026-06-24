@@ -106,6 +106,8 @@ type StreamEvent struct {
 }
 ```
 
+> **已知限制：** `StreamInterceptor` 使用 `anthropic.StreamDelta` 类型，而 Adapter 路径中的 `CorePluginHooks.OnStreamEvent`/`OnStreamComplete`/`NewStreamState` 使用 `format.CoreStreamEvent`。两者语义不兼容，目前无插件通过 `CorePluginHooks` 接入流式钩子——所有流式钩子均为空操作。等价的流式拦截功能（DeepSeek V4 thinking 实时回放）通过旧 `plugin.Registry` 路径仅在 Anthropic 出站协议上工作。其他出站协议使用 post-stream content remembering 方式在流结束后重放内容。
+
 #### 历史重建（History Reconstruction）
 
 | 接口 | 方法 | 作用时机 |
@@ -200,7 +202,9 @@ hooks := registry.CorePluginHooks()
 defer registry.ShutdownAll()
 ```
 
-`Registry.CorePluginHooks()` 方法（`registry.go:486`）遍历已注册的插件，对实现了 `CoreRequestMutator`、`CoreContentFilter`、`CoreContentRememberer` 接口的插件，依次串联成 `format.CorePluginHooks` 的对应字段。。
+`Registry.CorePluginHooks()` 方法（`registry.go:486`）遍历已注册的插件，对实现了 `CoreRequestMutator`、`CoreContentFilter`、`CoreContentRememberer`、`InputPreprocessor` 接口的插件，依次串联成 `format.CorePluginHooks` 的对应字段。
+
+> **注意：** `CorePluginHooks.PreprocessInput` 于 2026-06 接入。此前 `InputPreprocessor` 能力虽已定义但未被 `CorePluginHooks()` 串联，在 Adapter 路径中为空操作。影响仅限包含 `reasoning_content` 的多轮请求（如 DeepSeek V4 `StripReasoningContent`）。
 
 ## 与 Adapter 的集成
 
