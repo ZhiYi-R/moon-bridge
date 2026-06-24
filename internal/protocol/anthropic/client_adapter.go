@@ -283,10 +283,11 @@ func (a *AnthropicClientAdapter) streamLoop(
 			send(StreamEvent{
 				Type: "message_start",
 				Message: &MessageResponse{
-					ID:    msgID,
-					Type:  "message",
-					Role:  "assistant",
-					Model: model,
+					ID:      msgID,
+					Type:    "message",
+					Role:    "assistant",
+					Model:   model,
+					Content: []ContentBlock{},
 				},
 			})
 

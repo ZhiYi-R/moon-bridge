@@ -66,7 +66,7 @@ type Response struct {
 	Object            string             `json:"object"`
 	CreatedAt         int64              `json:"created_at,omitempty"`
 	Status            string             `json:"status"`
-	Model             string             `json:"model,omitempty"`
+	Model             string             `json:"model"`
 	Output            []OutputItem       `json:"output"`
 	OutputText        string             `json:"output_text,omitempty"`
 	Usage             Usage              `json:"usage,omitempty"`
@@ -116,8 +116,8 @@ type ContentPart struct {
 
 // Usage represents token usage statistics.
 type Usage struct {
-	InputTokens         int                 `json:"input_tokens,omitempty"`
-	OutputTokens        int                 `json:"output_tokens,omitempty"`
+	InputTokens         int                 `json:"input_tokens"`
+	OutputTokens        int                 `json:"output_tokens"`
 	TotalTokens         int                 `json:"total_tokens"`
 	InputTokensDetails  InputTokensDetails  `json:"input_tokens_details,omitempty"`
 	OutputTokensDetails OutputTokensDetails `json:"output_tokens_details,omitempty"`

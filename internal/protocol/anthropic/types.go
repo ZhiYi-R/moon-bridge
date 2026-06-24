@@ -71,8 +71,8 @@ func (m *Message) UnmarshalJSON(data []byte) error {
 
 type ContentBlock struct {
 	Type         string          `json:"type"`
-	Text         string          `json:"text,omitempty"`
-	Thinking     string          `json:"thinking,omitempty"`
+	Text         string          `json:"text"`
+	Thinking     string          `json:"thinking"`
 	Signature    string          `json:"signature,omitempty"`
 	Source       *ImageSource    `json:"source,omitempty"`
 	ID           string          `json:"id,omitempty"`
@@ -189,16 +189,16 @@ type MessageResponse struct {
 	ID           string         `json:"id"`
 	Type         string         `json:"type"`
 	Role         string         `json:"role"`
-	Model        string         `json:"model,omitempty"`
-	Content      []ContentBlock `json:"content,omitempty"`
+	Model        string         `json:"model"`
+	Content      []ContentBlock `json:"content"`
 	StopReason   string         `json:"stop_reason,omitempty"`
 	StopSequence string         `json:"stop_sequence,omitempty"`
-	Usage        Usage          `json:"usage,omitempty"`
+	Usage        Usage          `json:"usage"`
 }
 
 type Usage struct {
-	InputTokens              int            `json:"input_tokens,omitempty"`
-	OutputTokens             int            `json:"output_tokens,omitempty"`
+	InputTokens              int            `json:"input_tokens"`
+	OutputTokens             int            `json:"output_tokens"`
 	CacheCreationInputTokens int            `json:"cache_creation_input_tokens,omitempty"`
 	CacheReadInputTokens     int            `json:"cache_read_input_tokens,omitempty"`
 	CacheCreation            *CacheCreation `json:"cache_creation,omitempty"`
@@ -212,7 +212,7 @@ type CacheCreation struct {
 type StreamEvent struct {
 	Type         string           `json:"type"`
 	Message      *MessageResponse `json:"message,omitempty"`
-	Index        int              `json:"index,omitempty"`
+	Index        int              `json:"index"`
 	ContentBlock *ContentBlock    `json:"content_block,omitempty"`
 	Delta        StreamDelta      `json:"delta,omitempty"`
 	Usage        *Usage           `json:"usage,omitempty"`
@@ -221,8 +221,8 @@ type StreamEvent struct {
 
 type StreamDelta struct {
 	Type        string `json:"type,omitempty"`
-	Text        string `json:"text,omitempty"`
-	Thinking    string `json:"thinking,omitempty"`
+	Text        string `json:"text"`
+	Thinking    string `json:"thinking"`
 	Signature   string `json:"signature,omitempty"`
 	PartialJSON string `json:"partial_json,omitempty"`
 	StopReason  string `json:"stop_reason,omitempty"`

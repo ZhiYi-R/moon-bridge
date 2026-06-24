@@ -448,6 +448,7 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 	var response = &Response{
 		Object: "response",
 		Status: "in_progress",
+		Model:  coreReq.Model,
 	}
 	contentText := make(map[int]string)
 	toolCallArgs := make(map[int]string)

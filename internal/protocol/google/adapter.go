@@ -36,7 +36,7 @@ type GeminiProviderAdapter struct {
 	// currentCacheKey tracks the cache key for the current request.
 	currentCacheKey string
 
-	// currentModel tracks the model for the current request (used by cache).
+	// currentModel tracks the model for the current request (used by cache and stream).
 	currentModel string
 
 	prevSnapshots map[int]string // candidate index → previous text for delta computation
@@ -160,8 +160,6 @@ func (a *GeminiProviderAdapter) FromCoreRequest(ctx context.Context, req *format
 	// Cache integration — look up or create CachedContent.
 	a.prepareCache(ctx, geminiReq)
 
-	a.currentModel = ""
-
 	return geminiReq, nil
 }
 
@@ -208,6 +206,7 @@ func (a *GeminiProviderAdapter) ToCoreResponseWithRequest(ctx context.Context, r
 	}
 
 	coreResp := &format.CoreResponse{
+		Model: a.currentModel,
 		Status: status,
 		Messages: []format.CoreMessage{
 			{
@@ -290,7 +289,7 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (*for
 		candidates := make(map[int]*candidateState)
 		var seqNum int64
 		var finalUsage *format.CoreUsage
-		var lastModel string
+		lastModel := a.currentModel
 		var seenCompletion bool
 
 		emit := func(ev format.CoreStreamEvent) {
