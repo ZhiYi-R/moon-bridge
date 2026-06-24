@@ -26,7 +26,6 @@ internal/
     websearchinjected/    # Web Search 注入模式
   config/                 # YAML 配置加载与校验
   logger/                 # 日志系统（slog 封装）
-  openai_dto/             # 共享 OpenAI DTO 类型
   modelref/               # 模型引用解析
   session/                # 会话管理
   db/                     # 数据库抽象与注册表
@@ -40,7 +39,6 @@ internal/
   service/                # 业务编排层
     api/                  # 管理 REST API（路由在 router.go）
     app/                  # 应用生命周期 + Extension 目录
-    bridge/               # （空目录，预留）
     e2e/                  # 服务层 E2E 测试
     provider/             # Provider 管理器
     proxy/                # Capture 模式代理

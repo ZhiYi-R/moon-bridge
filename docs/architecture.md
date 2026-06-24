@@ -32,10 +32,9 @@ flowchart TB
   subgraph Base["基础组件"]
     b1["config(配置)"]
     b2["logger(日志)"]
-    b3["openai_dto(共享 DTO)"]
-    b4["modelref(模型引用)"]
-    b5["session(会话)"]
-    b6["db(数据库)"]
+    b3["modelref(模型引用)"]
+    b4["session(会话)"]
+    b5["db(数据库)"]
   end
   subgraph Extension["Extension 层"]
     e1["deepseek_v4"]
@@ -56,7 +55,6 @@ flowchart TB
 
 - `internal/config` — YAML 配置加载、校验、Schema 生成、热重载。支持 `config.schema.json` 和 `config.example.yml`
 - `internal/logger` — 基于 `slog.Handler` 接口封装的日志系统，支持 consumer 模式
-- `internal/openai_dto` — 共享的 OpenAI 基础类型（DTO、枚举），被多个 Protocol 复用
 - `internal/modelref` — 模型引用（`model(provider)` 格式）的解析与规范化
 - `internal/session` — 会话管理与上下文绑定
 - `internal/db` — 数据库 Provider 注册表

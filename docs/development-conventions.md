@@ -10,7 +10,6 @@ flowchart TD
     direction TB
     config["config/ — 配置加载/校验/Schema"]
     logger["logger/ — 结构化日志(slog封装)"]
-    openai_dto["openai_dto/ — 共享 OpenAI DTO"]
     modelref["modelref/ — 模型引用解析"]
     session["session/ — 会话管理"]
     db["db/ — 数据库抽象与注册表"]
@@ -21,7 +20,6 @@ flowchart TD
       pa["anthropic/ — Anthropic Messages Adapter"]
       pc["cache/ — Prompt 缓存规划"]
       pch["chat/ — OpenAI Chat Adapter"]
-      pf["format/ — (遗留层，功能已迁移到 internal/format)"]
       pg["google/ — Google Gemini Adapter"]
       po["openai/ — OpenAI Responses Adapter"]
     end
@@ -72,7 +70,7 @@ flowchart TD
 extension → config, format, protocol
 service → config, format, protocol, extension
 protocol → config, format
-format → config, openai_dto
+format → config
 config, logger, modelref, session, db → （无内部依赖）
 ```
 
