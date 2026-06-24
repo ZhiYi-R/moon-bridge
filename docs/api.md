@@ -1,6 +1,6 @@
 # API 接口
 
-Moon Bridge 对外暴露 OpenAI Responses 兼容端点、模型列表端点和可选的管理 API。
+Moon Bridge 对外暴露 **4 种入站协议** 端点（OpenAI Responses / OpenAI Chat / Anthropic Messages / Google Gemini）、模型列表端点和可选的管理 API。入站协议通过 URL 路径自动识别，所有入站→出站组合均可工作。
 
 ## 基础信息
 
@@ -20,9 +20,9 @@ Moon Bridge 对外暴露 OpenAI Responses 兼容端点、模型列表端点和�
 
 ## 核心端点
 
-### POST /v1/responses
+### POST /v1/responses (OpenAI Responses)
 
-OpenAI Responses API 兼容的聊天/补全端点。
+OpenAI Responses API 兼容的主端点。使用 `openai.responses.create()` SDK 调用。
 
 **关键请求字段**：
 
@@ -65,6 +65,18 @@ data: {"delta": "Hello"}
 event: response.completed
 data: {"response": {...}}
 ```
+
+### POST /v1/chat/completions (OpenAI Chat)
+
+OpenAI Chat Completions API 兼容端点。使用 `openai.chat.completions.create()` SDK 调用。支持 `tool_calls`、`tool_choice`、流式等标准 Chat 能力。
+
+### POST /v1/messages (Anthropic Messages)
+
+Anthropic Messages API 兼容端点。使用 `anthropic.messages.create()` SDK 调用。支持 `system` 指令、`tool_use`/`tool_result` 内容块、流式事件。
+
+### POST /v1beta/models/{model}:generateContent (Google Gemini)
+
+Google Generative AI (Gemini) API 兼容端点。使用 `google.genai.models.generate_content()` SDK 调用。支持 `functionCall`/`functionResponse` 工具调用、流式变体 `:streamGenerateContent`。
 
 ### GET /v1/models
 

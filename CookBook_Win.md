@@ -115,6 +115,19 @@ Invoke-RestMethod -Uri http://localhost:38440/v1/responses `
 
 **验证：** 返回 `"status": "completed"` 并包含回复内容。
 
+> 💡 **也可以换其他协议测试：**
+> ```bash
+> # OpenAI Chat 格式
+> curl http://localhost:38440/v1/chat/completions \
+>   -H "Content-Type: application/json" \
+>   -d '{"model": "moonbridge", "messages": [{"role": "user", "content": "你好"}], "max_tokens": 100}'
+>
+> # Anthropic Messages 格式
+> curl http://localhost:38440/v1/messages \
+>   -H "Content-Type: application/json" \
+>   -d '{"model": "moonbridge", "max_tokens": 100, "messages": [{"role": "user", "content": "你好"}]}'
+> ```
+
 **搞不定：**
 
 | 问题 | 原因 | 解决 |
@@ -426,7 +439,7 @@ go run ./cmd/moonbridge -config /path/to/config.yml 2>&1 | Select-Object -First 
 |------|------|
 | `no such file or directory` | config.yml 路径不对 |
 | `cannot unmarshal` | YAML 格式错误 |
-| `unsupported protocol` | protocol 只能是 `anthropic` 或 `openai-response` |
+| `unsupported protocol` | protocol 必须是 `anthropic` / `openai-response` / `google-genai` / `openai-chat` 之一 |
 | `connection refused` | Provider 的 base_url 写错或不可达 |
 | `401` / `403` | API Key 不对 |
 | `402` | DeepSeek 余额不足 |

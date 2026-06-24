@@ -1,6 +1,6 @@
 # Moon Bridge
 
-Moon Bridge 是一个用 Go 编写的协议转换与模型路由代理。对外暴露 **OpenAI Responses API**（`/v1/responses`），对内支持 **Anthropic Messages**、**Google Gemini（GenAI）**、**OpenAI Chat Completions** 等多种上游协议。客户端指定不同模型别名时，自动将请求路由到对应上游 Provider 并在协议间自动转换。
+Moon Bridge 是一个用 Go 编写的 any2any 协议转换与模型路由代理。支持 **4 种入站协议**（OpenAI Responses / OpenAI Chat / Anthropic Messages / Google Gemini）↔ **4 种出站协议** 的任意组合。客户端通过统一入口访问不同协议的上游 LLM Provider，Moon Bridge 在中间自动完成协议转换。
 
 > 🍳 **新手先看这里** → [CookBook.md](CookBook.md)：一份按目标找做法的菜谱，5 分钟跑通第一个对话。
 > 官方qq群：1103798316
@@ -44,7 +44,7 @@ go run ./cmd/moonbridge
 
 ## 核心能力
 
-- **协议转换**：OpenAI Responses → Anthropic Messages / Google Gemini / OpenAI Chat，适配四种上游协议
+- **any2any 协议转换**：4 种入站协议（OpenAI Responses / Chat / Anthropic / Google Gemini） ↔ 4 种出站协议双向转换，入站协议自动识别
 - **模型路由**：通过 `routes` 配置将模型别名映射到不同 Provider 的上游模型名
 - **插件扩展**：`CorePluginHooks` 接口，支持请求预处理、响应后处理、流拦截
 - **请求跟踪**：完整链路记录，每步转换均可追溯
@@ -53,13 +53,18 @@ go run ./cmd/moonbridge
 - **Web Search 注入**：自动/注入模式，支持 Tavily、Firecrawl
 - **Prompt 缓存**：explicit / automatic / hybrid 三种模式
 
-## 三种工作模式
+## 多协议入站（any2any）
 
-| 模式 | 行为 |
-|------|------|
-| `Transform`（默认） | 接收 OpenAI Responses 请求 → 协议转换 → 转发 → 反向转换后返回 |
-| `CaptureAnthropic` | 接收 Anthropic Messages 请求 → 透明转发到 Anthropic 上游 |
-| `CaptureResponse` | 接收 OpenAI Responses 请求 → 透明转发到 OpenAI 上游 |
+Moon Bridge 支持 **4 种入站协议**，通过 URL 路径和请求体格式自动识别：
+
+| 入站协议 | 端点 | 客户端示例 |
+|---------|------|-----------|
+| **OpenAI Responses** | `POST /v1/responses` | `openai.responses.create()` |
+| **OpenAI Chat** | `POST /v1/chat/completions` | `openai.chat.completions.create()` |
+| **Anthropic Messages** | `POST /v1/messages` | `anthropic.messages.create()` |
+| **Google Gemini** | `POST /v1beta/models/{model}:generateContent`<br/>`POST /v1beta/models/{model}:streamGenerateContent` | `google.genai.models.generate_content()` |
+
+出站协议由 Provider 配置中的 `protocol` 字段决定（`anthropic`、`openai-response`、`openai-chat`、`google-genai`）。所有入站→出站组合均可工作，支持非流式、流式、工具调用、多轮工具调用。
 
 ## 配置说明
 
@@ -96,7 +101,7 @@ docker run -p 38440:38440 -v $(pwd)/config.yml:/config/config.yml moonbridge
 |------|--------|------|
 | `-config` | `$HOME/moonbridge/config.yml` | 配置文件路径 |
 | `-addr` | 来自配置文件 | 覆盖监听地址 |
-| `-mode` | 来自配置文件 | 覆盖运行模式（Transform/CaptureAnthropic/CaptureResponse） |
+| `-mode` | 来自配置文件 | 覆盖运行模式：`Transform`（默认，多协议入站 any2any）/ `CaptureAnthropic` / `CaptureResponse` |
 | `-print-addr` | — | 打印配置的监听地址后退出 |
 | `-print-mode` | — | 打印配置的运行模式后退出 |
 | `-print-default-model` | — | 打印默认模型别名后退出 |
@@ -106,14 +111,18 @@ docker run -p 38440:38440 -v $(pwd)/config.yml:/config/config.yml moonbridge
 
 ## HTTP API 端点
 
-| 端点 | 方法 | 说明 |
-|------|------|------|
-| `/v1/responses` | POST | OpenAI Responses API 主入口 |
-| `/responses` | POST | 同上（无 `/v1` 前缀） |
-| `/v1/models` | GET | 列出可用模型 |
-| `/models` | GET | 同上 |
-| `/console/` | GET | 嵌入式 Web Console |
-| `/api/v1/` | — | 管理 API（需启用持久化） |
+| 端点 | 方法 | 入站协议 | 说明 |
+|------|------|---------|------|
+| `/v1/responses` | POST | OpenAI Responses | `openai.responses.create()` |
+| `/responses` | POST | OpenAI Responses | 同上（无 `/v1` 前缀） |
+| `/v1/chat/completions` | POST | OpenAI Chat | `openai.chat.completions.create()` |
+| `/v1/messages` | POST | Anthropic Messages | `anthropic.messages.create()` |
+| `/v1beta/models/{model}:generateContent` | POST | Google Gemini | `google.genai.models.generate_content()` |
+| `/v1beta/models/{model}:streamGenerateContent` | POST | Google Gemini | 流式变体 |
+| `/v1/models` | GET | — | 列出可用模型 |
+| `/models` | GET | — | 同上 |
+| `/console/` | GET | — | 嵌入式 Web Console |
+| `/api/v1/` | — | — | 管理 API（需启用持久化） |
 
 详细 API 文档见 [API.md](docs/api.md)。
 

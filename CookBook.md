@@ -107,6 +107,19 @@ curl http://localhost:38440/v1/responses \
 
 **验证：** 返回 `"status": "completed"` 并包含回复内容。
 
+> 💡 **也可以换其他协议测试：**
+> ```bash
+> # OpenAI Chat 格式
+> curl http://localhost:38440/v1/chat/completions \
+>   -H "Content-Type: application/json" \
+>   -d '{"model": "moonbridge", "messages": [{"role": "user", "content": "你好"}], "max_tokens": 100}'
+>
+> # Anthropic Messages 格式
+> curl http://localhost:38440/v1/messages \
+>   -H "Content-Type: application/json" \
+>   -d '{"model": "moonbridge", "max_tokens": 100, "messages": [{"role": "user", "content": "你好"}]}'
+> ```
+
 **搞不定：**
 
 | 问题 | 原因 | 解决 |

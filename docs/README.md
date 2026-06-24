@@ -1,6 +1,6 @@
 # Moon Bridge 文档
 
-Moon Bridge 是一个将 OpenAI Responses API（Codex CLI 原生协议）转换为 Anthropic Messages API 请求的透明代理服务器。它使 Codex CLI 用户可以接入任何兼容 Anthropic API 的 LLM 提供商，同时保留完整的响应流式传输、缓存、工具调用和 Web Search 能力。
+Moon Bridge 是一个 any2any 协议转换与模型路由代理。支持 **4 种入站协议**（OpenAI Responses / OpenAI Chat / Anthropic Messages / Google Gemini）↔ **4 种出站协议** 的任意组合，客户端通过统一入口访问不同协议的上游 LLM Provider，由 Moon Bridge 在中间自动完成协议转换。
 
 ## 文档目录
 
