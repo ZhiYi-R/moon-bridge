@@ -7,6 +7,7 @@ import (
 
 	"moonbridge/internal/config"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/openai"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/runtime"
@@ -83,6 +84,69 @@ func TestCoreResponseToCoreStreamEmitsUsageOnCompleted(t *testing.T) {
 	}
 	if !sawToolArgsDone {
 		t.Fatal("missing tool args done event")
+	}
+}
+
+func TestResolvedWebSearchMaxUses_ChainsModelProviderGlobal(t *testing.T) {
+	rt := runtime.NewRuntime(config.Config{
+		WebSearchMaxUses: 8,
+		ProviderDefs: map[string]config.ProviderDef{
+			"main": {
+				WebSearchMaxUses: 12,
+				Models: map[string]config.ModelMeta{
+					"gpt-4o-mini": {
+						WebSearch: config.WebSearchConfig{
+							Support: config.WebSearchSupportInjected,
+							MaxUses: 20,
+						},
+					},
+				},
+			},
+			"other": {},
+		},
+		Routes: map[string]config.RouteEntry{
+			"assistant-mini": {Provider: "main", Model: "gpt-4o-mini"},
+		},
+	}, nil, nil)
+	srv := &Server{runtime: rt}
+
+	// Model-level override wins.
+	if n := srv.resolvedWebSearchMaxUses("main", "assistant-mini"); n != 20 {
+		t.Fatalf("model max_uses=%d, want 20", n)
+	}
+	// Provider-level fallback when model has no override.
+	if n := srv.resolvedWebSearchMaxUses("main", ""); n != 12 {
+		t.Fatalf("provider max_uses=%d, want 12", n)
+	}
+	// Global fallback when provider has none.
+	if n := srv.resolvedWebSearchMaxUses("other", ""); n != 8 {
+		t.Fatalf("global max_uses=%d, want 8", n)
+	}
+	// Default when no runtime config available.
+	srvNoRuntime := &Server{}
+	if n := srvNoRuntime.resolvedWebSearchMaxUses("main", "assistant-mini"); n != 8 {
+		t.Fatalf("default max_uses=%d, want 8", n)
+	}
+}
+
+func TestInjectAnthropicWebSearch_UsesProvidedMaxUses(t *testing.T) {
+	req := &anthropic.MessageRequest{}
+	injectAnthropicWebSearch(req, 15)
+	if len(req.Tools) != 1 {
+		t.Fatalf("tools=%d, want 1", len(req.Tools))
+	}
+	if req.Tools[0].Name != "web_search" || req.Tools[0].Type != "web_search_20250305" {
+		t.Fatalf("tool=%+v", req.Tools[0])
+	}
+	if req.Tools[0].MaxUses != 15 {
+		t.Fatalf("max_uses=%d, want 15", req.Tools[0].MaxUses)
+	}
+
+	// maxUses <= 0 falls back to the default of 8.
+	reqDefault := &anthropic.MessageRequest{}
+	injectAnthropicWebSearch(reqDefault, 0)
+	if reqDefault.Tools[0].MaxUses != 8 {
+		t.Fatalf("default max_uses=%d, want 8", reqDefault.Tools[0].MaxUses)
 	}
 }
 

@@ -259,8 +259,9 @@ func (s *Server) handleWithAdapters(
 		record.AnthropicRequest = upstreamReq
 
 		// Inject native web_search tool when the resolved candidate supports it.
+		wsMaxUses := s.resolvedWebSearchMaxUses(preferred.ProviderKey, model)
 		if wsMode == "enabled" {
-			injectAnthropicWebSearch(upstreamReq)
+			injectAnthropicWebSearch(upstreamReq, wsMaxUses)
 		}
 
 		// Prepend cached reasoning blocks for DeepSeek thinking chain replay.
@@ -274,7 +275,7 @@ func (s *Server) handleWithAdapters(
 				return nil, err
 			}
 			if wsMode == "enabled" {
-				injectAnthropicWebSearch(&msgReq)
+				injectAnthropicWebSearch(&msgReq, wsMaxUses)
 			}
 			if s.pluginRegistry != nil && sess != nil {
 				prependCachedThinking(&msgReq, sess)
@@ -1138,6 +1139,8 @@ func (s *Server) handleAdapterStream(
 		s.writeTrace(streamRecord)
 	}()
 
+	wsMaxUses := s.resolvedWebSearchMaxUses(candidate.ProviderKey, model)
+
 	if candidate.Protocol == config.ProtocolAnthropic && coreRequestHasImage(coreReq) && !wsInjected {
 		if providerAdapter := s.adapterRegistryProvider(config.ProtocolAnthropic); providerAdapter != nil {
 			finalizeAnthropicUpstream := func(_ context.Context, upstream any) (any, error) {
@@ -1146,7 +1149,7 @@ func (s *Server) handleAdapterStream(
 					return nil, err
 				}
 				if wsMode == "enabled" {
-					injectAnthropicWebSearch(&msgReq)
+					injectAnthropicWebSearch(&msgReq, wsMaxUses)
 				}
 				if s.pluginRegistry != nil && sess != nil {
 					prependCachedThinking(&msgReq, sess)
@@ -1232,7 +1235,7 @@ func (s *Server) handleAdapterStream(
 						return nil, err
 					}
 					if wsMode == "enabled" {
-						injectAnthropicWebSearch(&msgReq)
+						injectAnthropicWebSearch(&msgReq, wsMaxUses)
 					}
 					if s.pluginRegistry != nil && sess != nil {
 						prependCachedThinking(&msgReq, sess)
@@ -2978,9 +2981,31 @@ func (s *Server) resolvedSearchConfig(providerKey, modelAlias string) searchConf
 	return cfg
 }
 
+// resolvedWebSearchMaxUses resolves the native Anthropic web_search max_uses
+// value through the model → provider → global config chain, returning the
+// default (8) when no runtime config is available.
+func (s *Server) resolvedWebSearchMaxUses(providerKey, modelAlias string) int {
+	if s.runtime == nil {
+		return 8
+	}
+	fullCfg := s.runtime.Current().Config
+	if modelAlias != "" {
+		if n := fullCfg.WebSearchMaxUsesForModel(modelAlias); n > 0 {
+			return n
+		}
+	}
+	if providerKey != "" {
+		if n := fullCfg.WebSearchMaxUsesForProvider(providerKey); n > 0 {
+			return n
+		}
+	}
+	return 8
+}
+
 // injectAnthropicWebSearch adds the Anthropic web_search_20250305 server tool
-// to an anthropic.MessageRequest if not already present.
-func injectAnthropicWebSearch(req *anthropic.MessageRequest) {
+// to an anthropic.MessageRequest if not already present. maxUses bounds the
+// number of searches the model may run; values <= 0 fall back to the default.
+func injectAnthropicWebSearch(req *anthropic.MessageRequest, maxUses int) {
 	for i, t := range req.Tools {
 		if t.Name == "web_search" {
 			// Already present — ensure Type is set correctly for Anthropic API.
@@ -2990,7 +3015,9 @@ func injectAnthropicWebSearch(req *anthropic.MessageRequest) {
 			return
 		}
 	}
-	maxUses := 8
+	if maxUses <= 0 {
+		maxUses = 8
+	}
 	if req.Tools == nil {
 		req.Tools = make([]anthropic.Tool, 0, 1)
 	}
