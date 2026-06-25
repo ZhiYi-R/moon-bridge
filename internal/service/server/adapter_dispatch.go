@@ -708,41 +708,62 @@ func (s *Server) handleWithAdapters(
 			return
 		}
 
-		var responsesResp *openai.Response
-		responsesResp, err = responsesClient.CreateResponse(ctx, responsesReq)
-		if err != nil {
-			log.Error("adapter path: Responses API call failed", "error", err)
-			payload := openai.ErrorResponse{
-				Error: openai.ErrorObject{
-					Message: fmt.Sprintf("responses upstream error: %v", err),
-					Type:    "server_error",
-					Code:    "provider_error",
-				},
+		responsesCandidate := preferred
+		responsesCandidate.Client = &responsesProviderClient{c: responsesClient}
+		if visProv := s.wrapWithVisual(ctx, model, responsesCandidate, providerAdapter, nil); visProv != nil && !wsInjected {
+			coreResp, err = visProv.CreateCore(ctx, coreReq)
+			if err != nil {
+				log.Error("adapter path: Responses visual CreateCore failed", "error", err)
+				payload := openai.ErrorResponse{
+					Error: openai.ErrorObject{
+						Message: fmt.Sprintf("responses visual orchestration failed: %v", err),
+						Type:    "server_error",
+						Code:    "provider_error",
+					},
+				}
+				record.Error = traceError("responses_visual_core", err)
+				record.OpenAIResponse = payload
+				adapterHookErr = "responses_visual_core"
+				writeOpenAIError(w, http.StatusBadGateway, payload)
+				return
 			}
-			record.Error = traceError("responses_api", err)
-			record.OpenAIResponse = payload
-			adapterHookErr = "responses_api"
-			writeOpenAIError(w, http.StatusBadGateway, payload)
-			return
-		}
-		record.UpstreamRequest = responsesReq
-		record.UpstreamResponse = responsesResp
+		} else {
+			var responsesResp *openai.Response
+			responsesResp, err = responsesClient.CreateResponse(ctx, responsesReq)
+			if err != nil {
+				log.Error("adapter path: Responses API call failed", "error", err)
+				payload := openai.ErrorResponse{
+					Error: openai.ErrorObject{
+						Message: fmt.Sprintf("responses upstream error: %v", err),
+						Type:    "server_error",
+						Code:    "provider_error",
+					},
+				}
+				record.Error = traceError("responses_api", err)
+				record.OpenAIResponse = payload
+				adapterHookErr = "responses_api"
+				writeOpenAIError(w, http.StatusBadGateway, payload)
+				return
+			}
+			record.UpstreamRequest = responsesReq
+			record.UpstreamResponse = responsesResp
 
-		coreResp, err = providerToCoreResponse(ctx, providerAdapter, coreReq, responsesResp)
-		if err != nil {
-			log.Error("adapter path: Responses ToCoreResponse failed", "error", err)
-			payload := openai.ErrorResponse{
-				Error: openai.ErrorObject{
-					Message: fmt.Sprintf("responses response conversion failed: %v", err),
-					Type:    "server_error",
-					Code:    "conversion_error",
-				},
+			coreResp, err = providerToCoreResponse(ctx, providerAdapter, coreReq, responsesResp)
+			if err != nil {
+				log.Error("adapter path: Responses ToCoreResponse failed", "error", err)
+				payload := openai.ErrorResponse{
+					Error: openai.ErrorObject{
+						Message: fmt.Sprintf("responses response conversion failed: %v", err),
+						Type:    "server_error",
+						Code:    "conversion_error",
+					},
+				}
+				record.Error = traceError("to_core_response", err)
+				record.OpenAIResponse = payload
+				adapterHookErr = "to_core_response"
+				writeOpenAIError(w, http.StatusInternalServerError, payload)
+				return
 			}
-			record.Error = traceError("to_core_response", err)
-			record.OpenAIResponse = payload
-			adapterHookErr = "to_core_response"
-			writeOpenAIError(w, http.StatusInternalServerError, payload)
-			return
 		}
 
 	default:
@@ -1769,6 +1790,36 @@ func (s *Server) handleAdapterStream(
 			return
 		}
 
+		// Visual orchestrator for streaming path: non-streaming orchestration
+		// → synthetic stream events, matching the chat/anthropic streaming pattern.
+		if respAdapter, raOK := s.adapterRegistry.GetProvider(config.ProtocolOpenAIResponse); raOK && respAdapter != nil &&
+			s.pluginRegistry != nil && s.runtime != nil && model != "" && coreRequestHasImage(coreReq) && !wsInjected {
+			cfgV := s.runtime.Current().Config
+			if visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, model); visOk && visCfg.Provider != "" && visCfg.Model != "" {
+				visCandidate := candidate
+				visCandidate.Client = &responsesProviderClient{c: responsesClient}
+				if visProv := s.wrapWithVisual(ctx, model, visCandidate, respAdapter, nil); visProv != nil {
+					coreResp, visErr := visProv.CreateCore(ctx, coreReq)
+					if visErr != nil {
+						log.Error("adapter stream: responses visual CreateCore failed", "error", visErr)
+						payload := openai.ErrorResponse{
+							Error: openai.ErrorObject{
+								Message: fmt.Sprintf("responses visual orchestration failed: %v", visErr),
+								Type:    "server_error",
+								Code:    "provider_error",
+							},
+						}
+						streamRecord.Error = traceError("stream_responses_visual", visErr)
+						streamRecord.OpenAIResponse = payload
+						writeOpenAIError(w, http.StatusBadGateway, payload)
+						return
+					}
+					coreEvents = coreResponseToCoreStream(ctx, coreResp)
+					break
+				}
+			}
+		}
+
 		streamRecord.UpstreamRequest = responsesReq
 		responsesStream, sErr := responsesClient.StreamResponse(ctx, responsesReq)
 		if sErr != nil {
@@ -1820,7 +1871,6 @@ func (s *Server) handleAdapterStream(
 		if sr.StreamBuffer != nil {
 			providerBuf = sr.StreamBuffer
 		}
-
 
 	default:
 		log.Error("adapter stream: unsupported protocol", "protocol", candidate.Protocol)
@@ -2026,17 +2076,17 @@ func (s *Server) handleAdapterStream(
 		}
 	}
 
-		// Google post-stream content remembering.
-		if sess != nil {
-			if googleProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolGoogleGenAI); ok {
-				if _, ok := googleProvider.(*google.GeminiProviderAdapter); ok {
-					// Google GenerateContentResponse has no thinking/reasoning field today.
-					// This block is a placeholder for future use when/if Google adds
-					// reasoning support, maintaining symmetry with Anthropic/Chat blocks.
-					_ = providerBuf
-				}
+	// Google post-stream content remembering.
+	if sess != nil {
+		if googleProvider, ok := s.adapterRegistry.GetProvider(config.ProtocolGoogleGenAI); ok {
+			if _, ok := googleProvider.(*google.GeminiProviderAdapter); ok {
+				// Google GenerateContentResponse has no thinking/reasoning field today.
+				// This block is a placeholder for future use when/if Google adds
+				// reasoning support, maintaining symmetry with Anthropic/Chat blocks.
+				_ = providerBuf
 			}
 		}
+	}
 
 	// Capture stream events for trace.
 	if s.tracer != nil && s.tracer.Enabled() {
@@ -2699,6 +2749,14 @@ func (s *Server) wrapWithVisual(
 			visModel = visCfg.Model
 		}
 		visClient = &googleProviderClient{c: gc, model: visModel}
+	case config.ProtocolOpenAIResponse:
+		rcRaw := s.activeResponsesClient(visCfg.Provider)
+		rc, ok := rcRaw.(*openai.Client)
+		if rcRaw == nil || !ok || rc == nil {
+			slog.Default().Warn("visual: no responses client for visual provider", "visual_provider", visCfg.Provider, "model", modelAlias)
+			return nil
+		}
+		visClient = &responsesProviderClient{c: rc}
 	default:
 		c, err := pm.ClientForKey(visCfg.Provider)
 		if err != nil || c == nil {
@@ -2758,6 +2816,50 @@ func (p *chatProviderClient) StreamMessage(ctx context.Context, req any) (<-chan
 		return nil, fmt.Errorf("chatProviderClient: expected *chat.ChatRequest, got %T", req)
 	}
 	stream, err := p.c.StreamChat(ctx, chatReq)
+	if err != nil {
+		return nil, err
+	}
+	out := make(chan any)
+	go func() {
+		defer close(out)
+		for chunk := range stream {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			select {
+			case out <- chunk:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return out, nil
+}
+
+// responsesProviderClient adapts *openai.Client (the Responses API client) to
+// provider.ProviderClient so the adapter-based CoreProvider machinery can drive
+// an openai-response protocol upstream uniformly across protocols. Mirrors
+// chatProviderClient: openai-response providers keep their dedicated
+// *openai.Client in s.responsesClients / responsesCache rather than the
+// anthropic-shaped client pm.ClientForKey constructs.
+type responsesProviderClient struct{ c *openai.Client }
+
+func (p *responsesProviderClient) CreateMessage(ctx context.Context, req any) (any, error) {
+	rr, ok := req.(*openai.ResponsesRequest)
+	if !ok {
+		return nil, fmt.Errorf("responsesProviderClient: expected *openai.ResponsesRequest, got %T", req)
+	}
+	return p.c.CreateResponse(ctx, rr)
+}
+
+func (p *responsesProviderClient) StreamMessage(ctx context.Context, req any) (<-chan any, error) {
+	rr, ok := req.(*openai.ResponsesRequest)
+	if !ok {
+		return nil, fmt.Errorf("responsesProviderClient: expected *openai.ResponsesRequest, got %T", req)
+	}
+	stream, err := p.c.StreamResponse(ctx, rr)
 	if err != nil {
 		return nil, err
 	}
@@ -3241,7 +3343,6 @@ func anthropicContentSliceToFormat(blocks []anthropic.ContentBlock) []format.Cor
 	return result
 }
 
-
 // ============================================================================
 // Anthropic inbound — /v1/messages
 // ============================================================================
@@ -3320,7 +3421,6 @@ func writeAnthropicError(w http.ResponseWriter, status int, errType, message str
 		},
 	})
 }
-
 
 // ============================================================================
 // OpenAI Chat inbound — /v1/chat/completions
@@ -3419,7 +3519,6 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	s.handleWithAdapters(w, r, decodedReq, isStream, body, resolvedRoute, config.ProtocolOpenAIChat, model)
 }
-
 
 // ============================================================================
 // Google Gemini inbound — /v1beta/models/{model}:generateContent
@@ -3548,7 +3647,6 @@ func writeGeminiError(w http.ResponseWriter, status int, title, message, statusC
 		},
 	})
 }
-
 
 // formatContentSliceToAnthropic converts []format.CoreContentBlock to []anthropic.ContentBlock.
 func formatContentSliceToAnthropic(blocks []format.CoreContentBlock) []anthropic.ContentBlock {

@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
 	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/anthropic"
+	"moonbridge/internal/protocol/openai"
 	"moonbridge/internal/session"
 )
 
@@ -294,5 +297,42 @@ func TestAdapterCoreProviderPrependsDeepSeekThinkingBeforeAnthropicUpstream(t *t
 	}
 	if content[1].Type != "tool_use" || content[1].ID != "call_view_image" {
 		t.Fatalf("second assistant block = %+v, want original tool_use", content[1])
+	}
+}
+
+func TestResponsesProviderClientRejectsWrongRequestType(t *testing.T) {
+	p := &responsesProviderClient{c: openai.NewClient(openai.ClientConfig{BaseURL: "http://invalid.test"})}
+
+	if _, err := p.CreateMessage(context.Background(), &anthropic.MessageRequest{}); err == nil {
+		t.Fatal("CreateMessage with wrong type: expected error, got nil")
+	}
+	if _, err := p.StreamMessage(context.Background(), &anthropic.MessageRequest{}); err == nil {
+		t.Fatal("StreamMessage with wrong type: expected error, got nil")
+	}
+}
+
+func TestResponsesProviderClientDelegatesToCreateResponse(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/responses" {
+			t.Errorf("unexpected path %q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"resp_x","status":"completed"}`))
+	}))
+	defer srv.Close()
+
+	client := openai.NewClient(openai.ClientConfig{BaseURL: srv.URL, APIKey: "test", Client: srv.Client()})
+	p := &responsesProviderClient{c: client}
+
+	raw, err := p.CreateMessage(context.Background(), &openai.ResponsesRequest{Model: "gpt-test"})
+	if err != nil {
+		t.Fatalf("CreateMessage() error = %v", err)
+	}
+	resp, ok := raw.(*openai.Response)
+	if !ok {
+		t.Fatalf("CreateMessage returned %T, want *openai.Response", raw)
+	}
+	if resp.ID != "resp_x" {
+		t.Fatalf("response ID = %q, want resp_x", resp.ID)
 	}
 }
