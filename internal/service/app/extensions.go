@@ -13,6 +13,7 @@ import (
 	mbtrics "moonbridge/internal/extension/metrics"
 	"moonbridge/internal/extension/plugin"
 	"moonbridge/internal/extension/visual"
+	websearchinjected "moonbridge/internal/extension/websearchinjected"
 )
 
 // ExtensionOptions controls optional initialization of built-in plugins.
@@ -61,5 +62,26 @@ func (cat BuiltinExtensionCatalog) NewRegistry(logger *slog.Logger, cfg config.C
 
 	registry.Register(mbtrics.NewPlugin())
 	registry.Register(codextoolproxy.NewPlugin())
+	registry.Register(websearchinjected.NewPlugin(func(model string) bool {
+		if cfg.ExtensionEnabled(websearchinjected.PluginName, model) {
+			return true
+		}
+		// Also enable when web_search.support is "injected".
+		if model != "" {
+			if route, ok := cfg.Routes[model]; ok {
+				if def, ok := cfg.ProviderDefs[route.Provider]; ok {
+					if meta, ok := def.Models[route.Model]; ok {
+						if meta.WebSearch.Support == config.WebSearchSupportInjected {
+							return true
+						}
+					}
+					if def.WebSearchSupport == config.WebSearchSupportInjected {
+						return true
+					}
+				}
+			}
+		}
+		return cfg.WebSearchSupport == config.WebSearchSupportInjected
+	}))
 	return registry
 }
