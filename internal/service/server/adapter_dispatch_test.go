@@ -265,3 +265,66 @@ func TestInjectCoreWebSearchSkipsWhenCandidateHasNativeSearch(t *testing.T) {
 		t.Fatalf("len(coreReq.Tools) = %d, want 0", len(coreReq.Tools))
 	}
 }
+
+// TestInjectCoreWebSearchInjectedStripsClientWebSearchTools verifies that the
+// injected mode removes the Claude CLI's WebSearch/WebFetch tools (which the
+// client would otherwise execute itself, bypassing the server-side search loop)
+// and replaces the toolset with the injected tavily_search tool.
+func TestInjectCoreWebSearchInjectedStripsClientWebSearchTools(t *testing.T) {
+	pm, err := provider.NewProviderManager(
+		map[string]provider.ProviderConfig{
+			"opencode": {
+				BaseURL: "https://opencode.example.test",
+				APIKey:  "key-opencode",
+			},
+		},
+		map[string]provider.ModelRoute{
+			"deepseek-v4-pro": {Provider: "opencode", Name: "deepseek-v4-pro"},
+		},
+	)
+	if err != nil {
+		t.Fatalf("NewProviderManager() error = %v", err)
+	}
+	rt := runtime.NewRuntime(config.Config{
+		TavilyAPIKey: "tavily-key",
+		ProviderDefs: map[string]config.ProviderDef{
+			"opencode": {TavilyAPIKey: "tavily-key"},
+		},
+		Routes: map[string]config.RouteEntry{
+			"deepseek-v4-pro": {Provider: "opencode", Model: "deepseek-v4-pro"},
+		},
+	}, pm, nil)
+	srv := &Server{providerMgr: pm, runtime: rt}
+
+	coreReq := &format.CoreRequest{
+		Model: "deepseek-v4-pro",
+		Tools: []format.CoreTool{
+			{Name: "Read"},
+			{Name: "WebSearch"},
+			{Name: "WebFetch"},
+			{Name: "web_search"},
+		},
+	}
+	ok := srv.injectCoreWebSearch(context.Background(), coreReq, provider.ProviderCandidate{
+		ProviderKey:   "opencode",
+		UpstreamModel: "deepseek-v4-pro",
+	}, "deepseek-v4-pro", "injected")
+	if !ok {
+		t.Fatal("injectCoreWebSearch() = false, want true")
+	}
+	names := make(map[string]bool)
+	for _, tool := range coreReq.Tools {
+		names[tool.Name] = true
+	}
+	for _, stripped := range []string{"WebSearch", "WebFetch", "web_search"} {
+		if names[stripped] {
+			t.Fatalf("tool %q should have been stripped in injected mode, got tools %v", stripped, names)
+		}
+	}
+	if !names["Read"] {
+		t.Fatalf("non-search tool Read should be preserved, got tools %v", names)
+	}
+	if !names["tavily_search"] {
+		t.Fatalf("tavily_search should be injected, got tools %v", names)
+	}
+}

@@ -183,7 +183,20 @@ func (s *Server) executeChatSearchLoop(
 
 		log.Debug("Chat 搜索循环轮次", "round", round+1, "tools_executed", len(searchCalls))
 	}
-	return nil, fmt.Errorf("chat search loop exceeded max rounds (%d)", maxRounds)
+	// Round limit reached while the model was still issuing search calls. Rather
+	// than failing the whole request (which surfaces to the client as an API
+	// error and discards every result gathered so far), force one final turn
+	// with tool calls disabled so the model synthesizes an answer from what it
+	// already has.
+	return forceChatSynthesis(ctx, client, req)
+}
+
+// forceChatSynthesis makes a final Chat call with tool calls disabled so the
+// model produces a text answer instead of more tool calls. Used as the
+// terminal step of the search loop when the round limit is reached.
+func forceChatSynthesis(ctx context.Context, client *chat.Client, req *chat.ChatRequest) (*chat.ChatResponse, error) {
+	req.ToolChoice = json.RawMessage(`"none"`)
+	return client.CreateChat(ctx, req)
 }
 
 func executeChatSearchCall(
@@ -406,7 +419,11 @@ func (s *Server) executeGoogleSearchLoop(
 
 		log.Debug("Google 搜索循环轮次", "round", round+1, "tools_executed", len(searchCalls))
 	}
-	return nil, fmt.Errorf("google search loop exceeded max rounds (%d)", maxRounds)
+	// Round limit reached while the model was still issuing search calls. Force a
+	// final turn with function calling disabled so the model synthesizes an
+	// answer from the gathered results instead of failing the request.
+	req.ToolConfig = json.RawMessage(`{"functionCallingConfig":{"mode":"NONE"}}`)
+	return client.GenerateContent(ctx, model, req)
 }
 
 func googleFuncCalls(parts []google.Part) []google.FunctionCall {
@@ -616,7 +633,19 @@ func (s *Server) chatSearchBufferedStream(
 		log.Debug("Chat 流式搜索轮次", "round", round+1, "tools_executed", len(searchCalls))
 	}
 	if exhausted && maxRounds > 0 {
-		return nil, fmt.Errorf("chat streaming search loop exceeded max rounds (%d)", maxRounds)
+		// Round limit reached while still issuing search calls. Force a final
+		// turn with tool calls disabled so the model synthesizes an answer from
+		// the results gathered so far, instead of failing the request.
+		req.ToolChoice = json.RawMessage(`"none"`)
+		stream, err := client.StreamChat(ctx, req)
+		if err != nil {
+			return nil, err
+		}
+		events, err := collectChatStream(ctx, stream)
+		if err != nil {
+			return nil, err
+		}
+		allEvents = append(allEvents, events...)
 	}
 
 	// Return all events as a single channel.

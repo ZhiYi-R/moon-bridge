@@ -321,7 +321,11 @@ func (s *Server) handleWithAdapters(
 
 		// Wrap with visual orchestrator at Core level if enabled for this model.
 		// This uses CoreProvider, which is protocol-agnostic.
-		if visProv := s.wrapWithVisual(ctx, model, preferred, providerAdapter, finalizeAnthropicUpstream); visProv != nil {
+		// Skip when injected web search is active: the visual orchestrator only
+		// intercepts visual tools and would return injected tavily_search/
+		// firecrawl_fetch tool calls to the client unexecuted (the client rejects
+		// them as "No such tool available"). Injected search must run its own loop.
+		if visProv := s.wrapWithVisual(ctx, model, preferred, providerAdapter, finalizeAnthropicUpstream); visProv != nil && !wsInjected {
 			var coreRespApi *format.CoreResponse
 			coreRespApi, err = visProv.CreateCore(ctx, coreReq)
 			if err == nil {
@@ -446,7 +450,8 @@ func (s *Server) handleWithAdapters(
 		// the chat-protocol endpoint instead.
 		visualCandidate := preferred
 		visualCandidate.Client = &chatProviderClient{c: chatClient}
-		if visProv := s.wrapWithVisual(ctx, model, visualCandidate, providerAdapter, finalizeChatUpstream); visProv != nil {
+		// Skip visual when injected web search is active (see anthropic branch).
+		if visProv := s.wrapWithVisual(ctx, model, visualCandidate, providerAdapter, finalizeChatUpstream); visProv != nil && !wsInjected {
 			coreResp, err = visProv.CreateCore(ctx, coreReq)
 			if err != nil {
 				log.Error("adapter path: chat visual CreateCore failed", "error", err)
@@ -582,7 +587,8 @@ func (s *Server) handleWithAdapters(
 		// Wrap with visual orchestrator if enabled for this model.
 		googlePreferred := preferred
 		googlePreferred.Client = &googleProviderClient{c: googleClient, model: googlePreferred.UpstreamModel}
-		if visProv := s.wrapWithVisual(ctx, model, googlePreferred, providerAdapter, nil); visProv != nil {
+		// Skip visual when injected web search is active (see anthropic branch).
+		if visProv := s.wrapWithVisual(ctx, model, googlePreferred, providerAdapter, nil); visProv != nil && !wsInjected {
 			var visErr error
 			coreResp, visErr = visProv.CreateCore(ctx, coreReq)
 			if visErr != nil {
@@ -1132,7 +1138,7 @@ func (s *Server) handleAdapterStream(
 		s.writeTrace(streamRecord)
 	}()
 
-	if candidate.Protocol == config.ProtocolAnthropic && coreRequestHasImage(coreReq) {
+	if candidate.Protocol == config.ProtocolAnthropic && coreRequestHasImage(coreReq) && !wsInjected {
 		if providerAdapter := s.adapterRegistryProvider(config.ProtocolAnthropic); providerAdapter != nil {
 			finalizeAnthropicUpstream := func(_ context.Context, upstream any) (any, error) {
 				msgReq, err := normalizeAnthropicRequest(upstream)
@@ -1217,7 +1223,8 @@ func (s *Server) handleAdapterStream(
 
 		var visCoreProvider visualpkg.CoreProvider
 		hasImage := coreRequestHasImage(coreReq)
-		if hasImage {
+		// Skip visual when injected web search is active (see non-streaming branch).
+		if hasImage && !wsInjected {
 			if provAdapter, ok := s.adapterRegistry.GetProvider(candidate.Protocol); ok {
 				finalizeAnthropicUpstream := func(_ context.Context, upstream any) (any, error) {
 					msgReq, err := normalizeAnthropicRequest(upstream)
@@ -1562,8 +1569,9 @@ func (s *Server) handleAdapterStream(
 
 		// Visual orchestrator for streaming path: non-streaming orchestration
 		// → synthetic stream events, matching the anthropic/chat streaming pattern.
+		// Skip when injected web search is active (see chat streaming branch).
 		providerAdapter, ok := s.adapterRegistry.GetProvider(config.ProtocolGoogleGenAI)
-		if ok && providerAdapter != nil && s.runtime != nil && model != "" {
+		if ok && providerAdapter != nil && s.runtime != nil && model != "" && !wsInjected {
 			cfgV := s.runtime.Current().Config
 			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, model)
 			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
@@ -2820,11 +2828,17 @@ func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRe
 	}
 
 	// Replace coreReq.Tools: keep non-web_search tools, add injected search tools.
+	// Strip both the server-side web_search/web_search_preview tools and the
+	// Claude CLI's WebSearch/WebFetch tools. In injected mode moonbridge owns web
+	// search via tavily_search/firecrawl_fetch and executes it server-side; leaving
+	// the client's WebSearch/WebFetch in place lets the model bypass the injected
+	// loop (calls leak back to the client) and mix tool families in one turn.
 	filtered := make([]format.CoreTool, 0, len(coreReq.Tools)+2)
 	for _, t := range coreReq.Tools {
-		if t.Name != "web_search" && t.Name != "web_search_preview" {
-			filtered = append(filtered, t)
+		if t.Name == "web_search" || t.Name == "web_search_preview" || t.Name == "WebSearch" || t.Name == "WebFetch" {
+			continue
 		}
+		filtered = append(filtered, t)
 	}
 	injected := websearchinjected.CoreTools(searchCfg.firecrawlKey)
 	filtered = append(filtered, injected...)

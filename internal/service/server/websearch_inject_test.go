@@ -138,10 +138,27 @@ func TestChatSearchBufferedStream_NoToolCallPassThrough(t *testing.T) {
 	}
 }
 
-func TestChatSearchBufferedStream_ExceedsMaxRounds(t *testing.T) {
+func TestChatSearchBufferedStream_ForcesSynthesisOnMaxRounds(t *testing.T) {
 	attempt := 0
+	sawToolChoiceNone := false
 	client := newTestChatClient(t, wsInjectRTFunc(func(r *http.Request) (*http.Response, error) {
 		attempt++
+		bodyBytes, _ := io.ReadAll(r.Body)
+		if strings.Contains(string(bodyBytes), `"tool_choice":"none"`) {
+			// Final synthesis turn: tool calls are disabled, so answer with text.
+			sawToolChoiceNone = true
+			sse := sseBody(
+				`data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":"final answer"}}]}`,
+				`data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+				`data: [DONE]`,
+			)
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Body:       io.NopCloser(strings.NewReader(sse)),
+				Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			}, nil
+		}
+		// Search rounds: the model keeps asking for another search.
 		sse := sseBody(
 			`data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"tavily_search","arguments":""}}]}}]}`,
 			`data: {"id":"x","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"query\":\"\"}"}}]}}]}`,
@@ -160,14 +177,24 @@ func TestChatSearchBufferedStream_ExceedsMaxRounds(t *testing.T) {
 		Model:    "gpt-test",
 		Messages: []chat.ChatMessage{{Role: "user", Content: "search hi"}},
 	}
-	_, err := srv.chatSearchBufferedStream(context.Background(), client, req, "", "", 1)
-	if err == nil {
-		t.Fatal("expected max-rounds error, got nil")
+	ch, err := srv.chatSearchBufferedStream(context.Background(), client, req, "", "", 1)
+	if err != nil {
+		t.Fatalf("expected graceful synthesis, got error: %v", err)
 	}
-	if !strings.Contains(err.Error(), "exceeded max rounds") {
-		t.Fatalf("unexpected err: %v", err)
+	var content strings.Builder
+	for c := range ch {
+		for _, choice := range c.Choices {
+			content.WriteString(choice.Delta.Content)
+		}
 	}
-	if attempt != 1 {
-		t.Fatalf("attempts=%d, want 1", attempt)
+	if !sawToolChoiceNone {
+		t.Fatal("expected a final synthesis call with tool_choice=none")
+	}
+	if got := content.String(); got != "final answer" {
+		t.Fatalf("synthesized content = %q, want %q", got, "final answer")
+	}
+	// One search round (maxRounds=1) plus the forced synthesis turn.
+	if attempt != 2 {
+		t.Fatalf("attempts=%d, want 2", attempt)
 	}
 }
