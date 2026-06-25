@@ -78,3 +78,4 @@ logs/
 *.log
 .omx/
 omx_wiki/
+*.exe~
