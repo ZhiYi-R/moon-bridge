@@ -1416,7 +1416,7 @@ func (s *Server) handleAdapterStream(
 
 		// Visual orchestrator for streaming path: non-streaming orchestration
 		// → synthetic stream events, matching the anthropic streaming pattern.
-		if s.pluginRegistry != nil && s.runtime != nil && model != "" && ok && providerAdapter != nil && coreRequestHasImage(coreReq) {
+		if s.pluginRegistry != nil && s.runtime != nil && model != "" && ok && providerAdapter != nil && coreRequestHasImage(coreReq) && !wsInjected {
 			cfgV := s.runtime.Current().Config
 			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, model)
 			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
