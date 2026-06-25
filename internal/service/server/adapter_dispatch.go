@@ -191,6 +191,12 @@ func (s *Server) handleWithAdapters(
 	// the upstream provider receives the correct model identifier.
 	coreReq.Model = preferred.UpstreamModel
 
+	if maxOut := s.routeMaxOutputTokens(openAIReq.Model, preferred); maxOut > 0 {
+		if coreReq.MaxTokens <= 0 || coreReq.MaxTokens > maxOut {
+			coreReq.MaxTokens = maxOut
+		}
+	}
+
 	wsMode := resolvedWebSearchMode(pm, openAIReq.Model, preferred)
 
 	// Inject web search tools at Core level if mode is "injected".
