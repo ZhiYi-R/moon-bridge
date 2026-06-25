@@ -2788,9 +2788,12 @@ func normalizeAnthropicRequest(upstream any) (anthropic.MessageRequest, error) {
 // Returns true if injection was applied.
 func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRequest, preferred provider.ProviderCandidate, model string, wsMode string) bool {
 	_ = ctx
-	if wsMode == "disabled" || wsMode == "" {
-		// Strip Anthropic server-side web_search tools when the upstream doesn't support them.
-		// Claude CLI sends WebSearch/WebFetch tool definitions that must be removed.
+	// Strip Anthropic server-side web_search tools whenever the upstream
+	// doesn't support them natively (disabled mode) or when using injected
+	// search (injected mode without API keys configured).
+	// Claude CLI sends WebSearch/WebFetch tool definitions that must be
+	// removed to prevent the model from generating unsupported tool calls.
+	stripWebSearchTools := func() {
 		filtered := make([]format.CoreTool, 0, len(coreReq.Tools))
 		for _, t := range coreReq.Tools {
 			if t.Name == "web_search" || t.Name == "web_search_preview" || t.Name == "WebSearch" || t.Name == "WebFetch" {
@@ -2801,6 +2804,10 @@ func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRe
 		if len(filtered) < len(coreReq.Tools) {
 			coreReq.Tools = filtered
 		}
+	}
+
+	if wsMode == "disabled" || wsMode == "" {
+		stripWebSearchTools()
 		return false
 	}
 	if s.runtime == nil {
@@ -2808,6 +2815,7 @@ func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRe
 	}
 	searchCfg := s.resolvedSearchConfig(preferred.ProviderKey, model)
 	if searchCfg.tavilyKey == "" && searchCfg.firecrawlKey == "" {
+		stripWebSearchTools()
 		return false
 	}
 
