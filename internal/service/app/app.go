@@ -495,6 +495,7 @@ func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamMode
 		return
 	default:
 		// openai-chat / google-genai: honor model-level config, don't force disabled.
+		// "auto" means leave provider-level resolution in place (no override).
 		switch modelWS {
 		case config.WebSearchSupportInjected:
 			pm.SetResolvedWebSearch(modelKey, "injected")
@@ -504,10 +505,13 @@ func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamMode
 			pm.SetResolvedWebSearch(modelKey, "enabled")
 			pm.SetResolvedWebSearch(candidateKey, "enabled")
 			slog.Info("模型启用网页搜索", "model", alias, "protocol", protocol)
-		default:
+		case config.WebSearchSupportDisabled:
 			pm.SetResolvedWebSearch(modelKey, "disabled")
 			pm.SetResolvedWebSearch(candidateKey, "disabled")
 			slog.Info("模型禁用网页搜索", "model", alias, "protocol", protocol)
+		default:
+			// "auto" — don't override provider-level resolution
+			return
 		}
 		return
 	}

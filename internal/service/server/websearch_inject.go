@@ -693,8 +693,21 @@ func collectStreamToolCalls(events []chat.ChatStreamChunk) []chat.ToolCall {
 		}
 	}
 
+	// Re-encode all tool call arguments as JSON strings for Chat API compliance.
+	// appendToolCallArgs produces unquoted JSON objects like {"key":"val"},
+	// but the Chat API requires function.arguments to be JSON strings.
 	for _, ci := range choiceOrder {
 		merged := choiceCalls[ci]
+		for i := range merged {
+			if len(merged[i].Function.Arguments) > 0 {
+				// appendToolCallArgs produces unquoted JSON objects like {"key":1},
+				// but Chat API requires function.arguments to be a JSON string.
+				if merged[i].Function.Arguments[0] == '{' {
+					argsBytes, _ := json.Marshal(string(merged[i].Function.Arguments))
+					merged[i].Function.Arguments = json.RawMessage(argsBytes)
+				}
+			}
+		}
 		if len(merged) == 0 {
 			continue
 		}
