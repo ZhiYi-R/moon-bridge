@@ -91,9 +91,10 @@ func (s *Server) handleWithAdapters(
 
 	// Initialize trace record — use raw body bytes instead of re-marshalling.
 	record := mbtrace.Record{
-		HTTPRequest:   mbtrace.NewHTTPRequest(r),
-		OpenAIRequest: mbtrace.RawJSONOrString(rawBody),
-		Model:         model,
+		HTTPRequest:    mbtrace.NewHTTPRequest(r),
+		OpenAIRequest:  mbtrace.RawJSONOrString(rawBody),
+		Model:          model,
+		ClientProtocol: clientProtocol,
 	}
 	defer func() {
 		s.writeTrace(record)
@@ -139,6 +140,19 @@ func (s *Server) handleWithAdapters(
 		return
 	}
 
+	// Capture inbound request in protocol-specific trace field so that
+	// the corresponding trace category (e.g. "Anthropic") is written even
+	// when the outbound protocol differs from the inbound protocol.
+	// When outbound uses the same protocol, the upstream assignment in
+	// the switch block below overwrites this value — that is intentional
+	// (the upstream request carries the resolved model name).
+	switch clientProtocol {
+	case config.ProtocolAnthropic:
+		if anthReq, ok := decodedReq.(*anthropic.MessageRequest); ok {
+			record.AnthropicRequest = anthReq
+		}
+	}
+
 	// ------------------------------------------------------------------
 	// 3. Pick upstream provider candidate, resolve ProviderAdapter.
 	// ------------------------------------------------------------------
@@ -158,6 +172,7 @@ func (s *Server) handleWithAdapters(
 		s.onRequestCompleted(model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "no_provider_candidate")
 		return
 	}
+	record.ProviderProtocol = preferred.Protocol
 
 	defer func() {
 		if !adapterCompleted {
@@ -241,6 +256,7 @@ func (s *Server) handleWithAdapters(
 			writeOpenAIError(w, http.StatusInternalServerError, payload)
 			return
 		}
+		record.AnthropicRequest = upstreamReq
 
 		// Inject native web_search tool when the resolved candidate supports it.
 		if wsMode == "enabled" {
@@ -323,6 +339,7 @@ func (s *Server) handleWithAdapters(
 				} else {
 					// Normal path: convert back to CoreResponse.
 					msgResp := upstreamRespMsg
+					record.AnthropicResponse = &msgResp
 					coreResp, err = providerToCoreResponse(ctx, providerAdapter, coreReq, &msgResp)
 				}
 			}
@@ -701,6 +718,7 @@ func (s *Server) handleWithAdapters(
 			writeOpenAIError(w, http.StatusBadGateway, payload)
 			return
 		}
+		record.UpstreamRequest = responsesReq
 		record.UpstreamResponse = responsesResp
 
 		coreResp, err = providerToCoreResponse(ctx, providerAdapter, coreReq, responsesResp)
@@ -754,12 +772,14 @@ func (s *Server) handleWithAdapters(
 	// ------------------------------------------------------------------
 
 	// Propagate codex_tool_map from CoreRequest to CoreResponse.
-	if coreReq != nil && coreResp != nil && coreReq.Extensions != nil {
-		if tm, ok := coreReq.Extensions["codex_tool_map"]; ok {
-			if coreResp.Extensions == nil {
-				coreResp.Extensions = make(map[string]any)
+	if coreReq != nil && coreReq.Extensions != nil && coreResp != nil {
+		for _, key := range []string{"codex_tool_map"} {
+			if val, ok := coreReq.Extensions[key]; ok {
+				if coreResp.Extensions == nil {
+					coreResp.Extensions = make(map[string]any)
+				}
+				coreResp.Extensions[key] = val
 			}
-			coreResp.Extensions["codex_tool_map"] = tm
 		}
 	}
 	// 7. Convert CoreResponse → outbound OpenAI Response.
@@ -1057,6 +1077,27 @@ func firstNonEmptyString(vals ...string) string {
 }
 
 // handleAdapterStream handles the streaming path through adapter dispatch.
+// interceptCoreUsage wraps a CoreStreamEvent channel to capture usage from
+// CoreEventCompleted at the CoreIR layer, before protocol-specific conversion.
+func interceptCoreUsage(events <-chan format.CoreStreamEvent, usage *format.CoreUsage) <-chan format.CoreStreamEvent {
+	out := make(chan format.CoreStreamEvent, 64)
+	go func() {
+		defer close(out)
+		for ev := range events {
+			if ev.Type == format.CoreEventCompleted && ev.Usage != nil {
+				usage.InputTokens = ev.Usage.InputTokens
+				usage.OutputTokens = ev.Usage.OutputTokens
+				usage.CachedInputTokens = ev.Usage.CachedInputTokens
+				usage.CacheCreationInputTokens = ev.Usage.CacheCreationInputTokens
+				usage.CacheReadInputTokens = ev.Usage.CacheReadInputTokens
+				usage.ReasoningTokens = ev.Usage.ReasoningTokens
+			}
+			out <- ev
+		}
+	}()
+	return out
+}
+
 func (s *Server) handleAdapterStream(
 	w http.ResponseWriter,
 	r *http.Request,
@@ -1082,9 +1123,10 @@ func (s *Server) handleAdapterStream(
 
 	// Initialize trace record.
 	streamRecord := mbtrace.Record{
-		HTTPRequest:   mbtrace.NewHTTPRequest(r),
-		OpenAIRequest: mbtrace.RawJSONOrString(rawBody),
-		Model:         model,
+		HTTPRequest:    mbtrace.NewHTTPRequest(r),
+		OpenAIRequest:  mbtrace.RawJSONOrString(rawBody),
+		Model:          model,
+		ClientProtocol: clientProtocol,
 	}
 	defer func() {
 		s.writeTrace(streamRecord)
@@ -1129,10 +1171,13 @@ func (s *Server) handleAdapterStream(
 
 	// Protocol-specific upstream streaming: get stream + convert to CoreStreamEvent.
 	var coreEvents <-chan format.CoreStreamEvent
+	var streamUsage format.CoreUsage
 	var providerStream format.ProviderStreamAdapter
 	var sr *format.StreamResult  // result from ToCoreStream, captures events + buffer
 	var providerBuf func() []any // per-request provider stream buffer (from ToCoreStream StreamResult)
 	var clientBuf func() []any   // per-request client stream buffer (from OpenAI FromCoreStream)
+
+	streamRecord.ProviderProtocol = candidate.Protocol
 
 	switch candidate.Protocol {
 	case config.ProtocolAnthropic:
@@ -1360,6 +1405,7 @@ func (s *Server) handleAdapterStream(
 		}
 
 		streamRecord.ChatRequest = chatReq
+		streamRecord.UpstreamRequest = chatReq
 		var chatStream <-chan chat.ChatStreamChunk
 		var err error
 
@@ -1370,7 +1416,7 @@ func (s *Server) handleAdapterStream(
 
 		// Visual orchestrator for streaming path: non-streaming orchestration
 		// → synthetic stream events, matching the anthropic streaming pattern.
-		if s.pluginRegistry != nil && s.runtime != nil && model != "" && ok && providerAdapter != nil {
+		if s.pluginRegistry != nil && s.runtime != nil && model != "" && ok && providerAdapter != nil && coreRequestHasImage(coreReq) {
 			cfgV := s.runtime.Current().Config
 			visCfg, visOk := visualpkg.ConfigForModelFromResolvedConfig(cfgV, model)
 			if visOk && visCfg.Provider != "" && visCfg.Model != "" {
@@ -1712,6 +1758,7 @@ func (s *Server) handleAdapterStream(
 			return
 		}
 
+		streamRecord.UpstreamRequest = responsesReq
 		responsesStream, sErr := responsesClient.StreamResponse(ctx, responsesReq)
 		if sErr != nil {
 			log.Error("adapter stream: StreamResponse failed", "error", sErr)
@@ -1855,10 +1902,22 @@ func (s *Server) handleAdapterStream(
 				finalResp = &lfResp
 			}
 		}
+		if frame.Event == "message_delta" {
+			if ev, ok := frame.Data.(anthropic.StreamEvent); ok && ev.Usage != nil {
+				finalUsage.InputTokens = ev.Usage.InputTokens
+				finalUsage.OutputTokens = ev.Usage.OutputTokens
+			}
+		}
 		if err := writeSSEFrame(w, frame); err != nil {
 			log.Warn("adapter stream: SSE write failed, aborting stream", "error", err)
 			break
 		}
+	}
+
+	// Use CoreIR-level usage as fallback when protocol-specific frames didn't carry usage.
+	if streamUsage.InputTokens > 0 || streamUsage.OutputTokens > 0 {
+		finalUsage.InputTokens = streamUsage.InputTokens
+		finalUsage.OutputTokens = streamUsage.OutputTokens
 	}
 
 	// Record usage statistics after stream completes.
@@ -1991,6 +2050,15 @@ func (s *Server) handleAdapterStream(
 			if len(chatBuf) > 0 {
 				streamRecord.ChatStreamEvents = chatBuf
 			}
+			var googleBuf []google.GenerateContentResponse
+			for _, r := range raw {
+				if ev, ok := r.(google.GenerateContentResponse); ok {
+					googleBuf = append(googleBuf, ev)
+				}
+			}
+			if len(googleBuf) > 0 {
+				streamRecord.UpstreamStreamEvents = googleBuf
+			}
 		}
 		// Client stream buffer (OpenAI stream events)
 		if clientBuf != nil {
@@ -2052,7 +2120,11 @@ func (s *Server) handleAdapterStream(
 	if finalResp != nil {
 		streamRecord.OpenAIResponse = finalResp
 	} else {
-		streamRecord.OpenAIResponse = &openai.Response{Model: model, Status: "completed"}
+		streamRecord.OpenAIResponse = &openai.Response{
+			Model:  model,
+			Status: "completed",
+			Usage:  finalUsage,
+		}
 	}
 
 	// Notify plugin hooks for metrics tracking.

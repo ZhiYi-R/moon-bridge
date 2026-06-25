@@ -27,7 +27,6 @@ import (
 	"moonbridge/internal/service/runtime"
 	"moonbridge/internal/service/server"
 	"moonbridge/internal/service/server/session"
-	"moonbridge/internal/service/server/trace"
 	"moonbridge/internal/service/server/usage"
 	"moonbridge/internal/service/stats"
 	"moonbridge/internal/service/store"
@@ -338,7 +337,6 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	// Create sub-package managers for session, usage, and trace.
 	sessMgr := session.NewInMemoryManager(server.NewSessionConfigAdapterFromRuntime(rt, serverCfg), plugins)
 	usageTrk := usage.NewStatsTracker(sessionStats)
-	traceWtr := trace.NewFileWriter(tracer, errors)
 
 	handler := server.New(server.Config{
 		ServerCfg:        serverCfg,
@@ -359,7 +357,6 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		AdapterRegistry:  adapterReg,
 		SessionManager:   sessMgr,
 		UsageTracker:     usageTrk,
-		TraceWriter:      traceWtr,
 	})
 
 	wrapped := handler

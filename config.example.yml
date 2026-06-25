@@ -11,6 +11,12 @@ mode: "Transform"   # Transform | CaptureAnthropic | CaptureResponse
 # --- Tracing -----------------------------------------------------------------
 trace:
   enabled: false    # Dump full request/response traces to data/trace/
+  # Trace files are organized under data/trace/Transform/<session>/<model>/:
+  #   Anthropic/  — anthropic protocol request/response/stream events
+  #   Chat/       — openai-chat protocol request/response/stream events
+  #   Response/   — openai-response & google-genai protocol data
+  # Each trace record includes client_protocol and provider_protocol metadata
+  # identifying the (inbound → outbound) translation path.
 
 # --- Logging -----------------------------------------------------------------
 log:

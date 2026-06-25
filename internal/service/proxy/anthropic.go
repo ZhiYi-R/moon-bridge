@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"moonbridge/internal/config"
 	mbtrace "moonbridge/internal/service/trace"
 )
 
@@ -68,7 +69,9 @@ func (server *AnthropicServer) serveProxy(writer http.ResponseWriter, request *h
 	}
 
 	record := mbtrace.Record{
-		HTTPRequest: mbtrace.NewHTTPRequest(request),
+		HTTPRequest:      mbtrace.NewHTTPRequest(request),
+		ClientProtocol:   config.ProtocolAnthropic,
+		ProviderProtocol: config.ProtocolAnthropic,
 		ProxyRequest: ProxyRequest{
 			Method:  request.Method,
 			URL:     request.URL.RequestURI(),

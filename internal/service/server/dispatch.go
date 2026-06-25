@@ -64,7 +64,11 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	server.sessionForRequest(request)
 
 	body, err := io.ReadAll(request.Body)
-	record := mbtrace.Record{HTTPRequest: mbtrace.NewHTTPRequest(request), OpenAIRequest: mbtrace.RawJSONOrString(body)}
+	record := mbtrace.Record{
+		HTTPRequest:    mbtrace.NewHTTPRequest(request),
+		OpenAIRequest:  mbtrace.RawJSONOrString(body),
+		ClientProtocol: config.ProtocolOpenAIResponse,
+	}
 	if err != nil {
 		log.Error("读取请求体失败", "error", err)
 		payload := openai.ErrorResponse{Error: openai.ErrorObject{
@@ -146,6 +150,8 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 		writeOpenAIError(writer, http.StatusBadGateway, payload)
 		return
 	}
+
+	record.ProviderProtocol = preferred.Protocol
 
 	if preferred.Protocol == config.ProtocolOpenAIResponse {
 		// Direct OpenAI Response proxy path — full decode.
@@ -282,7 +288,7 @@ func (server *Server) writeTraceCategory(category string, requestNumber uint64, 
 	}
 }
 func shouldWriteResponseTrace(record mbtrace.Record) bool {
-	return record.OpenAIRequest != nil || record.OpenAIResponse != nil || record.OpenAIStreamEvents != nil || record.UpstreamRequest != nil
+	return record.OpenAIRequest != nil || record.OpenAIResponse != nil || record.OpenAIStreamEvents != nil || record.UpstreamRequest != nil || record.UpstreamStreamEvents != nil
 }
 func shouldWriteAnthropicTrace(record mbtrace.Record) bool {
 	return record.AnthropicRequest != nil || record.AnthropicResponse != nil || record.AnthropicStreamEvents != nil

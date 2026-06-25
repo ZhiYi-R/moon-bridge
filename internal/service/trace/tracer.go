@@ -37,10 +37,13 @@ type Record struct {
 	RequestNumber         uint64      `json:"request_number"`
 	CapturedAt            string      `json:"captured_at"`
 	Model                 string      `json:"model,omitempty"`
+	ClientProtocol        string      `json:"client_protocol,omitempty"`
+	ProviderProtocol      string      `json:"provider_protocol,omitempty"`
 	HTTPRequest           HTTPRequest `json:"http_request"`
 	ProxyRequest          any         `json:"proxy_request,omitempty"`
 	UpstreamRequest       any         `json:"upstream_request,omitempty"`
 	UpstreamResponse      any         `json:"upstream_response,omitempty"`
+	UpstreamStreamEvents  any         `json:"upstream_stream_events,omitempty"`
 	ChatRequest           any         `json:"chat_request,omitempty"`
 	ChatResponse          any         `json:"chat_response,omitempty"`
 	ChatStreamEvents      any         `json:"chat_stream_events,omitempty"`

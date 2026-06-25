@@ -92,13 +92,48 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 
 	// Messages.
 	for _, msg := range req.Messages {
-		chatMsg := a.toChatMessage(msg)
-		// Skip messages with neither text content nor tool calls — empty messages
-		// contribute no semantic value and may be rejected by some upstreams.
-		if chatMsg.Content == nil && len(chatMsg.ToolCalls) == 0 {
-			continue
+		chatMsgs := a.toChatMessages(msg)
+		for _, chatMsg := range chatMsgs {
+			// Skip messages with neither text content nor tool calls — empty messages
+			// contribute no semantic value and may be rejected by some upstreams.
+			if chatMsg.Content == nil && len(chatMsg.ToolCalls) == 0 {
+				continue
+			}
+			chatReq.Messages = append(chatReq.Messages, chatMsg)
 		}
-		chatReq.Messages = append(chatReq.Messages, chatMsg)
+	}
+
+	// Strip unmatched tool_calls from all assistant messages. DeepSeek Chat API
+	// requires EVERY tool_call_id to have a corresponding tool message.
+	// Only applies to multi-turn conversations (tool messages exist).
+	hasToolMsgs := false
+	for _, m := range chatReq.Messages {
+		if m.ToolCallID != "" {
+			hasToolMsgs = true
+			break
+		}
+	}
+	if hasToolMsgs {
+		toolIDs := make(map[string]bool)
+		for _, m := range chatReq.Messages {
+			if m.ToolCallID != "" {
+				toolIDs[m.ToolCallID] = true
+			}
+		}
+		for i, m := range chatReq.Messages {
+			if m.Role == "assistant" && len(m.ToolCalls) > 0 {
+				kept := make([]ToolCall, 0, len(m.ToolCalls))
+				for _, tc := range m.ToolCalls {
+					if toolIDs[tc.ID] {
+						kept = append(kept, tc)
+					}
+				}
+				if len(kept) < len(m.ToolCalls) {
+					m.ToolCalls = kept
+					chatReq.Messages[i] = m
+				}
+			}
+		}
 	}
 
 	// Sampling parameters.
@@ -222,6 +257,10 @@ func (a *ChatProviderAdapter) ToCoreResponseWithRequest(ctx context.Context, req
 		}
 		if chatResp.Usage.PromptTokensDetails != nil {
 			coreResp.Usage.CachedInputTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+			coreResp.Usage.CacheReadInputTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
+		}
+		if chatResp.Usage.CompletionTokensDetails != nil {
+			coreResp.Usage.ReasoningTokens = chatResp.Usage.CompletionTokensDetails.ReasoningTokens
 		}
 	}
 
@@ -293,6 +332,8 @@ func (a *ChatProviderAdapter) ToCoreStreamWithRequest(ctx context.Context, req *
 		var finalUsage *format.CoreUsage
 		var lastModel string
 		var seenCompletion bool
+		var createdEmitted bool
+		var inProgressEmitted bool
 
 		emit := func(ev format.CoreStreamEvent) {
 			seqNum++
@@ -339,6 +380,12 @@ func (a *ChatProviderAdapter) ToCoreStreamWithRequest(ctx context.Context, req *
 					lastModel = chunk.Model
 				}
 
+				// Emit CoreEventCreated on first chunk.
+				if !createdEmitted {
+					createdEmitted = true
+					emit(format.CoreStreamEvent{Type: format.CoreEventCreated, Status: "in_progress"})
+				}
+
 				// Process each choice in the chunk.
 				for _, sc := range chunk.Choices {
 					state := choices[sc.Index]
@@ -366,6 +413,10 @@ func (a *ChatProviderAdapter) ToCoreStreamWithRequest(ctx context.Context, req *
 								Type: blockType,
 							},
 						})
+						if !inProgressEmitted {
+							inProgressEmitted = true
+							emit(format.CoreStreamEvent{Type: format.CoreEventInProgress, Status: "in_progress", Model: lastModel})
+						}
 					}
 
 					// Emit text delta.
@@ -546,7 +597,8 @@ func (a *ChatProviderAdapter) ToCoreStreamWithRequest(ctx context.Context, req *
 					}
 					if chunk.Usage.PromptTokensDetails != nil {
 						finalUsage.CachedInputTokens = chunk.Usage.PromptTokensDetails.CachedTokens
-					}
+					
+						finalUsage.CacheReadInputTokens = chunk.Usage.PromptTokensDetails.CachedTokens}
 				}
 			}
 		}
@@ -590,7 +642,7 @@ func (a *ChatProviderAdapter) toChatSystemContent(blocks []format.CoreContentBlo
 }
 
 // toChatMessage converts a CoreMessage to a ChatMessage.
-func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage {
+func (a *ChatProviderAdapter) toChatMessages(msg format.CoreMessage) []ChatMessage {
 	// If every content block is tool_result (the common Anthropic SDK case),
 	// this is a pure tool role message regardless of what mapRoleToChat says.
 	// Mixed content (e.g. image + tool_result) falls through to normal
@@ -603,19 +655,19 @@ func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage 
 		}
 	}
 	if allToolResult {
-		return ChatMessage{
-			Role:       "tool",
-			Content: func() string {
-				var s string
-				for _, b := range msg.Content {
-					for _, tc := range b.ToolResultContent {
-						s += tc.Text
-					}
-				}
-				return s
-			}(),
-			ToolCallID: msg.Content[0].ToolUseID,
+		msgs := make([]ChatMessage, 0, len(msg.Content))
+		for _, b := range msg.Content {
+			var toolResultText string
+			for _, tc := range b.ToolResultContent {
+				toolResultText += tc.Text
+			}
+			msgs = append(msgs, ChatMessage{
+				Role:       "tool",
+				Content:    toolResultText,
+				ToolCallID: b.ToolUseID,
+			})
 		}
+		return msgs
 	}
 
 	chatMsg := ChatMessage{
@@ -699,7 +751,7 @@ func (a *ChatProviderAdapter) toChatMessage(msg format.CoreMessage) ChatMessage 
 		}
 	}
 
-	return chatMsg
+	return []ChatMessage{chatMsg}
 }
 
 // toChatContent converts []CoreContentBlock to a Chat content value.

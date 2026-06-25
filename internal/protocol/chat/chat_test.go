@@ -1784,14 +1784,14 @@ func TestToCoreStream_BasicDelta(t *testing.T) {
 	if len(evts) < 4 {
 		t.Fatalf("got %d events, want at least 4", len(evts))
 	}
-	if evts[0].Type != format.CoreContentBlockStarted {
-		t.Errorf("evts[0].Type = %q, want %q", evts[0].Type, format.CoreContentBlockStarted)
+	if evts[1].Type != format.CoreContentBlockStarted {
+		t.Errorf("evts[1].Type = %q, want %q", evts[1].Type, format.CoreContentBlockStarted)
 	}
-	if evts[1].Type != format.CoreTextDelta {
-		t.Errorf("evts[1].Type = %q, want %q", evts[1].Type, format.CoreTextDelta)
+	if evts[3].Type != format.CoreTextDelta {
+		t.Errorf("evts[3].Type = %q, want %q", evts[3].Type, format.CoreTextDelta)
 	}
-	if evts[2].Type != format.CoreContentBlockDone {
-		t.Errorf("evts[2].Type = %q, want %q", evts[2].Type, format.CoreContentBlockDone)
+	if evts[4].Type != format.CoreContentBlockDone {
+		t.Errorf("evts[4].Type = %q, want %q", evts[4].Type, format.CoreContentBlockDone)
 	}
 	if evts[len(evts)-1].Type != format.CoreEventCompleted {
 		t.Errorf("evts[-1].Type = %q, want %q", evts[len(evts)-1].Type, format.CoreEventCompleted)
@@ -1870,11 +1870,14 @@ func TestToCoreStream_EmptyChunk(t *testing.T) {
 		evts = append(evts, e)
 	}
 
-	if len(evts) != 1 {
-		t.Fatalf("got %d events, want 1 (completed only)", len(evts))
+	if len(evts) != 2 {
+		t.Fatalf("got %d events, want 2 (created + completed)", len(evts))
 	}
-	if evts[0].Type != format.CoreEventCompleted {
-		t.Errorf("event.Type = %q, want %q", evts[0].Type, format.CoreEventCompleted)
+	if evts[0].Type != format.CoreEventCreated {
+		t.Errorf("evts[0].Type = %q, want %q", evts[0].Type, format.CoreEventCreated)
+	}
+	if evts[1].Type != format.CoreEventCompleted {
+		t.Errorf("evts[1].Type = %q, want %q", evts[1].Type, format.CoreEventCompleted)
 	}
 }
 
@@ -1981,7 +1984,7 @@ func TestToCoreStream_MultiChoice(t *testing.T) {
 			deltaCount++
 		case format.CoreContentBlockDone:
 			doneCount++
-		case format.CoreEventCompleted:
+		case format.CoreEventCreated, format.CoreEventInProgress, format.CoreEventCompleted:
 			// ok
 		default:
 			t.Errorf("unexpected event type: %q", e.Type)

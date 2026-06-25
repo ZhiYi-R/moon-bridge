@@ -24,7 +24,6 @@ import (
 	"moonbridge/internal/service/webui"
 
 	"moonbridge/internal/service/server/session"
-	"moonbridge/internal/service/server/trace"
 	"moonbridge/internal/service/server/usage"
 
 	mbtrace "moonbridge/internal/service/trace"
@@ -53,7 +52,6 @@ type Config struct {
 	Store            store.ConfigStore
 	SessionManager   session.Manager
 	UsageTracker     usage.Tracker
-	TraceWriter      trace.Writer
 }
 
 type Server struct {
@@ -77,7 +75,6 @@ type Server struct {
 	store           store.ConfigStore
 	sessionManager  session.Manager
 	usageTracker    usage.Tracker
-	traceWriter     trace.Writer
 
 	// clientCaches holds lazily-created HTTP clients for runtime-reloaded providers.
 	// Keyed by provider key, invalidated when Runtime reloads.
@@ -212,7 +209,6 @@ func New(cfg Config) *Server {
 		store:           cfg.Store,
 		sessionManager:  cfg.SessionManager,
 		usageTracker:    cfg.UsageTracker,
-		traceWriter:     cfg.TraceWriter,
 		clientCache:     make(map[string]*chat.Client),
 		googleCache:     make(map[string]*google.Client),
 		responsesCache:  make(map[string]*openai.Client),

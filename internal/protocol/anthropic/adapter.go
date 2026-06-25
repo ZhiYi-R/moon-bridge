@@ -409,9 +409,14 @@ func (a *AnthropicProviderAdapter) ToCoreResponseWithRequest(ctx context.Context
 				Content: coreContent,
 			},
 		},
-		Usage:      a.toCoreUsage(msgResp.Usage),
-		StopReason: msgResp.StopReason,
+		Usage:        a.toCoreUsage(msgResp.Usage),
+		StopReason:   msgResp.StopReason,
+		StopSequence: msgResp.StopSequence,
 	}
+	if coreResp.Extensions == nil {
+		coreResp.Extensions = make(map[string]any)
+	}
+	coreResp.Extensions["protocol"] = "message"
 	a.hooks.RememberContent(ctx, coreContent)
 
 	// Map error-like stop reasons.
@@ -469,6 +474,7 @@ type streamConverterState struct {
 	blockTypes      map[int]string            // content index → block type
 	blockSignatures map[int]string            // content index → reasoning signature (from signature_delta)
 	finalUsage      *format.CoreUsage         // tracked from message_delta, passed to message_stop
+	finalStopReason string                     // tracked from message_delta, passed to message_stop
 	adapter         *AnthropicProviderAdapter // for plugin hooks
 	suppressText    map[int]bool              // text indices to suppress (server-side search status, etc.)
 	buf             *[]StreamEvent            // per-stream event buffer (local, not shared)
@@ -675,23 +681,26 @@ func (s *streamConverterState) convertEvent(events chan<- format.CoreStreamEvent
 				break
 			}
 			s.emit(events, format.CoreStreamEvent{
-				Type:  format.CoreTextDelta,
-				Index: index,
-				Delta: ev.Delta.Text,
+				Type:      format.CoreTextDelta,
+				Index:     index,
+				Delta:     ev.Delta.Text,
+				DeltaType: "text",
 			})
 
 		case ev.Delta.Type == "input_json_delta" || blockType == "tool_use":
 			s.emit(events, format.CoreStreamEvent{
-				Type:  format.CoreToolCallArgsDelta,
-				Index: index,
-				Delta: ev.Delta.PartialJSON,
+				Type:      format.CoreToolCallArgsDelta,
+				Index:     index,
+				Delta:     ev.Delta.PartialJSON,
+				DeltaType: "tool_args",
 			})
 
 		case ev.Delta.Type == "thinking_delta" || blockType == "thinking":
 			s.emit(events, format.CoreStreamEvent{
-				Type:  format.CoreTextDelta,
-				Index: index,
-				Delta: ev.Delta.Thinking,
+				Type:      format.CoreTextDelta,
+				Index:     index,
+				Delta:     ev.Delta.Thinking,
+				DeltaType: "reasoning",
 				ContentBlock: &format.CoreContentBlock{
 					Type: "reasoning",
 				},
@@ -738,9 +747,12 @@ func (s *streamConverterState) convertEvent(events chan<- format.CoreStreamEvent
 			s.finalUsage = &format.CoreUsage{
 				// Core format InputTokens = total input (fresh + cache), matching OpenAI API semantics.
 				// Anthropic input_tokens is fresh-only, so we add CacheReadInputTokens.
-				InputTokens:       totalInput,
-				OutputTokens:      ev.Usage.OutputTokens,
-				CachedInputTokens: ev.Usage.CacheReadInputTokens,
+				InputTokens:              totalInput,
+				OutputTokens:             ev.Usage.OutputTokens,
+				CachedInputTokens:        ev.Usage.CacheReadInputTokens,
+				CacheCreationInputTokens: ev.Usage.CacheCreationInputTokens,
+				CacheReadInputTokens:     ev.Usage.CacheReadInputTokens,
+				ReasoningTokens:          0, // Anthropic does not expose separate reasoning tokens
 			}
 			s.emit(events, format.CoreStreamEvent{
 				Type:       format.CoreEventInProgress,
@@ -807,6 +819,15 @@ func (a *AnthropicProviderAdapter) toContentBlock(b format.CoreContentBlock) Con
 		return block
 
 	case "image":
+		if b.ImageURL != "" {
+			return ContentBlock{
+				Type: "image",
+				Source: &ImageSource{
+					Type: "url",
+					URL:  b.ImageURL,
+				},
+			}
+		}
 		return ContentBlock{
 			Type: "image",
 			Source: &ImageSource{
@@ -969,8 +990,12 @@ func (a *AnthropicProviderAdapter) fromContentBlock(b ContentBlock) format.CoreC
 			Type: "image",
 		}
 		if b.Source != nil {
-			cb.MediaType = b.Source.MediaType
-			cb.ImageData = b.Source.Data
+			if b.Source.Type == "url" || b.Source.URL != "" {
+				cb.ImageURL = b.Source.URL
+			} else {
+				cb.MediaType = b.Source.MediaType
+				cb.ImageData = b.Source.Data
+			}
 		}
 		return cb
 
@@ -1027,10 +1052,13 @@ func (a *AnthropicProviderAdapter) toCoreUsage(u Usage) format.CoreUsage {
 	}
 	totalInput := u.InputTokens + cached
 	return format.CoreUsage{
-		InputTokens:       totalInput, // Total input (fresh + cache) matching OpenAI API semantics
-		OutputTokens:      u.OutputTokens,
-		TotalTokens:       totalInput + u.OutputTokens,
-		CachedInputTokens: cached,
+		InputTokens:              totalInput, // Total input (fresh + cache) matching OpenAI API semantics
+		OutputTokens:             u.OutputTokens,
+		TotalTokens:              totalInput + u.OutputTokens,
+		CachedInputTokens:        cached,
+		CacheCreationInputTokens: u.CacheCreationInputTokens,
+		CacheReadInputTokens:     u.CacheReadInputTokens,
+		ReasoningTokens:          0, // Anthropic does not expose separate reasoning tokens
 	}
 }
 

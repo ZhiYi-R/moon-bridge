@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 
 	"moonbridge/internal/format"
@@ -169,7 +170,17 @@ func (a *AnthropicClientAdapter) FromCoreResponse(ctx context.Context, resp *for
 			continue
 		}
 		for _, block := range msg.Content {
+			block := block
 			response.Content = append(response.Content, toContentBlock(block))
+			if block.Type == "tool_use" {
+				raw, _ := json.Marshal(toContentBlock(block))
+				slog.Debug("anthropic adapter: tool_use output",
+					"name", block.ToolName,
+					"id", block.ToolUseID,
+					"input_raw", string(block.ToolInput),
+					"output_block", string(raw),
+				)
+			}
 		}
 	}
 
@@ -180,8 +191,8 @@ func (a *AnthropicClientAdapter) FromCoreResponse(ctx context.Context, resp *for
 	response.Usage = Usage{
 		InputTokens:              resp.Usage.InputTokens,
 		OutputTokens:             resp.Usage.OutputTokens,
-		CacheReadInputTokens:     resp.Usage.CachedInputTokens,
-		CacheCreationInputTokens: 0,
+		CacheReadInputTokens:     resp.Usage.CacheReadInputTokens,
+		CacheCreationInputTokens: resp.Usage.CacheCreationInputTokens,
 	}
 
 	// Map error.
@@ -393,6 +404,11 @@ func (a *AnthropicClientAdapter) streamLoop(
 		case format.CoreToolCallArgsDelta:
 			index := event.Index
 			if _, ok := contentTypes[index]; ok && contentTypes[index] == "tool_use" {
+				slog.Debug("anthropic stream: tool_call_args_delta",
+					"index", index,
+					"delta_len", len(event.Delta),
+					"delta_preview", event.Delta[:min(len(event.Delta), 80)],
+				)
 				send(StreamEvent{
 					Type:  "content_block_delta",
 					Index: index,
@@ -442,7 +458,7 @@ func (a *AnthropicClientAdapter) streamLoop(
 				accumulatedUsage = &Usage{
 					InputTokens:          event.Usage.InputTokens,
 					OutputTokens:         event.Usage.OutputTokens,
-					CacheReadInputTokens: event.Usage.CachedInputTokens,
+					CacheReadInputTokens: event.Usage.CacheReadInputTokens,
 				}
 			}
 			send(StreamEvent{

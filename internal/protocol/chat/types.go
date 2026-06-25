@@ -133,11 +133,11 @@ type Choice struct {
 
 // Usage reports token usage from the API response.
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
-	// PromptTokensDetails contains detailed breakdown of prompt_tokens.
-	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	PromptTokens           int                    `json:"prompt_tokens"`
+	CompletionTokens       int                    `json:"completion_tokens"`
+	TotalTokens            int                    `json:"total_tokens"`
+	PromptTokensDetails    *PromptTokensDetails    `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
 
 // PromptTokensDetails provides a breakdown of prompt token counts.
@@ -145,6 +145,12 @@ type PromptTokensDetails struct {
 	// CachedTokens is the number of tokens retrieved from the prompt cache.
 	// Maps to CoreUsage.CachedInputTokens.
 	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// CompletionTokensDetails provides a breakdown of completion token counts.
+type CompletionTokensDetails struct {
+	// ReasoningTokens is the number of tokens used for reasoning/thinking.
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 // ============================================================================

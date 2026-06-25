@@ -225,7 +225,9 @@ func (a *GeminiProviderAdapter) ToCoreResponseWithRequest(ctx context.Context, r
 			// CachedInputTokens from the cached content count; Google includes
 			// cached tokens in prompt_token_count (total), and reports them
 			// separately here.
-			CachedInputTokens: geminiResp.UsageMetadata.CachedContentTokenCount,
+			CachedInputTokens:    geminiResp.UsageMetadata.CachedContentTokenCount,
+			CacheReadInputTokens: geminiResp.UsageMetadata.CachedContentTokenCount,
+			ReasoningTokens:      geminiResp.UsageMetadata.ThoughtsTokenCount,
 		}
 	}
 
@@ -291,6 +293,8 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (*for
 		var finalUsage *format.CoreUsage
 		lastModel := a.currentModel
 		var seenCompletion bool
+		var createdEmitted bool
+		var inProgressEmitted bool
 
 		emit := func(ev format.CoreStreamEvent) {
 			seqNum++
@@ -333,6 +337,12 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (*for
 					return
 				}
 
+				// Emit lifecycle events on first candidate chunk.
+				if !createdEmitted {
+					createdEmitted = true
+					emit(format.CoreStreamEvent{Type: format.CoreEventCreated, Status: "in_progress", Model: lastModel})
+				}
+
 				// Process each candidate in the chunk.
 				for _, candidate := range chunk.Candidates {
 					state := candidates[candidate.Index]
@@ -359,6 +369,11 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (*for
 							},
 						})
 					}
+						if !inProgressEmitted {
+							inProgressEmitted = true
+							emit(format.CoreStreamEvent{Type: format.CoreEventInProgress, Status: "in_progress", Model: lastModel})
+						}
+
 
 					// Compute text delta.
 					delta := a.computeDelta(state.prevText, currentText)
@@ -393,7 +408,9 @@ func (a *GeminiProviderAdapter) ToCoreStream(ctx context.Context, src any) (*for
 						InputTokens:       chunk.UsageMetadata.PromptTokenCount,
 						OutputTokens:      chunk.UsageMetadata.CandidatesTokenCount,
 						TotalTokens:       chunk.UsageMetadata.TotalTokenCount,
-						CachedInputTokens: chunk.UsageMetadata.CachedContentTokenCount,
+						CachedInputTokens:    chunk.UsageMetadata.CachedContentTokenCount,
+					CacheReadInputTokens: chunk.UsageMetadata.CachedContentTokenCount,
+					ReasoningTokens:      chunk.UsageMetadata.ThoughtsTokenCount,
 					}
 				}
 			}

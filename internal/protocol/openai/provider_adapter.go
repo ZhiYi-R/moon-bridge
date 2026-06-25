@@ -294,6 +294,9 @@ func (a *OpenAIProviderAdapter) coreToolsToOpenAI(tools []format.CoreTool) []Too
 			Name:        t.Name,
 			Description: t.Description,
 		}
+		if t.Type != "" {
+			tool.Type = t.Type
+		}
 		if t.InputSchema != nil {
 			tool.Parameters = t.InputSchema
 		}
@@ -331,6 +334,13 @@ func (a *OpenAIProviderAdapter) ToCoreResponseWithRequest(_ context.Context, req
 	// Map status → stop_reason.
 	coreResp.StopReason = mapResponseStopReason(openaiResp.Status, openaiResp.IncompleteDetails)
 
+	// Phase 3: CreatedAt metadata.
+	if coreResp.Extensions == nil {
+		coreResp.Extensions = make(map[string]any)
+	}
+	coreResp.Extensions["created_at"] = openaiResp.CreatedAt
+	coreResp.Extensions["protocol"] = "response"
+
 	// Extract tool map from request if available.
 	var toolMap codextool.ToolMap
 	if req != nil && req.Extensions != nil {
@@ -349,10 +359,12 @@ func (a *OpenAIProviderAdapter) ToCoreResponseWithRequest(_ context.Context, req
 		InputTokens:       openaiResp.Usage.InputTokens,
 		OutputTokens:      openaiResp.Usage.OutputTokens,
 		TotalTokens:       openaiResp.Usage.TotalTokens,
-		CachedInputTokens: openaiResp.Usage.InputTokensDetails.CachedTokens,
+		CachedInputTokens:    openaiResp.Usage.InputTokensDetails.CachedTokens,
+		CacheReadInputTokens: openaiResp.Usage.InputTokensDetails.CachedTokens,
+		ReasoningTokens:      openaiResp.Usage.OutputTokensDetails.ReasoningTokens,
 	}
 
-	// Extensions for output tokens details.
+	// Extensions for output tokens details (backward compat).
 	if openaiResp.Usage.OutputTokensDetails.ReasoningTokens > 0 {
 		if coreResp.Extensions == nil {
 			coreResp.Extensions = make(map[string]any)
@@ -360,6 +372,14 @@ func (a *OpenAIProviderAdapter) ToCoreResponseWithRequest(_ context.Context, req
 		coreResp.Extensions["output_tokens_details"] = map[string]any{
 			"reasoning_tokens": openaiResp.Usage.OutputTokensDetails.ReasoningTokens,
 		}
+	}
+
+	// Incomplete response reason.
+	if openaiResp.IncompleteDetails != nil && openaiResp.IncompleteDetails.Reason != "" {
+		if coreResp.Extensions == nil {
+			coreResp.Extensions = make(map[string]any)
+		}
+		coreResp.Extensions[format.ExtKeyIncompleteReason] = openaiResp.IncompleteDetails.Reason
 	}
 
 	// Error.
@@ -638,12 +658,10 @@ func (a *OpenAIProviderAdapter) ToCoreStreamWithRequest(pctx context.Context, re
 						})
 						if payload.Part.Text != "" {
 							emit(format.CoreStreamEvent{
-								Type:  format.CoreContentBlockDelta,
-								Index: idx,
-								Delta: payload.Part.Text,
-								ContentBlock: &format.CoreContentBlock{
-									Type: "text_delta",
-								},
+								Type:    format.CoreTextDelta,
+								Index:   idx,
+								Delta:   payload.Part.Text,
+								DeltaType: "text",
 							})
 						}
 					}
@@ -658,12 +676,9 @@ func (a *OpenAIProviderAdapter) ToCoreStreamWithRequest(pctx context.Context, re
 					}
 					idx := lastBlockIdx(activeBlocks, "text")
 					emit(format.CoreStreamEvent{
-						Type:  format.CoreContentBlockDelta,
+						Type:  format.CoreTextDelta,
 						Index: idx,
 						Delta: payload.Delta,
-						ContentBlock: &format.CoreContentBlock{
-							Type: "text_delta",
-						},
 					})
 
 				case "response.output_text.done":
@@ -694,12 +709,9 @@ func (a *OpenAIProviderAdapter) ToCoreStreamWithRequest(pctx context.Context, re
 					}
 					idx := lastBlockIdx(activeBlocks, "tool_use")
 					emit(format.CoreStreamEvent{
-						Type:  format.CoreContentBlockDelta,
+						Type:  format.CoreToolCallArgsDelta,
 						Index: idx,
 						Delta: payload.Delta,
-						ContentBlock: &format.CoreContentBlock{
-							Type: "input_json_delta",
-						},
 					})
 
 				case "response.function_call_arguments.done":
@@ -730,12 +742,9 @@ func (a *OpenAIProviderAdapter) ToCoreStreamWithRequest(pctx context.Context, re
 					}
 					idx := lastBlockIdx(activeBlocks, "reasoning")
 					emit(format.CoreStreamEvent{
-						Type:  format.CoreContentBlockDelta,
+						Type:  format.CoreTextDelta,
 						Index: idx,
 						Delta: payload.Delta,
-						ContentBlock: &format.CoreContentBlock{
-							Type: "thinking_delta",
-						},
 					})
 
 				case "response.completed":
@@ -749,6 +758,7 @@ func (a *OpenAIProviderAdapter) ToCoreStreamWithRequest(pctx context.Context, re
 								OutputTokens:      payload.Response.Usage.OutputTokens,
 								TotalTokens:       payload.Response.Usage.TotalTokens,
 								CachedInputTokens: payload.Response.Usage.InputTokensDetails.CachedTokens,
+					CacheReadInputTokens: payload.Response.Usage.InputTokensDetails.CachedTokens,
 							}
 						}
 					}

@@ -161,3 +161,69 @@ func TestSanitizePathSegmentAllDotsReturnsUnderscore(t *testing.T) {
 		t.Fatalf("SanitizePathSegment(...) = %q, want ...", got)
 	}
 }
+
+func TestRecordWithProtocolMetadata(t *testing.T) {
+	root := t.TempDir()
+	tracer := trace.New(trace.Config{Enabled: true, Root: root, SessionID: "session-meta"})
+
+	path, err := tracer.Write(trace.Record{
+		Model:            "gpt-test",
+		ClientProtocol:   "openai-response",
+		ProviderProtocol: "anthropic",
+	})
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{`"client_protocol": "openai-response"`, `"provider_protocol": "anthropic"`} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("trace missing %q: %s", want, content)
+		}
+	}
+
+	// Verify omitempty: a record WITHOUT protocol fields should not have them.
+	path2, err := tracer.Write(trace.Record{
+		Model: "no-protocol",
+	})
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	data2, err := os.ReadFile(path2)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	for _, absent := range []string{"client_protocol", "provider_protocol"} {
+		if strings.Contains(string(data2), absent) {
+			t.Fatalf("trace should not contain %q when unset: %s", absent, string(data2))
+		}
+	}
+}
+
+func TestUpstreamStreamEventsField(t *testing.T) {
+	root := t.TempDir()
+	tracer := trace.New(trace.Config{Enabled: true, Root: root, SessionID: "session-stream-ev"})
+
+	path, err := tracer.Write(trace.Record{
+		Model:               "gpt-test",
+		UpstreamStreamEvents: []string{"event1", "event2"},
+	})
+	if err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	content := string(data)
+	for _, want := range []string{`"upstream_stream_events"`, `"event1"`, `"event2"`} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("trace missing %q: %s", want, content)
+		}
+	}
+}

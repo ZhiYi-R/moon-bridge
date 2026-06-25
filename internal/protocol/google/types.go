@@ -127,12 +127,11 @@ type PromptFeedback struct {
 
 // UsageMetadata contains token count information.
 type UsageMetadata struct {
-	PromptTokenCount     int `json:"promptTokenCount"`
-	CandidatesTokenCount int `json:"candidatesTokenCount"`
-	TotalTokenCount      int `json:"totalTokenCount"`
-	// CachedContentTokenCount is the number of tokens served from context cache.
-	// Maps to CoreUsage.CachedInputTokens.
-	CachedContentTokenCount int `json:"cachedContentTokenCount,omitempty"`
+	PromptTokenCount           int `json:"promptTokenCount"`
+	CandidatesTokenCount       int `json:"candidatesTokenCount"`
+	TotalTokenCount            int `json:"totalTokenCount"`
+	ThoughtsTokenCount         int `json:"thoughtsTokenCount,omitempty"`
+	CachedContentTokenCount    int `json:"cachedContentTokenCount,omitempty"`
 }
 
 // ============================================================================

@@ -1435,11 +1435,16 @@ func contentBlocksFromRaw(raw json.RawMessage) []format.CoreContentBlock {
 							}
 						}
 					}
-					blocks = append(blocks, format.CoreContentBlock{
+					block := format.CoreContentBlock{
 						Type:      "image",
-						ImageData: src,
 						MediaType: mediaType,
-					})
+					}
+					if strings.HasPrefix(src, "data:") {
+						block.ImageData = src
+					} else {
+						block.ImageURL = src
+					}
+					blocks = append(blocks, block)
 				}
 			}
 		}
@@ -1894,6 +1899,9 @@ func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy fun
 			Description: tool.Description,
 			InputSchema: tool.Parameters,
 		}
+		if tool.Type != "" {
+			ct.Type = tool.Type
+		}
 		codextool.AnnotateCoreTool(&ct, codextool.ToolFunction, tool.Name, namespace)
 		return []format.CoreTool{ct}
 
@@ -1992,12 +2000,16 @@ func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy fun
 
 	default:
 		ext["source_type"] = tool.Type
-		return []format.CoreTool{{
+		ct := format.CoreTool{
 			Name:        name,
 			Description: tool.Description,
 			InputSchema: tool.Parameters,
 			Extensions:  ext,
-		}}
+		}
+		if tool.Type != "" {
+			ct.Type = tool.Type
+		}
+		return []format.CoreTool{ct}
 	}
 }
 

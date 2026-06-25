@@ -39,6 +39,7 @@ type CoreContentBlock struct {
 	// Image content (type = "image")
 	ImageData string `json:"image_data,omitempty"`
 	MediaType string `json:"media_type,omitempty"`
+	ImageURL  string `json:"image_url,omitempty"`
 
 	// Tool use (type = "tool_use")
 	ToolUseID     string          `json:"tool_use_id,omitempty"`
@@ -65,6 +66,7 @@ type CoreContentBlock struct {
 type CoreMessage struct {
 	Role       string             `json:"role"`
 	Content    []CoreContentBlock `json:"content"`
+	Name       string             `json:"name,omitempty"`
 	Extensions map[string]any     `json:"extensions,omitempty"`
 }
 
@@ -77,6 +79,7 @@ type CoreTool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	InputSchema map[string]any `json:"input_schema,omitempty"`
+	Type        string         `json:"type,omitempty"`
 	Extensions  map[string]any `json:"extensions,omitempty"`
 }
 
@@ -196,10 +199,13 @@ type CoreRequest struct {
 
 // CoreUsage represents token usage statistics.
 type CoreUsage struct {
-	InputTokens       int `json:"input_tokens,omitempty"`
-	OutputTokens      int `json:"output_tokens,omitempty"`
-	TotalTokens       int `json:"total_tokens,omitempty"`
-	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
+	InputTokens              int `json:"input_tokens,omitempty"`
+	OutputTokens             int `json:"output_tokens,omitempty"`
+	TotalTokens              int `json:"total_tokens,omitempty"`
+	CachedInputTokens        int `json:"cached_input_tokens,omitempty"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
+	ReasoningTokens          int `json:"reasoning_tokens,omitempty"`
 }
 
 // ============================================================================
@@ -211,6 +217,7 @@ type CoreError struct {
 	Message string `json:"message"`
 	Type    string `json:"type,omitempty"`
 	Code    string `json:"code,omitempty"`
+	Param   string `json:"param,omitempty"`
 }
 
 // ============================================================================
@@ -227,6 +234,7 @@ type CoreResponse struct {
 	Usage      CoreUsage     `json:"usage,omitempty"`
 	Error      *CoreError    `json:"error,omitempty"`
 	StopReason string        `json:"stop_reason,omitempty"`
+	StopSequence string      `json:"stop_sequence,omitempty"`
 
 	Extensions map[string]any `json:"extensions,omitempty"`
 }
@@ -288,6 +296,11 @@ type CoreStreamEvent struct {
 	Index        int               `json:"index,omitempty"`
 	ContentBlock *CoreContentBlock `json:"content_block,omitempty"`
 	Delta        string            `json:"delta,omitempty"`
+	DeltaType    string            `json:"delta_type,omitempty"`
+
+	// Nested content index (for multi-part output items)
+	ContentIndex int `json:"content_index,omitempty"`
+	SummaryIndex int `json:"summary_index,omitempty"`
 
 	// Metadata
 	StopReason string     `json:"stop_reason,omitempty"`

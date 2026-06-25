@@ -1403,8 +1403,8 @@ func TestToCoreStream_SingleCandidate(t *testing.T) {
 	}
 
 	// Check event sequence
-	n := 0
-	// Event 0: content_block.started
+	n := 1
+	// Event 1: content_block.started (evts[0] is core.created lifecycle event)
 	if evts[n].Type != format.CoreContentBlockStarted {
 		t.Errorf("event[%d].Type = %q, want %q", n, evts[n].Type, format.CoreContentBlockStarted)
 	}

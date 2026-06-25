@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
+	"moonbridge/internal/config"
 	mbtrace "moonbridge/internal/service/trace"
 )
 
@@ -65,7 +66,9 @@ func (server *ResponseServer) serveProxy(writer http.ResponseWriter, request *ht
 	}
 
 	record := mbtrace.Record{
-		HTTPRequest: mbtrace.NewHTTPRequest(request),
+		HTTPRequest:      mbtrace.NewHTTPRequest(request),
+		ClientProtocol:   config.ProtocolOpenAIResponse,
+		ProviderProtocol: config.ProtocolOpenAIResponse,
 		ProxyRequest: ProxyRequest{
 			Method:  request.Method,
 			URL:     request.URL.RequestURI(),

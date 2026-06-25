@@ -105,6 +105,7 @@ func (a *ChatClientAdapter) ToCoreRequest(ctx context.Context, req any) (*format
 	for _, msg := range chatReq.Messages {
 		coreMsg := format.CoreMessage{
 			Role:    msg.Role,
+			Name:    msg.Name,
 			Content: a.toCoreContent(msg.Content, msg.ToolCalls),
 		}
 		// Tool_use blocks from tool_calls in assistant messages.
@@ -145,7 +146,7 @@ func (a *ChatClientAdapter) ToCoreRequest(ctx context.Context, req any) (*format
 				continue
 			}
 			coreReq.Tools = append(coreReq.Tools, format.CoreTool{
-				Name:        t.Function.Name,
+			Name:        t.Function.Name,
 				Description: t.Function.Description,
 				InputSchema: t.Function.Parameters,
 			})
@@ -196,10 +197,12 @@ func (a *ChatClientAdapter) toCoreContent(content any, toolCalls []ToolCall) []f
 				}
 			case "image_url":
 				if part.ImageURL != nil && part.ImageURL.URL != "" {
+					url := part.ImageURL.URL
 					blocks = append(blocks, format.CoreContentBlock{
 						Type:      "image",
-						ImageData: part.ImageURL.URL,
+						ImageData: url,
 						MediaType: "image/png",
+						ImageURL:  url,
 					})
 				}
 			}
@@ -290,7 +293,7 @@ func (a *ChatClientAdapter) FromCoreResponse(ctx context.Context, resp *format.C
 					ID:   block.ToolUseID,
 					Type: "function",
 					Function: ToolCallFunc{
-						Name:      block.ToolName,
+					Name:      block.ToolName,
 						Arguments: block.ToolInput,
 					},
 				})
