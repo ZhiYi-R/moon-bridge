@@ -3367,7 +3367,7 @@ func (s *Server) handleAnthropicMessages(w http.ResponseWriter, r *http.Request)
 	// Extract model for routing.
 	model := modelFromRawJSON(body)
 
-	resolvedRoute, resolveErr := s.resolveModelOrFallback(model)
+	resolvedRoute, model, resolveErr := s.resolveModelOrFallback(model)
 	if resolveErr != nil {
 		log.Warn("anthropic: unknown model", "model", model)
 		writeAnthropicError(w, http.StatusNotFound, "model_not_found", fmt.Sprintf("unknown model: %q", model))
@@ -3454,7 +3454,7 @@ func (s *Server) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	// Extract model for routing.
 	model := modelFromRawJSON(body)
 
-	resolvedRoute, resolveErr := s.resolveModelOrFallback(model)
+	resolvedRoute, model, resolveErr := s.resolveModelOrFallback(model)
 	if resolveErr != nil {
 		log.Warn("chat: unknown model", "model", model)
 		writeOpenAIError(w, http.StatusNotFound, openai.ErrorResponse{Error: openai.ErrorObject{
@@ -3561,7 +3561,7 @@ func (s *Server) handleGeminiGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resolvedRoute, resolveErr := s.resolveModelOrFallback(model)
+	resolvedRoute, model, resolveErr := s.resolveModelOrFallback(model)
 	if resolveErr != nil {
 		log.Warn("gemini: unknown model", "model", model)
 		writeGeminiError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("unknown model: %q", model), "NOT_FOUND")

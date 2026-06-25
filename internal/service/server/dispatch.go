@@ -87,7 +87,8 @@ func (server *Server) handleResponses(writer http.ResponseWriter, request *http.
 	model := modelFromRawJSON(body)
 	record.Model = model
 
-	resolvedRoute, resolveErr := server.resolveModelOrFallback(model)
+	resolvedRoute, model, resolveErr := server.resolveModelOrFallback(model)
+	record.Model = model
 	if resolveErr == nil {
 		var candidateInfo string
 		for i, c := range resolvedRoute.Candidates {

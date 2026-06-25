@@ -289,12 +289,20 @@ func (s *Server) listModels() []map[string]any {
 	}
 
 	for key, def := range providerDefs {
-		for modelName := range def.Models {
+		for modelName, meta := range def.Models {
+			slug := key + "/" + modelName
 			models = append(models, map[string]any{
-				"slug":     key + "/" + modelName,
+				"slug":     slug,
 				"name":     modelName,
 				"provider": key,
 			})
+			if meta.ContextWindow >= oneMillion {
+				models = append(models, map[string]any{
+					"slug":     slug + "[1m]",
+					"name":     modelName + " (1M)",
+					"provider": key,
+				})
+			}
 		}
 	}
 
@@ -313,6 +321,14 @@ func (s *Server) listModels() []map[string]any {
 			"provider": route.Provider,
 			"model":    route.Model,
 		})
+		if route.ContextWindow >= oneMillion {
+			models = append(models, map[string]any{
+				"slug":     alias + "[1m]",
+				"name":     displayName + " (1M)",
+				"provider": route.Provider,
+				"model":    route.Model,
+			})
+		}
 	}
 	return models
 }
@@ -417,7 +433,67 @@ func checkAuth(r *http.Request, expectedToken string) bool {
 	return strings.TrimSpace(auth[7:]) == expectedToken
 }
 
-func (s *Server) resolveModelOrFallback(modelName string) (*provider.ResolvedRoute, error) {
+// oneMillion is the context-window threshold (in tokens) at or above which a
+// model is considered to genuinely support a 1M context window. Only such
+// models accept the Claude Code "[1m]" model-id suffix.
+const oneMillion = 1_000_000
+
+// strip1mSuffix removes a trailing, case-insensitive "[1m]" suffix from a model
+// id. Returns the cleaned name and whether the suffix was present.
+func strip1mSuffix(model string) (string, bool) {
+	const sfx = "[1m]"
+	if len(model) >= len(sfx) && strings.EqualFold(model[len(model)-len(sfx):], sfx) {
+		return model[:len(model)-len(sfx)], true
+	}
+	return model, false
+}
+
+// contextWindowFor returns the configured context window for a (cleaned) model
+// name, trying route/provider-ref metadata, then the canonical ModelDef, then
+// the resolved candidate's provider ModelMeta. Returns 0 when unknown.
+func (s *Server) contextWindowFor(model string, route *provider.ResolvedRoute) int {
+	if s.runtime == nil {
+		return 0
+	}
+	cfg := s.runtime.Current().Config
+	if re := cfg.RouteFor(model); re.ContextWindow > 0 { // route alias + provider/model ref
+		return re.ContextWindow
+	}
+	if md, ok := cfg.Models[model]; ok && md.ContextWindow > 0 { // canonical ModelDef
+		return md.ContextWindow
+	}
+	if route != nil { // dynamic catalog candidate -> provider ModelMeta
+		if pref, ok := route.Preferred(); ok {
+			if def, ok := cfg.ProviderDefs[pref.ProviderKey]; ok {
+				if meta, ok := def.Models[pref.UpstreamModel]; ok {
+					return meta.ContextWindow
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// resolveModelOrFallback resolves an inbound model id to a route. It strips a
+// trailing "[1m]" suffix (Claude Code's 1M-context marker) before matching and
+// returns the cleaned model name. When the suffix is present, the resolved
+// model must genuinely have a >= 1M context window, otherwise an error is
+// returned so the caller rejects the request.
+func (s *Server) resolveModelOrFallback(modelName string) (*provider.ResolvedRoute, string, error) {
+	base, has1m := strip1mSuffix(modelName)
+	route, err := s.resolveBase(base)
+	if err != nil {
+		return nil, base, err
+	}
+	if has1m {
+		if cw := s.contextWindowFor(base, route); cw < oneMillion {
+			return nil, base, fmt.Errorf("[1m] suffix unsupported: model %q context window %d < %d", base, cw, oneMillion)
+		}
+	}
+	return route, base, nil
+}
+
+func (s *Server) resolveBase(modelName string) (*provider.ResolvedRoute, error) {
 	if pm := s.activeProviderManager(); pm != nil {
 		return pm.ResolveModel(modelName)
 	}
