@@ -313,6 +313,89 @@ func TestSQLiteStoreSaveConfigRejectsInvalidConfigWithoutChangingStoredConfig(t 
 	}
 }
 
+func TestWebSearchProbeRoundTrip(t *testing.T) {
+	cs := newConfigStoreForTest(t)
+
+	probes, err := cs.LoadWebSearchProbes()
+	if err != nil {
+		t.Fatalf("LoadWebSearchProbes() error = %v", err)
+	}
+	if len(probes) != 0 {
+		t.Fatalf("expected empty probe cache, got %d", len(probes))
+	}
+
+	if err := cs.SaveWebSearchProbe(store.WebSearchProbeRow{
+		CandidateKey: "candidate:deepseek/deepseek-v4-flash",
+		Supported:    true,
+		Fingerprint:  "fp-a",
+	}); err != nil {
+		t.Fatalf("SaveWebSearchProbe() error = %v", err)
+	}
+	if err := cs.SaveWebSearchProbe(store.WebSearchProbeRow{
+		CandidateKey: "candidate:xiaomi/mimo",
+		Supported:    false,
+		Fingerprint:  "fp-b",
+	}); err != nil {
+		t.Fatalf("SaveWebSearchProbe() error = %v", err)
+	}
+
+	probes, err = cs.LoadWebSearchProbes()
+	if err != nil {
+		t.Fatalf("LoadWebSearchProbes() error = %v", err)
+	}
+	if len(probes) != 2 {
+		t.Fatalf("probe cache size = %d, want 2", len(probes))
+	}
+	if row := probes["candidate:deepseek/deepseek-v4-flash"]; !row.Supported || row.Fingerprint != "fp-a" || row.ProbedAt == "" {
+		t.Fatalf("deepseek row = %+v", row)
+	}
+	if row := probes["candidate:xiaomi/mimo"]; row.Supported || row.Fingerprint != "fp-b" {
+		t.Fatalf("xiaomi row = %+v", row)
+	}
+
+	// Upsert overwrites the verdict + fingerprint for the same candidate key.
+	if err := cs.SaveWebSearchProbe(store.WebSearchProbeRow{
+		CandidateKey: "candidate:deepseek/deepseek-v4-flash",
+		Supported:    false,
+		Fingerprint:  "fp-a2",
+	}); err != nil {
+		t.Fatalf("SaveWebSearchProbe() overwrite error = %v", err)
+	}
+	probes, _ = cs.LoadWebSearchProbes()
+	if len(probes) != 2 {
+		t.Fatalf("probe cache size after upsert = %d, want 2", len(probes))
+	}
+	if row := probes["candidate:deepseek/deepseek-v4-flash"]; row.Supported || row.Fingerprint != "fp-a2" {
+		t.Fatalf("upserted row = %+v", row)
+	}
+}
+
+// TestWebSearchProbeSurvivesConfigSave verifies the probe cache lives in its own
+// table and is not wiped by SeedFromConfig/SaveConfig (which clear settings).
+func TestWebSearchProbeSurvivesConfigSave(t *testing.T) {
+	cs := newConfigStoreForTest(t)
+	if err := cs.SaveWebSearchProbe(store.WebSearchProbeRow{
+		CandidateKey: "candidate:deepseek/deepseek-v4-flash",
+		Supported:    true,
+		Fingerprint:  "fp",
+	}); err != nil {
+		t.Fatalf("SaveWebSearchProbe() error = %v", err)
+	}
+	if err := cs.SeedFromConfig(buildTestConfig()); err != nil {
+		t.Fatalf("SeedFromConfig() error = %v", err)
+	}
+	if _, err := cs.SaveConfig(context.Background(), buildTestConfig()); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	probes, err := cs.LoadWebSearchProbes()
+	if err != nil {
+		t.Fatalf("LoadWebSearchProbes() error = %v", err)
+	}
+	if row, ok := probes["candidate:deepseek/deepseek-v4-flash"]; !ok || !row.Supported || row.Fingerprint != "fp" {
+		t.Fatalf("probe verdict lost after config save: %+v (present=%v)", row, ok)
+	}
+}
+
 // --- helpers ---
 
 func newConfigStoreForTest(t *testing.T) store.ConfigStore {

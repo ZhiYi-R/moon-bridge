@@ -98,6 +98,15 @@ func (c *ConfigStoreConsumer) Tables() []db.TableSpec {
 )`,
 		},
 		{
+			Name: "websearch_probe",
+			Schema: `CREATE TABLE IF NOT EXISTS {{table}} (
+    candidate_key TEXT PRIMARY KEY,
+    supported     INTEGER NOT NULL,
+    fingerprint   TEXT NOT NULL,
+    probed_at     TEXT
+)`,
+		},
+		{
 			Name: "changes",
 			Schema: `CREATE TABLE IF NOT EXISTS {{table}} (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

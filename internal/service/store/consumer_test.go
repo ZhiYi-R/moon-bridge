@@ -142,7 +142,7 @@ func TestConsumerBasics(t *testing.T) {
 	}
 
 	tables := c.Tables()
-	expected := []string{"providers", "offers", "models", "routes", "settings", "changes", "schema_migrations"}
+	expected := []string{"providers", "offers", "models", "routes", "settings", "websearch_probe", "changes", "schema_migrations"}
 	if len(tables) != len(expected) {
 		t.Fatalf("Tables() returned %d tables, want %d", len(tables), len(expected))
 	}

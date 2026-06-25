@@ -106,6 +106,52 @@ func (s *SQLiteConfigStore) CurrentRevision() (string, error) {
 	return revision, nil
 }
 
+// LoadWebSearchProbes reads all cached web_search probe verdicts.
+func (s *SQLiteConfigStore) LoadWebSearchProbes() (map[string]WebSearchProbeRow, error) {
+	table := s.table("websearch_probe")
+	rows, err := s.db.QueryContext(context.Background(),
+		"SELECT candidate_key, supported, fingerprint, probed_at FROM "+table)
+	if err != nil {
+		return nil, fmt.Errorf("query websearch_probe: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[string]WebSearchProbeRow)
+	for rows.Next() {
+		var (
+			row       WebSearchProbeRow
+			supported int
+		)
+		if err := rows.Scan(&row.CandidateKey, &supported, &row.Fingerprint, &row.ProbedAt); err != nil {
+			return nil, fmt.Errorf("scan websearch_probe: %w", err)
+		}
+		row.Supported = supported != 0
+		out[row.CandidateKey] = row
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("websearch_probe rows: %w", err)
+	}
+	return out, nil
+}
+
+// SaveWebSearchProbe upserts a single web_search probe verdict.
+func (s *SQLiteConfigStore) SaveWebSearchProbe(row WebSearchProbeRow) error {
+	table := s.table("websearch_probe")
+	supported := 0
+	if row.Supported {
+		supported = 1
+	}
+	probedAt := row.ProbedAt
+	if probedAt == "" {
+		probedAt = nowStr()
+	}
+	if _, err := s.db.ExecContext(context.Background(),
+		"INSERT OR REPLACE INTO "+table+" (candidate_key, supported, fingerprint, probed_at) VALUES (?, ?, ?, ?)",
+		row.CandidateKey, supported, row.Fingerprint, probedAt); err != nil {
+		return fmt.Errorf("upsert websearch_probe %s: %w", row.CandidateKey, err)
+	}
+	return nil
+}
+
 func replaceConfigTx(ctx context.Context, tx db.Tx, fc config.FileConfig, revision string) error {
 	ts := nowStr()
 	providersTable, err := tx.Table("providers")

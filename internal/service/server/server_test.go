@@ -1229,3 +1229,11 @@ func (s *fakeConfigStore) CurrentRevision() (string, error) {
 func (s *fakeConfigStore) ExportYAML(bool) ([]byte, error) {
 	return nil, nil
 }
+
+func (s *fakeConfigStore) LoadWebSearchProbes() (map[string]store.WebSearchProbeRow, error) {
+	return nil, nil
+}
+
+func (s *fakeConfigStore) SaveWebSearchProbe(store.WebSearchProbeRow) error {
+	return nil
+}

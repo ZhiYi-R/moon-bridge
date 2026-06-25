@@ -50,6 +50,23 @@ type ConfigStore interface {
 	// ExportYAML serializes the current DB state as YAML bytes.
 	// If includeSecrets is false, API key values are masked.
 	ExportYAML(includeSecrets bool) ([]byte, error)
+
+	// LoadWebSearchProbes reads all persisted web_search probe verdicts,
+	// keyed by candidate key (provider.WebSearchCandidateKey).
+	LoadWebSearchProbes() (map[string]WebSearchProbeRow, error)
+
+	// SaveWebSearchProbe upserts a single web_search probe verdict.
+	SaveWebSearchProbe(WebSearchProbeRow) error
+}
+
+// WebSearchProbeRow represents a row in the config_store_websearch_probe table.
+// It caches the native web_search support verdict for a provider/model
+// candidate so the bridge does not re-probe the upstream on every restart.
+type WebSearchProbeRow struct {
+	CandidateKey string // provider.WebSearchCandidateKey(providerKey, upstreamModel)
+	Supported    bool   // whether the upstream natively supports web_search
+	Fingerprint  string // hash of provider identity; mismatch forces a re-probe
+	ProbedAt     string // RFC3339 timestamp of the probe
 }
 
 // ProviderRow represents a row in the config_store_providers table.

@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	stderrors "errors"
 	"fmt"
 	"io"
@@ -112,7 +114,9 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 
 	// Resolve a fallback client for web search probing and server fallback.
 	defaultClient := resolveDefaultClient(providerMgr, errors)
-	resolvePerProviderWebSearch(ctx, cfg, providerMgr)
+	// Web search probe resolution is deferred until after the persistence layer
+	// is initialized (Phase 2), so cached probe verdicts can be consulted and the
+	// probe runs exactly once on the final provider manager.
 
 	sessionStats := stats.NewSessionStats()
 	pricing := provider.BuildPricingFromConfig(providerCfg)
@@ -205,7 +209,6 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 					return fmt.Errorf("rebuild provider manager from DB: %w", err)
 				}
 				_ = resolveDefaultClient(providerMgr, errors)
-				resolvePerProviderWebSearch(ctx, cfg, providerMgr)
 
 				pricing = provider.BuildPricingFromConfig(dbProviderCfg)
 				if len(pricing) > 0 {
@@ -232,6 +235,10 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 	} else {
 		logger.Warn("config store 不可用，跳过持久化引导")
 	}
+
+	// Resolve web_search support once on the final provider manager, consulting
+	// the persisted probe cache so auto-detection does not re-probe every boot.
+	resolvePerProviderWebSearch(ctx, cfg, providerMgr, cs)
 
 	// === Phase 3: Build Runtime ===
 	rt = runtime.NewRuntime(cfg, providerMgr, pricing)
@@ -386,12 +393,100 @@ type webSearchCandidateProber interface {
 	ProbeWebSearchCandidate(context.Context, string, string) (bool, error)
 }
 
+// webSearchProbeCache persists native web_search probe verdicts so auto-detection
+// does not re-probe every upstream on each restart. Satisfied by store.ConfigStore.
+type webSearchProbeCache interface {
+	LoadWebSearchProbes() (map[string]store.WebSearchProbeRow, error)
+	SaveWebSearchProbe(store.WebSearchProbeRow) error
+}
+
+// providerWebSearchFingerprint derives a stable identity hash for a provider so a
+// cached probe verdict is invalidated when the upstream identity (endpoint, key,
+// version, protocol) changes.
+func providerWebSearchFingerprint(def config.ProviderDef) string {
+	h := sha256.Sum256([]byte(def.BaseURL + "\x00" + def.APIKey + "\x00" + def.Version + "\x00" + def.Protocol))
+	return hex.EncodeToString(h[:8])
+}
+
+// probeCache wraps the probe verdicts loaded for a single resolution pass.
+// A nil *probeCache (or one with a nil underlying cache) degrades to always-probe.
+type probeCache struct {
+	cache  webSearchProbeCache
+	probes map[string]store.WebSearchProbeRow
+}
+
+func newProbeCache(cache webSearchProbeCache) *probeCache {
+	pc := &probeCache{cache: cache}
+	if cache == nil {
+		return pc
+	}
+	probes, err := cache.LoadWebSearchProbes()
+	if err != nil {
+		slog.Warn("加载网页搜索探测缓存失败，将重新探测", "error", err)
+		return pc
+	}
+	pc.probes = probes
+	return pc
+}
+
+// lookup returns the cached native-support verdict for a candidate when the
+// fingerprint matches; ok is false on miss or fingerprint mismatch.
+func (pc *probeCache) lookup(candidateKey, fingerprint string) (supported bool, ok bool) {
+	if pc == nil || pc.probes == nil || candidateKey == "" {
+		return false, false
+	}
+	row, found := pc.probes[candidateKey]
+	if !found || row.Fingerprint != fingerprint {
+		return false, false
+	}
+	return row.Supported, true
+}
+
+// save persists a fresh native-support verdict for a candidate.
+func (pc *probeCache) save(candidateKey, fingerprint string, supported bool) {
+	if pc == nil || pc.cache == nil || candidateKey == "" {
+		return
+	}
+	if err := pc.cache.SaveWebSearchProbe(store.WebSearchProbeRow{
+		CandidateKey: candidateKey,
+		Supported:    supported,
+		Fingerprint:  fingerprint,
+	}); err != nil {
+		slog.Warn("写入网页搜索探测缓存失败", "candidate", candidateKey, "error", err)
+	}
+}
+
+// providerProbeMode derives the provider-level resolved mode from a native
+// support verdict, applying the injected fallback when global Tavily is set.
+func providerProbeMode(supported bool, cfg config.Config) string {
+	if supported {
+		return "enabled"
+	}
+	if cfg.TavilyAPIKey != "" {
+		return "injected"
+	}
+	return "disabled"
+}
+
+// modelProbeMode derives the model-level resolved mode from a native support
+// verdict, applying the injected fallback when an injected key is configured.
+func modelProbeMode(supported bool, cfg config.Config, modelAlias, providerKey string) string {
+	if supported {
+		return "enabled"
+	}
+	if injectedSearchConfigured(cfg, modelAlias, providerKey) {
+		return "injected"
+	}
+	return "disabled"
+}
+
 // resolvePerProviderWebSearch resolves web_search support for each provider and
-// each model that has a model-level override.
-func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *provider.ProviderManager) {
+// each model that has a model-level override. cache may be nil (always probe).
+func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *provider.ProviderManager, cache webSearchProbeCache) {
 	if pm == nil {
 		return
 	}
+	pcache := newProbeCache(cache)
 	// Parallelize Anthropic probe goroutines (the slow path) while handling
 	// non-probe protocol branches inline.
 	var wg sync.WaitGroup
@@ -412,19 +507,36 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 				pm.SetResolvedWebSearch(key, "injected")
 				slog.Info("网页搜索注入模式已启用", "provider", key)
 			default:
-				// Launch probe in a goroutine to parallelize across providers.
 				keyCopy := key
+				upstreamModel := pm.FirstUpstreamModelForKey(keyCopy)
+				candidateKey := ""
+				if upstreamModel != "" {
+					candidateKey = provider.WebSearchCandidateKey(keyCopy, upstreamModel)
+				}
+				fingerprint := providerWebSearchFingerprint(cfg.ProviderDefs[keyCopy])
+				// Cache hit: reuse the persisted verdict, skip the upstream probe.
+				if supported, ok := pcache.lookup(candidateKey, fingerprint); ok {
+					resolved := providerProbeMode(supported, cfg)
+					if candidateKey != "" {
+						pm.SetResolvedWebSearch(candidateKey, resolved)
+					}
+					pm.SetResolvedWebSearch(keyCopy, resolved)
+					slog.Debug("网页搜索探测命中缓存", "provider", keyCopy, "candidate", candidateKey, "resolved", resolved)
+					continue
+				}
+				// Cache miss: probe in a goroutine to parallelize across providers.
 				wg.Add(1)
 				go func() {
 					defer wg.Done()
-					resolved := probeProviderWebSearch(ctx, keyCopy, pm)
-					if resolved == "disabled" && cfg.TavilyAPIKey != "" {
-						resolved = "injected"
+					supported, definitive := probeProviderWebSearch(ctx, keyCopy, pm)
+					if definitive {
+						pcache.save(candidateKey, fingerprint, supported)
+					}
+					resolved := providerProbeMode(supported, cfg)
+					if !supported && resolved == "injected" {
 						slog.Info("网页搜索自动探测失败，回退到注入模式", "provider", keyCopy)
 					}
-					// Also write the candidate key so model-level dedup can find it.
-					if upstreamModel := pm.FirstUpstreamModelForKey(keyCopy); upstreamModel != "" {
-						candidateKey := provider.WebSearchCandidateKey(keyCopy, upstreamModel)
+					if candidateKey != "" {
 						pm.SetResolvedWebSearch(candidateKey, resolved)
 					}
 					pm.SetResolvedWebSearch(keyCopy, resolved)
@@ -458,8 +570,8 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 			alias := providerKey + "/" + modelName
 			newAlias := modelName + "(" + providerKey + ")"
 			modelWS := cfg.WebSearchForModel(alias)
-			resolveModelWebSearch(ctx, alias, providerKey, modelName, modelWS, pm, cfg)
-			resolveModelWebSearch(ctx, newAlias, providerKey, modelName, modelWS, pm, cfg)
+			resolveModelWebSearch(ctx, alias, providerKey, modelName, modelWS, pm, cfg, pcache)
+			resolveModelWebSearch(ctx, newAlias, providerKey, modelName, modelWS, pm, cfg, pcache)
 		}
 	}
 	for alias, route := range cfg.Routes {
@@ -468,11 +580,11 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 		if providerKey == "" {
 			providerKey = pm.DefaultKey()
 		}
-		resolveModelWebSearch(ctx, alias, providerKey, route.Model, modelWS, pm, cfg)
+		resolveModelWebSearch(ctx, alias, providerKey, route.Model, modelWS, pm, cfg, pcache)
 	}
 }
 
-func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config) {
+func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config, pcache *probeCache) {
 	if alias == "" || providerKey == "" || upstreamModel == "" {
 		return
 	}
@@ -539,59 +651,76 @@ func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamMode
 			pm.SetResolvedWebSearch(modelKey, existing)
 			return
 		}
-		resolved := resolveModelWebSearchWithProber(ctx, alias, providerKey, upstreamModel, modelWS, pm, cfg, pm)
+		fingerprint := providerWebSearchFingerprint(cfg.ProviderDefs[providerKey])
+		// Cache hit: reuse the persisted verdict, skip the upstream probe.
+		if supported, ok := pcache.lookup(candidateKey, fingerprint); ok {
+			resolved := modelProbeMode(supported, cfg, alias, providerKey)
+			slog.Debug("模型网页搜索探测命中缓存", "model", alias, "candidate", candidateKey, "resolved", resolved)
+			pm.SetResolvedWebSearch(modelKey, resolved)
+			pm.SetResolvedWebSearch(candidateKey, resolved)
+			return
+		}
+		resolved, supported, definitive := resolveModelWebSearchWithProber(ctx, alias, providerKey, upstreamModel, modelWS, pm, cfg, pm)
+		if definitive {
+			pcache.save(candidateKey, fingerprint, supported)
+		}
 		pm.SetResolvedWebSearch(modelKey, resolved)
 		pm.SetResolvedWebSearch(candidateKey, resolved)
 	}
 }
 
-func probeProviderWebSearch(ctx context.Context, key string, pm *provider.ProviderManager) string {
+func probeProviderWebSearch(ctx context.Context, key string, pm *provider.ProviderManager) (supported bool, definitive bool) {
 	pc, err := pm.ClientForKey(key)
 	if err != nil {
 		slog.Warn("网页搜索探测跳过：客户端不可用", "provider", key, "error", err)
-		return "disabled"
+		return false, false
 	}
 
 	upstreamModel := pm.FirstUpstreamModelForKey(key)
 	if upstreamModel == "" {
 		slog.Warn("网页搜索自动探测跳过：无模型路由到提供商", "provider", key)
-		return "disabled"
+		return false, false
 	}
 
 	acc, ok := pc.(provider.AnthropicClientAccessor)
 	if !ok {
 		slog.Warn("网页搜索探测跳过：客户端不支持访问", "provider", key)
-		return "disabled"
+		return false, false
 	}
 	client := acc.AnthropicClient()
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	supported, err := client.ProbeWebSearch(probeCtx, upstreamModel)
+	supported, err = client.ProbeWebSearch(probeCtx, upstreamModel)
 	if err != nil {
 		slog.Warn("网页搜索自动探测失败", "provider", key, "error", err)
-		return "disabled"
+		return false, false
 	}
 	if !supported {
 		slog.Warn("提供商不支持网页搜索", "provider", key, "model", upstreamModel)
-		return "disabled"
+		return false, true
 	}
 	slog.Info("提供商支持网页搜索", "provider", key, "model", upstreamModel)
-	return "enabled"
+	return true, true
 }
-func resolveModelWebSearchWithProber(ctx context.Context, modelAlias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config, prober webSearchCandidateProber) string {
+
+// resolveModelWebSearchWithProber resolves a single model's web_search mode.
+// It returns the resolved mode, the raw native-support verdict, and whether that
+// verdict is definitive (i.e. safe to cache — true only when the upstream
+// actually answered, not on config short-circuits or transport errors).
+func resolveModelWebSearchWithProber(ctx context.Context, modelAlias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config, prober webSearchCandidateProber) (resolved string, supported bool, definitive bool) {
 	switch modelWS {
 	case config.WebSearchSupportDisabled:
-		return "disabled"
+		return "disabled", false, false
 	case config.WebSearchSupportEnabled:
-		return "enabled"
+		return "enabled", false, false
 	case config.WebSearchSupportInjected:
-		return "injected"
+		return "injected", false, false
 	}
 	if prober == nil {
 		if injectedSearchConfigured(cfg, modelAlias, providerKey) {
-			return "injected"
+			return "injected", false, false
 		}
-		return "disabled"
+		return "disabled", false, false
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
@@ -601,20 +730,20 @@ func resolveModelWebSearchWithProber(ctx context.Context, modelAlias, providerKe
 		slog.Warn("网页搜索模型探测失败", "model", modelAlias, "provider", providerKey, "upstream_model", upstreamModel, "error", err)
 		if injectedSearchConfigured(cfg, modelAlias, providerKey) {
 			slog.Info("网页搜索模型探测失败，回退到注入模式", "model", modelAlias, "provider", providerKey, "upstream_model", upstreamModel)
-			return "injected"
+			return "injected", false, false
 		}
-		return "disabled"
+		return "disabled", false, false
 	}
 	if supported {
 		slog.Info("模型支持网页搜索", "model", modelAlias, "provider", providerKey, "upstream_model", upstreamModel)
-		return "enabled"
+		return "enabled", true, true
 	}
 	if injectedSearchConfigured(cfg, modelAlias, providerKey) {
 		slog.Info("模型不支持原生网页搜索，回退到注入模式", "model", modelAlias, "provider", providerKey, "upstream_model", upstreamModel)
-		return "injected"
+		return "injected", false, true
 	}
 	slog.Warn("模型不支持网页搜索", "model", modelAlias, "provider", providerKey, "upstream_model", upstreamModel)
-	return "disabled"
+	return "disabled", false, true
 }
 
 func injectedSearchConfigured(cfg config.Config, modelAlias, providerKey string) bool {

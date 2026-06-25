@@ -15,6 +15,7 @@ import (
 	"moonbridge/internal/service/configgraph"
 	"moonbridge/internal/service/provider"
 	"moonbridge/internal/service/stats"
+	"moonbridge/internal/service/store"
 	mbtrace "moonbridge/internal/service/trace"
 )
 
@@ -22,6 +23,116 @@ type probeWebSearchCandidateFunc func(context.Context, string, string) (bool, er
 
 func (fn probeWebSearchCandidateFunc) ProbeWebSearchCandidate(ctx context.Context, providerKey, upstreamModel string) (bool, error) {
 	return fn(ctx, providerKey, upstreamModel)
+}
+
+type fakeProbeCache struct {
+	probes  map[string]store.WebSearchProbeRow
+	loadErr error
+	saved   []store.WebSearchProbeRow
+}
+
+func (f *fakeProbeCache) LoadWebSearchProbes() (map[string]store.WebSearchProbeRow, error) {
+	return f.probes, f.loadErr
+}
+
+func (f *fakeProbeCache) SaveWebSearchProbe(row store.WebSearchProbeRow) error {
+	f.saved = append(f.saved, row)
+	return nil
+}
+
+func TestProbeCacheLookupAndSave(t *testing.T) {
+	// nil cache degrades to always-probe (miss).
+	if _, ok := newProbeCache(nil).lookup("candidate:x", "fp"); ok {
+		t.Fatal("nil cache should never hit")
+	}
+
+	fake := &fakeProbeCache{probes: map[string]store.WebSearchProbeRow{
+		"candidate:x": {CandidateKey: "candidate:x", Supported: true, Fingerprint: "fp"},
+	}}
+	pc := newProbeCache(fake)
+
+	if supported, ok := pc.lookup("candidate:x", "fp"); !ok || !supported {
+		t.Fatalf("matching fingerprint should hit: supported=%v ok=%v", supported, ok)
+	}
+	if _, ok := pc.lookup("candidate:x", "different-fp"); ok {
+		t.Fatal("fingerprint mismatch must miss")
+	}
+	if _, ok := pc.lookup("candidate:absent", "fp"); ok {
+		t.Fatal("absent key must miss")
+	}
+
+	pc.save("candidate:y", "fp2", false)
+	if len(fake.saved) != 1 || fake.saved[0].CandidateKey != "candidate:y" || fake.saved[0].Fingerprint != "fp2" || fake.saved[0].Supported {
+		t.Fatalf("save passthrough = %+v", fake.saved)
+	}
+
+	// A load error degrades to always-probe rather than failing.
+	errCache := newProbeCache(&fakeProbeCache{loadErr: context.DeadlineExceeded})
+	if _, ok := errCache.lookup("candidate:x", "fp"); ok {
+		t.Fatal("load error should yield an empty (always-miss) cache")
+	}
+}
+
+func TestProviderWebSearchFingerprintChanges(t *testing.T) {
+	base := config.ProviderDef{BaseURL: "https://a.test", APIKey: "k1", Version: "v1", Protocol: "anthropic"}
+	fp := providerWebSearchFingerprint(base)
+	if fp == "" {
+		t.Fatal("empty fingerprint")
+	}
+	if fp != providerWebSearchFingerprint(base) {
+		t.Fatal("fingerprint not stable for identical input")
+	}
+	mutations := []config.ProviderDef{
+		{BaseURL: "https://b.test", APIKey: "k1", Version: "v1", Protocol: "anthropic"},
+		{BaseURL: "https://a.test", APIKey: "k2", Version: "v1", Protocol: "anthropic"},
+		{BaseURL: "https://a.test", APIKey: "k1", Version: "v2", Protocol: "anthropic"},
+		{BaseURL: "https://a.test", APIKey: "k1", Version: "v1", Protocol: "openai-chat"},
+	}
+	for i, m := range mutations {
+		if providerWebSearchFingerprint(m) == fp {
+			t.Fatalf("mutation %d did not change fingerprint", i)
+		}
+	}
+}
+
+// TestResolvePerProviderWebSearchUsesProbeCache verifies a fingerprint-matching
+// cache entry resolves the provider without probing the upstream (no network)
+// and without writing back.
+func TestResolvePerProviderWebSearchUsesProbeCache(t *testing.T) {
+	pm, err := provider.NewProviderManager(
+		map[string]provider.ProviderConfig{
+			"deepseek": {BaseURL: "https://deepseek.example.test", APIKey: "key-deepseek"},
+		},
+		map[string]provider.ModelRoute{
+			"deepseek-v4-flash": {Provider: "deepseek", Name: "deepseek-v4-flash"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		WebSearchSupport: config.WebSearchSupportAuto,
+		ProviderDefs: map[string]config.ProviderDef{
+			"deepseek": {BaseURL: "https://deepseek.example.test", APIKey: "key-deepseek"},
+		},
+	}
+	candidateKey := provider.WebSearchCandidateKey("deepseek", "deepseek-v4-flash")
+	fp := providerWebSearchFingerprint(cfg.ProviderDefs["deepseek"])
+	cache := &fakeProbeCache{probes: map[string]store.WebSearchProbeRow{
+		candidateKey: {CandidateKey: candidateKey, Supported: true, Fingerprint: fp},
+	}}
+
+	resolvePerProviderWebSearch(context.Background(), cfg, pm, cache)
+
+	if got := pm.ResolvedWebSearch("deepseek"); got != "enabled" {
+		t.Fatalf("provider resolved = %q, want enabled (from cache)", got)
+	}
+	if got := pm.ResolvedWebSearch(candidateKey); got != "enabled" {
+		t.Fatalf("candidate resolved = %q, want enabled (from cache)", got)
+	}
+	if len(cache.saved) != 0 {
+		t.Fatalf("cache hit must not write back, got %d saves", len(cache.saved))
+	}
 }
 
 func TestWelcomeMessage(t *testing.T) {
@@ -119,7 +230,7 @@ func TestResolvePerProviderWebSearchDisabledByConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm)
+	resolvePerProviderWebSearch(context.Background(), cfg, pm, nil)
 	if got := pm.ResolvedWebSearch("default"); got != "disabled" {
 		t.Fatalf("ResolvedWebSearch(default) = %q, want disabled", got)
 	}
@@ -143,7 +254,7 @@ func TestResolvePerProviderWebSearchEnabledByConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm)
+	resolvePerProviderWebSearch(context.Background(), cfg, pm, nil)
 	if got := pm.ResolvedWebSearch("default"); got != "enabled" {
 		t.Fatalf("ResolvedWebSearch(default) = %q, want enabled", got)
 	}
@@ -166,7 +277,7 @@ func TestResolvePerProviderWebSearchOpenAIResponseEnabled(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm)
+	resolvePerProviderWebSearch(context.Background(), cfg, pm, nil)
 	if got := pm.ResolvedWebSearch("openai"); got != "enabled" {
 		t.Fatalf("ResolvedWebSearch(openai) = %q, want enabled for openai-response protocol", got)
 	}
@@ -191,7 +302,7 @@ func TestResolvePerProviderWebSearchFallsBackToGlobal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm)
+	resolvePerProviderWebSearch(context.Background(), cfg, pm, nil)
 	if got := pm.ResolvedWebSearch("default"); got != "disabled" {
 		t.Fatalf("ResolvedWebSearch(default) = %q, want disabled (from global fallback)", got)
 	}
@@ -225,7 +336,7 @@ func TestResolvePerProviderWebSearchAppliesProviderCatalogModelOverride(t *testi
 		t.Fatal(err)
 	}
 
-	resolvePerProviderWebSearch(context.Background(), cfg, pm)
+	resolvePerProviderWebSearch(context.Background(), cfg, pm, nil)
 	if got := pm.ResolvedWebSearch("main"); got != "disabled" {
 		t.Fatalf("ResolvedWebSearch(main) = %q, want disabled", got)
 	}
@@ -253,7 +364,7 @@ func TestResolveModelWebSearchCandidateFallsBackToInjectedWhenUnsupported(t *tes
 		t.Fatal(err)
 	}
 
-	resolved := resolveModelWebSearchWithProber(
+	resolved, _, _ := resolveModelWebSearchWithProber(
 		context.Background(),
 		"deepseek-v4-pro",
 		"opencode",
@@ -288,7 +399,7 @@ func TestResolveModelWebSearchCandidateKeepsEnabledWhenSupported(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resolved := resolveModelWebSearchWithProber(
+	resolved, _, _ := resolveModelWebSearchWithProber(
 		context.Background(),
 		"deepseek-v4-flash",
 		"deepseek",
