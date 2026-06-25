@@ -2119,7 +2119,7 @@ func (s *Server) handleAdapterStream(
 	// Update trace record with the final response data.
 	if finalResp != nil {
 		streamRecord.OpenAIResponse = finalResp
-	} else {
+	} else if clientProtocol == config.ProtocolOpenAIResponse {
 		streamRecord.OpenAIResponse = &openai.Response{
 			Model:  model,
 			Status: "completed",
@@ -2232,7 +2232,7 @@ func (s *Server) writeCoreResponseAsOpenAIStream(
 
 	if finalResp != nil {
 		streamRecord.OpenAIResponse = finalResp
-	} else {
+	} else if clientProtocol == config.ProtocolOpenAIResponse {
 		streamRecord.OpenAIResponse = &openai.Response{Model: model, Status: "completed"}
 	}
 
