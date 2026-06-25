@@ -218,6 +218,10 @@ func (ts *testServer) ListSessions() []SessionInfo {
 	return nil
 }
 
+func (ts *testServer) ReprobeWebSearch(ctx context.Context, providerKey string) (string, error) {
+	return "disabled", nil
+}
+
 type configAccessorWrapper struct {
 	cfg config.Config
 }

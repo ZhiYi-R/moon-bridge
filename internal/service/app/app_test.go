@@ -260,6 +260,55 @@ func TestResolvePerProviderWebSearchEnabledByConfig(t *testing.T) {
 	}
 }
 
+func TestReprobeProviderWebSearchDeterministicConfig(t *testing.T) {
+	cfg := config.Config{
+		ProviderDefs: map[string]config.ProviderDef{
+			"default": {WebSearchSupport: config.WebSearchSupportEnabled},
+		},
+	}
+	pm, err := provider.NewProviderManager(
+		map[string]provider.ProviderConfig{
+			"default": {BaseURL: "https://test.example.test", APIKey: "test-key"},
+		},
+		map[string]provider.ModelRoute{
+			"moonbridge": {Name: "claude-test", Provider: "default"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	resolved, err := reprobeProviderWebSearch(context.Background(), cfg, pm, nil, "default")
+	if err != nil {
+		t.Fatalf("reprobeProviderWebSearch error = %v", err)
+	}
+	if resolved != "enabled" {
+		t.Fatalf("resolved = %q, want enabled", resolved)
+	}
+	if got := pm.ResolvedWebSearch("default"); got != "enabled" {
+		t.Fatalf("ResolvedWebSearch(default) = %q, want enabled", got)
+	}
+}
+
+func TestReprobeProviderWebSearchUnknownProvider(t *testing.T) {
+	cfg := config.Config{ProviderDefs: map[string]config.ProviderDef{}}
+	pm, err := provider.NewProviderManager(
+		map[string]provider.ProviderConfig{
+			"default": {BaseURL: "https://test.example.test", APIKey: "test-key"},
+		},
+		map[string]provider.ModelRoute{
+			"moonbridge": {Name: "claude-test", Provider: "default"},
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := reprobeProviderWebSearch(context.Background(), cfg, pm, nil, "missing"); err == nil {
+		t.Fatal("reprobeProviderWebSearch(missing) error = nil, want error")
+	}
+}
+
 func TestResolvePerProviderWebSearchOpenAIResponseEnabled(t *testing.T) {
 	cfg := config.Config{
 		WebSearchSupport: config.WebSearchSupportEnabled,

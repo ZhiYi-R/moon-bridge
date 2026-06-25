@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 
 	"moonbridge/internal/extension/plugin"
@@ -23,6 +24,7 @@ type Router struct {
 	server   interface {
 		ListSessions() []SessionInfo
 		CurrentConfig() ConfigAccessor
+		ReprobeWebSearch(ctx context.Context, providerKey string) (string, error)
 	}
 }
 
@@ -43,6 +45,7 @@ type SessionInfo struct {
 func NewRouter(cfg ConfigStore, rt *runtime.Runtime, st *stats.SessionStats, reg *plugin.Registry, srv interface {
 	ListSessions() []SessionInfo
 	CurrentConfig() ConfigAccessor
+	ReprobeWebSearch(ctx context.Context, providerKey string) (string, error)
 }) http.Handler {
 	r := &Router{
 		store:    cfg,
@@ -74,6 +77,7 @@ func registerRoutes(mux *http.ServeMux, r *Router) {
 	mux.HandleFunc("PATCH /providers/{key}", r.handlePatchProvider)
 	mux.HandleFunc("DELETE /providers/{key}", r.handleDeleteProvider)
 	mux.HandleFunc("POST /providers/{key}/test", r.handleTestProvider)
+	mux.HandleFunc("POST /providers/{key}/web-search/reprobe", r.handleReprobeProviderWebSearch)
 
 	// Offer endpoints
 	mux.HandleFunc("POST /providers/{key}/offers", r.handleCreateOffer)

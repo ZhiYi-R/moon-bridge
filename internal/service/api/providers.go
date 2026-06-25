@@ -339,3 +339,33 @@ func (r *Router) handleTestProvider(w http.ResponseWriter, req *http.Request) {
 	result["success"] = true
 	respondJSON(w, http.StatusOK, result)
 }
+
+// POST /providers/{key}/web-search/reprobe
+func (r *Router) handleReprobeProviderWebSearch(w http.ResponseWriter, req *http.Request) {
+	key := req.PathValue("key")
+	if key == "" {
+		respondError(w, http.StatusBadRequest, "invalid_key", "无效的 provider key")
+		return
+	}
+
+	cfg := r.runtime.Current()
+	if _, ok := cfg.Config.ProviderDefs[key]; !ok {
+		respondError(w, http.StatusNotFound, "not_found", fmt.Sprintf("provider %q 不存在", key))
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(req.Context(), 35*time.Second)
+	defer cancel()
+
+	resolved, err := r.server.ReprobeWebSearch(ctx, key)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "reprobe_failed", err.Error())
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]any{
+		"provider":  key,
+		"resolved":  resolved,
+		"timestamp": time.Now().UTC().Format(time.RFC3339),
+	})
+}

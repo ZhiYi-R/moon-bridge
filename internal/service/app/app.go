@@ -364,6 +364,13 @@ func runTransform(ctx context.Context, cfg config.Config, errors io.Writer) erro
 		AdapterRegistry:  adapterReg,
 		SessionManager:   sessMgr,
 		UsageTracker:     usageTrk,
+		WebSearchReprober: func(rctx context.Context, providerKey string) (string, error) {
+			snap := rt.Current()
+			if snap == nil {
+				return "", fmt.Errorf("runtime snapshot unavailable")
+			}
+			return reprobeProviderWebSearch(rctx, snap.Config, snap.ProviderMgr, cs, providerKey)
+		},
 	})
 
 	wrapped := handler
@@ -582,6 +589,116 @@ func resolvePerProviderWebSearch(ctx context.Context, cfg config.Config, pm *pro
 		}
 		resolveModelWebSearch(ctx, alias, providerKey, route.Model, modelWS, pm, cfg, pcache)
 	}
+}
+
+// reprobeProviderWebSearch forces a fresh web_search resolution for a single
+// provider, bypassing the cache lookup and writing the new verdict back. It also
+// re-resolves the provider's model-catalog aliases and routes (clearing their
+// stale resolution first so the dedup does not short-circuit the reprobe).
+// Returns the resolved provider-level mode.
+func reprobeProviderWebSearch(ctx context.Context, cfg config.Config, pm *provider.ProviderManager, cache webSearchProbeCache, providerKey string) (string, error) {
+	if pm == nil {
+		return "", fmt.Errorf("provider manager unavailable")
+	}
+	def, ok := cfg.ProviderDefs[providerKey]
+	if !ok {
+		return "", fmt.Errorf("provider %q not found", providerKey)
+	}
+	// No preload: reprobe always probes and writes the result through.
+	pcache := &probeCache{cache: cache}
+	protocol := pm.ProtocolForKey(providerKey)
+	support := cfg.WebSearchForProvider(providerKey)
+	fingerprint := providerWebSearchFingerprint(def)
+	upstreamModel := pm.FirstUpstreamModelForKey(providerKey)
+	primaryCandidate := ""
+	if upstreamModel != "" {
+		primaryCandidate = provider.WebSearchCandidateKey(providerKey, upstreamModel)
+	}
+
+	var resolved string
+	switch protocol {
+	case config.ProtocolAnthropic:
+		switch support {
+		case config.WebSearchSupportDisabled:
+			resolved = "disabled"
+		case config.WebSearchSupportEnabled:
+			resolved = "enabled"
+		case config.WebSearchSupportInjected:
+			resolved = "injected"
+		default:
+			supported, definitive := probeProviderWebSearch(ctx, providerKey, pm)
+			if definitive {
+				pcache.save(primaryCandidate, fingerprint, supported)
+			}
+			resolved = providerProbeMode(supported, cfg)
+			if !supported && resolved == "injected" {
+				slog.Info("网页搜索重探失败，回退到注入模式", "provider", providerKey)
+			}
+		}
+	case config.ProtocolOpenAIResponse:
+		switch support {
+		case config.WebSearchSupportDisabled, config.WebSearchSupportInjected:
+			resolved = "disabled"
+		default:
+			resolved = "enabled"
+		}
+	default:
+		if cfg.TavilyAPIKey != "" {
+			resolved = "injected"
+		} else {
+			resolved = "disabled"
+		}
+	}
+
+	// Clear stale model/route resolution for this provider so the dedup inside
+	// resolveModelWebSearch does not reuse old verdicts. The primary candidate is
+	// re-set fresh afterwards so its aliases reuse the just-probed verdict.
+	for modelName := range def.Models {
+		alias := providerKey + "/" + modelName
+		newAlias := modelName + "(" + providerKey + ")"
+		candidate := provider.WebSearchCandidateKey(providerKey, modelName)
+		pm.SetResolvedWebSearch("model:"+alias, "")
+		pm.SetResolvedWebSearch("model:"+newAlias, "")
+		pm.SetResolvedWebSearch(candidate, "")
+	}
+	for alias, route := range cfg.Routes {
+		routeProvider := route.Provider
+		if routeProvider == "" {
+			routeProvider = pm.DefaultKey()
+		}
+		if routeProvider != providerKey {
+			continue
+		}
+		pm.SetResolvedWebSearch("model:"+alias, "")
+		pm.SetResolvedWebSearch(provider.WebSearchCandidateKey(providerKey, route.Model), "")
+	}
+
+	if primaryCandidate != "" {
+		pm.SetResolvedWebSearch(primaryCandidate, resolved)
+	}
+	pm.SetResolvedWebSearch(providerKey, resolved)
+	slog.Info("网页搜索已重探", "provider", providerKey, "resolved", resolved)
+
+	// Re-resolve model-level overrides for this provider's catalog + routes.
+	for modelName := range def.Models {
+		alias := providerKey + "/" + modelName
+		newAlias := modelName + "(" + providerKey + ")"
+		modelWS := cfg.WebSearchForModel(alias)
+		resolveModelWebSearch(ctx, alias, providerKey, modelName, modelWS, pm, cfg, pcache)
+		resolveModelWebSearch(ctx, newAlias, providerKey, modelName, modelWS, pm, cfg, pcache)
+	}
+	for alias, route := range cfg.Routes {
+		routeProvider := route.Provider
+		if routeProvider == "" {
+			routeProvider = pm.DefaultKey()
+		}
+		if routeProvider != providerKey {
+			continue
+		}
+		modelWS := cfg.WebSearchForModel(alias)
+		resolveModelWebSearch(ctx, alias, providerKey, route.Model, modelWS, pm, cfg, pcache)
+	}
+	return resolved, nil
 }
 
 func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamModel string, modelWS config.WebSearchSupport, pm *provider.ProviderManager, cfg config.Config, pcache *probeCache) {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -52,29 +53,33 @@ type Config struct {
 	Store            store.ConfigStore
 	SessionManager   session.Manager
 	UsageTracker     usage.Tracker
+	// WebSearchReprober forces a fresh web_search probe for one provider and
+	// returns the resolved mode. Injected by the app layer (nil if unavailable).
+	WebSearchReprober func(ctx context.Context, providerKey string) (string, error)
 }
 
 type Server struct {
-	adapterRegistry *format.Registry
-	provider        provider.ProviderClient
-	providerMgr     *provider.ProviderManager
-	openAIHTTP      *http.Client
-	proxyHTTP       *http.Client
-	chatClients     map[string]any
-	googleClients   map[string]any
-	responsesClients map[string]any
-	tracer          *mbtrace.Tracer
-	traceErrors     io.Writer
-	stats           *stats.SessionStats
-	pluginRegistry  *plugin.Registry
-	mux             *http.ServeMux
-	onceClose       sync.Once
-	appConfig       config.ServerConfig
-	serverCfg       config.ServerConfig
-	runtime         *runtime.Runtime
-	store           store.ConfigStore
-	sessionManager  session.Manager
-	usageTracker    usage.Tracker
+	adapterRegistry   *format.Registry
+	provider          provider.ProviderClient
+	providerMgr       *provider.ProviderManager
+	openAIHTTP        *http.Client
+	proxyHTTP         *http.Client
+	chatClients       map[string]any
+	googleClients     map[string]any
+	responsesClients  map[string]any
+	tracer            *mbtrace.Tracer
+	traceErrors       io.Writer
+	stats             *stats.SessionStats
+	pluginRegistry    *plugin.Registry
+	mux               *http.ServeMux
+	onceClose         sync.Once
+	appConfig         config.ServerConfig
+	serverCfg         config.ServerConfig
+	runtime           *runtime.Runtime
+	store             store.ConfigStore
+	sessionManager    session.Manager
+	usageTracker      usage.Tracker
+	webSearchReprober func(ctx context.Context, providerKey string) (string, error)
 
 	// clientCaches holds lazily-created HTTP clients for runtime-reloaded providers.
 	// Keyed by provider key, invalidated when Runtime reloads.
@@ -190,28 +195,29 @@ func New(cfg Config) *Server {
 		cfg.SessionManager = newDefaultSessionManager(cfg)
 	}
 	s := &Server{
-		adapterRegistry: cfg.AdapterRegistry,
-		provider:        cfg.Provider,
-		providerMgr:     cfg.ProviderMgr,
-		openAIHTTP:      cfg.OpenAIHTTPClient,
-		proxyHTTP:       cfg.ProxyHTTPClient,
-		tracer:          cfg.Tracer,
-		traceErrors:     cfg.TraceErrors,
-		stats:           cfg.Stats,
-		pluginRegistry:  cfg.PluginRegistry,
-		mux:             http.NewServeMux(),
-		appConfig:       cfg.AppConfig,
-		serverCfg:       cfg.ServerCfg,
-		chatClients:      cfg.ChatClients,
-		googleClients:    cfg.GoogleClients,
-		responsesClients: cfg.ResponsesClients,
-		runtime:          cfg.Runtime,
-		store:           cfg.Store,
-		sessionManager:  cfg.SessionManager,
-		usageTracker:    cfg.UsageTracker,
-		clientCache:     make(map[string]*chat.Client),
-		googleCache:     make(map[string]*google.Client),
-		responsesCache:  make(map[string]*openai.Client),
+		adapterRegistry:   cfg.AdapterRegistry,
+		provider:          cfg.Provider,
+		providerMgr:       cfg.ProviderMgr,
+		openAIHTTP:        cfg.OpenAIHTTPClient,
+		proxyHTTP:         cfg.ProxyHTTPClient,
+		tracer:            cfg.Tracer,
+		traceErrors:       cfg.TraceErrors,
+		stats:             cfg.Stats,
+		pluginRegistry:    cfg.PluginRegistry,
+		mux:               http.NewServeMux(),
+		appConfig:         cfg.AppConfig,
+		serverCfg:         cfg.ServerCfg,
+		chatClients:       cfg.ChatClients,
+		googleClients:     cfg.GoogleClients,
+		responsesClients:  cfg.ResponsesClients,
+		runtime:           cfg.Runtime,
+		store:             cfg.Store,
+		sessionManager:    cfg.SessionManager,
+		usageTracker:      cfg.UsageTracker,
+		webSearchReprober: cfg.WebSearchReprober,
+		clientCache:       make(map[string]*chat.Client),
+		googleCache:       make(map[string]*google.Client),
+		responsesCache:    make(map[string]*openai.Client),
 	}
 	s.mux.HandleFunc("/v1/responses", s.handleResponses)
 	s.mux.HandleFunc("/responses", s.handleResponses)
@@ -324,6 +330,15 @@ func (s *Server) CurrentConfig() api.ConfigAccessor {
 
 func (s *Server) AuthToken() string {
 	return s.currentConfig().AuthToken
+}
+
+// ReprobeWebSearch forces a fresh web_search probe for the given provider and
+// returns the resolved mode. Returns an error if no reprober was injected.
+func (s *Server) ReprobeWebSearch(ctx context.Context, providerKey string) (string, error) {
+	if s.webSearchReprober == nil {
+		return "", fmt.Errorf("web search reprober unavailable")
+	}
+	return s.webSearchReprober(ctx, providerKey)
 }
 
 func (s *Server) registerPluginRoutes() {
