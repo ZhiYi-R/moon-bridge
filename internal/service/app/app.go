@@ -494,9 +494,21 @@ func resolveModelWebSearch(ctx context.Context, alias, providerKey, upstreamMode
 		}
 		return
 	default:
-		pm.SetResolvedWebSearch(modelKey, "disabled")
-		pm.SetResolvedWebSearch(candidateKey, "disabled")
-		slog.Info("跳过模型级网页搜索：不支持的协议", "model", alias, "protocol", protocol)
+		// openai-chat / google-genai: honor model-level config, don't force disabled.
+		switch modelWS {
+		case config.WebSearchSupportInjected:
+			pm.SetResolvedWebSearch(modelKey, "injected")
+			pm.SetResolvedWebSearch(candidateKey, "injected")
+			slog.Info("模型启用注入式网页搜索", "model", alias, "protocol", protocol)
+		case config.WebSearchSupportEnabled:
+			pm.SetResolvedWebSearch(modelKey, "enabled")
+			pm.SetResolvedWebSearch(candidateKey, "enabled")
+			slog.Info("模型启用网页搜索", "model", alias, "protocol", protocol)
+		default:
+			pm.SetResolvedWebSearch(modelKey, "disabled")
+			pm.SetResolvedWebSearch(candidateKey, "disabled")
+			slog.Info("模型禁用网页搜索", "model", alias, "protocol", protocol)
+		}
 		return
 	}
 	switch modelWS {
