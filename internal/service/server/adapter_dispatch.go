@@ -2788,7 +2788,7 @@ func normalizeAnthropicRequest(upstream any) (anthropic.MessageRequest, error) {
 // Returns true if injection was applied.
 func (s *Server) injectCoreWebSearch(ctx context.Context, coreReq *format.CoreRequest, preferred provider.ProviderCandidate, model string, wsMode string) bool {
 	_ = ctx
-	if wsMode != "injected" {
+	if wsMode == "disabled" || wsMode == "" {
 		// Strip Anthropic server-side web_search tools when the upstream doesn't support them.
 		// Claude CLI sends WebSearch/WebFetch tool definitions that must be removed.
 		filtered := make([]format.CoreTool, 0, len(coreReq.Tools))
