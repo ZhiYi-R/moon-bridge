@@ -1869,6 +1869,13 @@ func convertToolWithNamespace(tool Tool, namespace string, disablePatchProxy fun
 			Description: "Search the web for up-to-date information.",
 			Extensions:  ext,
 		}}
+	case "tool_search":
+		ext["source_type"] = tool.Type
+		return []format.CoreTool{{
+			Name:        tool.Type,
+			Description: "Search over deferred tool metadata and expose matching tools for the next model call.",
+			Extensions:  ext,
+		}}
 	case "file_search":
 		ext["source_type"] = tool.Type
 		ext["max_num_results"] = tool.MaxNumResults
