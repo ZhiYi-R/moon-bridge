@@ -131,6 +131,10 @@ func (s *Server) handleWithAdapters(
 		s.onRequestCompleted(openAIReq.Model, "", "", requestStart, zeroUsage("adapter", "none"), 0, "error", "to_core_request")
 		return
 	}
+	// Filter out tools with empty names — Codex desktop sometimes sends
+	// tools with empty names that upstream APIs (DeepSeek, Qwen) reject
+	// with a 400 error.
+	coreReq.Tools = filterEmptyCoreToolNames(coreReq.Tools)
 
 	// ------------------------------------------------------------------
 	// 3. Pick upstream provider candidate, resolve ProviderAdapter.
