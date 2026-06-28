@@ -126,6 +126,10 @@ func (s *Server) handleWithAdapters(
 		writeOpenAIError(w, http.StatusInternalServerError, payload)
 		return
 	}
+	// Filter out tools with empty names — Codex desktop sometimes sends
+	// tools with empty names that upstream APIs (DeepSeek, Qwen) reject
+	// with a 400 error.
+	coreReq.Tools = filterEmptyCoreToolNames(coreReq.Tools)
 
 	// ------------------------------------------------------------------
 	// 3. Pick upstream provider candidate, resolve ProviderAdapter.
