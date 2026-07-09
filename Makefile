@@ -1,4 +1,4 @@
-.PHONY: test cover cover-html cover-check build webui-install webui-test webui-build build-with-webui
+.PHONY: test cover cover-html cover-check build webui-install webui-test webui-build build-with-webui desktop-install-deps desktop-sidecar desktop-sidecar-fast desktop-dev desktop-dev-fast desktop-build desktop-build-app desktop-icons desktop-app-install
 
 COVERAGE_THRESHOLD := 95
 COVER_PROFILE := /tmp/moonbridge-coverage.out
@@ -20,6 +20,40 @@ webui-build:
 
 build-with-webui: webui-build
 	CGO_ENABLED=0 go build ./...
+
+# Desktop (Tauri) — see docs/desktop.md
+desktop-install-deps:
+	npm --prefix webui install
+	npm --prefix desktop install
+
+desktop-sidecar:
+	bash desktop/scripts/build-sidecar.sh
+
+desktop-sidecar-fast:
+	SKIP_WEBUI=1 bash desktop/scripts/build-sidecar.sh
+
+desktop-dev: desktop-sidecar
+	npm --prefix desktop run tauri -- dev
+
+desktop-dev-fast: desktop-sidecar-fast
+	npm --prefix desktop run tauri -- dev
+
+desktop-build: desktop-sidecar
+	npm --prefix desktop run tauri -- build
+
+desktop-build-app: desktop-sidecar
+	npm --prefix desktop run tauri -- build -- --bundles app
+
+desktop-icons:
+	npm --prefix desktop run icons
+
+desktop-app-install: desktop-build-app
+	@APP='desktop/src-tauri/target/debug/bundle/macos/Moon Bridge.app'; \
+	if [ ! -d "$$APP" ]; then APP='desktop/src-tauri/target/release/bundle/macos/Moon Bridge.app'; fi; \
+	test -d "$$APP" || { echo "missing Moon Bridge.app — run make desktop-build-app"; exit 1; }; \
+	rm -rf '/Applications/Moon Bridge.app'; \
+	cp -R "$$APP" /Applications/; \
+	echo 'Installed /Applications/Moon Bridge.app'
 
 test:
 	CGO_ENABLED=0 go test ./...

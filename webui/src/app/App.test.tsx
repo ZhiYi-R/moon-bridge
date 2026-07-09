@@ -49,42 +49,33 @@ describe("AppShell", () => {
     expect(screen.queryByRole("button", { name: /apply/i })).not.toBeInTheDocument();
   });
 
-  test("uses Bauhaus locale actions instead of a native browser select", () => {
+  test("uses a compact custom language select in the app bar", () => {
     renderWithConsoleProviders(
       <MemoryRouter>
         <AppShell content={<div>Console content</div>} />
       </MemoryRouter>
     );
 
-    expect(document.querySelector(".top-app-bar__meta select")).not.toBeInTheDocument();
-    expect(screen.getByRole("group", { name: /language/i })).toBeInTheDocument();
-    expect(getMaterialButton(document, "English", "filled")).toHaveAttribute("aria-pressed", "true");
-    expect(getMaterialButton(document, "中文", "outlined")).toHaveAttribute("aria-pressed", "false");
+    const languageTrigger = screen.getByRole("button", { name: /language/i });
+    expect(languageTrigger).toHaveAttribute("aria-haspopup", "listbox");
+    expect(document.querySelector(".locale-switch--select")).toBeInTheDocument();
+    expect(document.querySelector(".locale-switch--select select.bh-select__native")).toBeInTheDocument();
   });
 
-  test("keeps global filled buttons as Bauhaus filled controls", () => {
+  test("changes locale through the custom language menu", () => {
     renderWithConsoleProviders(
       <MemoryRouter>
         <AppShell content={<div>Console content</div>} />
       </MemoryRouter>
     );
 
-    const selectedLocaleButton = getMaterialButton(document, "English", "filled");
-    expect(selectedLocaleButton.className).toContain("bh-button--filled");
-  });
-
-  test("changes locale through Bauhaus locale actions", () => {
-    renderWithConsoleProviders(
-      <MemoryRouter>
-        <AppShell content={<div>Console content</div>} />
-      </MemoryRouter>
-    );
-
-    fireEvent.click(getMaterialButton(document, "中文", "outlined"));
+    fireEvent.click(screen.getByRole("button", { name: /language/i }));
+    fireEvent.mouseDown(screen.getByRole("option", { name: "中文" }));
 
     expect(screen.getByRole("navigation", { name: "控制台分区" })).toBeInTheDocument();
-    expect(getMaterialButton(document, "English", "outlined")).toHaveAttribute("aria-pressed", "false");
-    expect(getMaterialButton(document, "中文", "filled")).toHaveAttribute("aria-pressed", "true");
+    expect(document.querySelector(".locale-switch--select select.bh-select__native")).toHaveValue(
+      "zh-CN"
+    );
   });
 
   test("changes theme through the multi-theme picker", () => {
@@ -146,18 +137,3 @@ describe("AppShell", () => {
     expectPanelRuleToAvoidEdges(".placeholder-panel");
   });
 });
-
-function getMaterialButton(
-  container: ParentNode,
-  label: string,
-  variant: "filled" | "outlined"
-) {
-  const tagName = variant === "filled" ? "button.bh-button--filled, .bh-button--filled" : "button.bh-button--outlined, .bh-button--outlined";
-  const element = Array.from(container.querySelectorAll(tagName)).find(
-    (button) => button.textContent?.trim() === label
-  );
-  if (!element) {
-    throw new Error(`Expected a Bauhaus ${variant} button labelled "${label}".`);
-  }
-  return element as HTMLElement;
-}

@@ -1,0 +1,20 @@
+{
+  "name": "@moonbridge/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "sidecar": "bash ./scripts/build-sidecar.sh",
+    "sidecar:fast": "SKIP_WEBUI=1 bash ./scripts/build-sidecar.sh",
+    "dev": "bash ./scripts/build-sidecar.sh && tauri dev",
+    "dev:fast": "SKIP_WEBUI=1 bash ./scripts/build-sidecar.sh && tauri dev",
+    "build": "bash ./scripts/build-sidecar.sh && tauri build",
+    "icons:render": "node ./scripts/render-icon.mjs",
+    "icons": "npm run icons:render && tauri icon ./app-icon.png",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "^2.6.2",
+    "@tauri-apps/cli": "^2.5.0"
+  }
+}

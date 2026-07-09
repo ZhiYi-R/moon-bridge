@@ -257,15 +257,135 @@ export const baseStyles = `
     resize: vertical;
   }
 
-  .bh-select__control {
-    appearance: none;
+  .bh-select__shell {
+    position: relative;
+  }
+
+  .bh-select__native {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .bh-select__trigger {
+    flex: 1;
+    min-width: 0;
+    min-height: 40px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    margin: 0;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: var(--mb-color-on-surface);
+    font: inherit;
+    font-weight: 500;
+    text-align: left;
     cursor: pointer;
-    background-image: linear-gradient(45deg, transparent 50%, var(--mb-color-on-surface) 50%),
-      linear-gradient(135deg, var(--mb-color-on-surface) 50%, transparent 50%);
-    background-position: calc(100% - 16px) calc(50% - 2px), calc(100% - 11px) calc(50% - 2px);
-    background-size: 5px 5px, 5px 5px;
-    background-repeat: no-repeat;
-    padding-right: 28px;
+    padding: 8px 10px 8px 12px;
+  }
+
+  .bh-select__trigger:focus-visible {
+    outline: 2px solid var(--mb-color-primary);
+    outline-offset: -2px;
+  }
+
+  .bh-select__value {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .bh-select__value-text {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .bh-select__value-icon,
+  .bh-select__option-icon {
+    display: inline-flex;
+    flex-shrink: 0;
+  }
+
+  .bh-select__chevron {
+    display: inline-flex;
+    flex-shrink: 0;
+    color: var(--mb-color-on-surface-variant);
+  }
+
+  .bh-select__menu {
+    position: absolute;
+    z-index: 40;
+    top: calc(100% + 4px);
+    left: -2px;
+    right: -2px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    max-height: min(280px, 50vh);
+    overflow: auto;
+    border: 2px solid var(--mb-color-outline);
+    background: var(--mb-color-surface-container-lowest);
+    box-shadow: var(--mb-elevation-3);
+  }
+
+  .bh-select__option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 36px;
+    padding: 8px 10px;
+    cursor: pointer;
+    color: var(--mb-color-on-surface);
+    font-weight: 500;
+  }
+
+  .bh-select__option-label {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .bh-select__option-check {
+    display: inline-flex;
+    color: var(--mb-color-primary);
+  }
+
+  .bh-select__option--active {
+    background: color-mix(in srgb, var(--mb-color-primary) 12%, transparent);
+  }
+
+  .bh-select__option--selected {
+    font-weight: 700;
+  }
+
+  .bh-select--compact .bh-select__trigger {
+    min-height: 28px;
+    padding: 2px 4px 2px 6px;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+
+  .bh-select--compact .bh-select__menu {
+    min-width: 132px;
+  }
+
+  .bh-select--compact .bh-select__option {
+    min-height: 32px;
+    padding: 6px 8px;
+    font-size: 0.8rem;
   }
 
   .bh-field__support {
@@ -613,7 +733,44 @@ export const baseStyles = `
     background: var(--mb-color-surface-container);
   }
 
-  .locale-switch > span,
+  .locale-switch.locale-switch--select {
+    min-width: 118px;
+    max-width: 148px;
+    min-height: 32px;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px 0 8px;
+  }
+
+  .locale-switch.locale-switch--select.bh-field {
+    margin: 0;
+  }
+
+  .locale-switch.locale-switch--select .bh-select__compact-label {
+    flex-shrink: 0;
+    color: var(--mb-color-on-surface-variant);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    line-height: 1;
+  }
+
+  .locale-switch.locale-switch--select .bh-field__shell {
+    flex: 1;
+    min-height: 28px;
+    border: none;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .locale-switch.locale-switch--select .bh-select__menu {
+    left: auto;
+    right: -2px;
+    width: max(140px, 100%);
+  }
+
   .theme-picker > span {
     min-height: 30px;
     display: inline-flex;
@@ -626,7 +783,6 @@ export const baseStyles = `
     text-transform: uppercase;
   }
 
-  .locale-switch__button,
   .theme-picker__button {
     min-width: 36px;
     min-height: 30px !important;

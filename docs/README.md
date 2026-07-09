@@ -21,3 +21,4 @@ Moon Bridge 是一个将 OpenAI Responses API（Codex CLI 原生协议）转换�
 | [Extension 系统](extension-system.md) | Plugin 接口、能力类型、Server/持久化集成、注册流程、Demo 实现 |
 | [Extension 一览](extensions-overview.md) | deepseek_v4、visual、注入式 Web Search 模块，以及开发中的持久化/metrics 能力说明 |
 | [配置迁移](config-migration.md) | 旧配置迁移脚本使用说明 |
+| [桌面端（Tauri）](desktop.md) | Tauri 壳 + Go sidecar 开发与打包 |

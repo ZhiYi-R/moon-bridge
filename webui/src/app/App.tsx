@@ -2,12 +2,12 @@ import { type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { motion } from "motion/react";
 import {
-  MaterialFilledButton,
   MaterialIconButton,
   MaterialOutlinedButton
 } from "../components/MaterialButton";
+import { MaterialSelect } from "../components/MaterialSelect";
 import { Icon } from "../components/ui/Icon";
-import { type MessageKey } from "../i18n/messages";
+import { type Locale, type MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/I18nProvider";
 import { useConsoleTheme } from "../theme/ThemeProvider";
 import type { ConsoleTheme } from "../theme/tokens";
@@ -15,6 +15,11 @@ import { pageMotion } from "../theme/motion";
 import { shellStyles } from "./styles/shellStyles";
 import { ConsoleAuthGate } from "./auth/ConsoleAuthGate";
 import { useConsoleAuth } from "./auth/ConsoleAuthContext";
+
+const localeOptions: Array<{ value: Locale; labelKey: MessageKey }> = [
+  { value: "en-US", labelKey: "app.language.en" },
+  { value: "zh-CN", labelKey: "app.language.zh" }
+];
 
 const navItems = [
   { to: "/overview", icon: "dashboard", labelKey: "nav.overview" },
@@ -78,17 +83,18 @@ function AppShellContent({ content }: { content?: ReactNode }) {
           </div>
         </div>
         <div className="top-app-bar__meta">
-          <div className="locale-switch" role="group" aria-label={t("app.language")}>
-            <span>{t("app.language")}</span>
-            {(["en-US", "zh-CN"] as const).map((nextLocale) => (
-              <LocaleButton
-                key={nextLocale}
-                label={t(nextLocale === "en-US" ? "app.language.en" : "app.language.zh")}
-                onClick={() => setLocale(nextLocale)}
-                selected={locale === nextLocale}
-              />
-            ))}
-          </div>
+          <MaterialSelect
+            className="locale-switch locale-switch--select"
+            density="compact"
+            label={t("app.language")}
+            ariaLabel={t("app.language")}
+            value={locale}
+            options={localeOptions.map((option) => ({
+              value: option.value,
+              label: t(option.labelKey)
+            }))}
+            onChange={(value) => setLocale(value as Locale)}
+          />
           <div className="theme-picker" role="group" aria-label={t("theme.picker")}>
             <span>{t("theme.picker")}</span>
             {themes.map((pack) => (
@@ -139,29 +145,6 @@ function AppShellContent({ content }: { content?: ReactNode }) {
         </motion.main>
       </div>
     </div>
-  );
-}
-
-function LocaleButton({
-  label,
-  onClick,
-  selected
-}: {
-  label: string;
-  onClick: () => void;
-  selected: boolean;
-}) {
-  if (selected) {
-    return (
-      <MaterialFilledButton ariaPressed={selected} className="locale-switch__button" onClick={onClick}>
-        {label}
-      </MaterialFilledButton>
-    );
-  }
-  return (
-    <MaterialOutlinedButton ariaPressed={selected} className="locale-switch__button" onClick={onClick}>
-      {label}
-    </MaterialOutlinedButton>
   );
 }
 

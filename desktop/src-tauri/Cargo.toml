@@ -1,0 +1,26 @@
+[package]
+name = "moonbridge-desktop"
+version = "0.1.0"
+description = "Moon Bridge desktop shell (Tauri + Go sidecar)"
+authors = ["Moon Bridge"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "moonbridge_desktop_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+thiserror = "2"
+url = "2"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true

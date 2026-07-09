@@ -68,6 +68,13 @@ webui/*.tsbuildinfo
 webui/test-results/
 webui/playwright-report/
 
+# Desktop (Tauri)
+desktop/node_modules/
+desktop/src-tauri/target/
+desktop/src-tauri/binaries/*
+!desktop/src-tauri/binaries/.gitkeep
+desktop/src-tauri/gen/
+
 # Wrangler dev vars
 .dev.vars
 /moonbridge

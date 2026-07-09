@@ -37,10 +37,15 @@ moonbridge
 # 源码开发也可以直接运行
 go run ./cmd/moonbridge
 
+# 桌面端（Tauri）— 详见 docs/desktop.md
+# 需：Go 1.25+、Node、Rust（rustup）、macOS Xcode CLT
+make desktop-install-deps
+make desktop-dev
+
 # 另见 CookBook.md 中的详细使用场景
 ```
 
-源码开发要求 Go 1.25+。
+源码开发要求 Go 1.25+。桌面端另需 Rust（rustup）与 Node.js，见 [docs/desktop.md](docs/desktop.md)。
 
 ## 核心能力
 

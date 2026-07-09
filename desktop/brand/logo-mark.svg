@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" rx="228" fill="#0B1220"/>
+  <!-- solid crescent moon (smooth curves) -->
+  <path fill="#F8E7C0" d="
+    M 620 200
+    C 720 240 780 340 760 450
+    C 740 560 640 640 520 650
+    C 440 656 370 630 320 580
+    C 400 620 500 610 570 540
+    C 650 460 660 340 600 260
+    C 580 230 600 210 620 200
+    Z"/>
+  <!-- bridge deck -->
+  <path d="M 90 720 C 260 720 350 530 512 522 C 674 530 764 720 934 720"
+        fill="none" stroke="#E2E8F0" stroke-width="36" stroke-linecap="round"/>
+  <path d="M 150 760 C 300 760 380 590 512 582 C 644 590 724 760 874 760"
+        fill="none" stroke="#64748B" stroke-width="12" stroke-linecap="round"/>
+  <!-- piers -->
+  <rect x="250" y="710" width="38" height="110" rx="10" fill="#94A3B8"/>
+  <rect x="736" y="710" width="38" height="110" rx="10" fill="#94A3B8"/>
+
+</svg>
