@@ -27,23 +27,30 @@ function StatusPage() {
 
 function getOutlinedTextField(label: string) {
   const element = Array.from(
-    document.querySelectorAll<MaterialTextFieldElement>("md-outlined-text-field")
-  ).find((candidate) => candidate.label === label);
+    document.querySelectorAll<HTMLElement>(".bh-field:not(.bh-select)")
+  ).find((candidate) => candidate.getAttribute("data-label") === label);
   if (!element) {
-    throw new Error(`Expected a Material Web text field labelled "${label}".`);
+    throw new Error(`Expected a text field labelled "${label}".`);
   }
-  return element;
+  return element as MaterialTextFieldElement;
 }
 
-function setTextFieldValue(element: MaterialTextFieldElement, value: string) {
+function setTextFieldValue(element: HTMLElement, value: string) {
+  const control = element.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!control) {
+    throw new Error("Expected input inside text field");
+  }
   act(() => {
-    element.value = value;
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
+    const proto = Object.getPrototypeOf(control);
+    const desc = Object.getOwnPropertyDescriptor(proto, "value");
+    desc?.set?.call(control, value);
+    control.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    control.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
 async function submitAuthCard() {
-  const button = Array.from(document.querySelectorAll("md-filled-button")).find(
+  const button = Array.from(document.querySelectorAll("button.bh-button--filled, .bh-button--filled")).find(
     (candidate) => candidate.textContent?.trim() === "Save token"
   );
   if (!button) {

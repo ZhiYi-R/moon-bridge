@@ -54,7 +54,7 @@ export const overviewStyles = `  .metric-grid {
     gap: 8px;
     min-height: 32px;
     padding: 0 12px;
-    border-radius: var(--mb-button-shape);
+    border-radius: 0;
     color: var(--mb-color-on-surface-variant);
     background: var(--mb-color-surface-container);
     font-size: 0.78rem;
@@ -74,7 +74,7 @@ export const overviewStyles = `  .metric-grid {
     min-width: 0;
     display: grid;
     gap: 8px;
-    border-radius: var(--mb-shape-panel);
+    border-radius: 0;
     outline: 0;
     padding: 14px 16px;
     background: var(--mb-color-surface-container-high);
@@ -94,7 +94,7 @@ export const overviewStyles = `  .metric-grid {
     height: 36px;
     display: grid;
     place-items: center;
-    border-radius: var(--mb-shape-md);
+    border-radius: 0;
     color: var(--mb-color-on-primary-container);
     background: var(--mb-color-primary-container);
   }
@@ -141,7 +141,7 @@ export const overviewStyles = `  .metric-grid {
     min-width: 0;
     display: grid;
     gap: 12px;
-    border-radius: var(--mb-shape-panel);
+    border-radius: 0;
     outline: 0;
     padding: 16px;
     background: color-mix(in srgb, var(--mb-color-surface-container-high) 76%, var(--mb-color-surface));
@@ -177,7 +177,7 @@ export const overviewStyles = `  .metric-grid {
     /* Fixed height (not min-height) so the bar never stretches when the panel
        around it grows; only the outer ends are rounded via the container. */
     block-size: 10px;
-    border-radius: var(--mb-shape-full);
+    border-radius: 0;
     background: var(--mb-color-surface-container);
   }
 
@@ -258,7 +258,7 @@ export const overviewStyles = `  .metric-grid {
   .usage-chart__dot {
     width: 10px;
     height: 10px;
-    border-radius: var(--mb-shape-full);
+    border-radius: 0;
   }
 
   .usage-table td {
@@ -276,7 +276,7 @@ export const overviewStyles = `  .metric-grid {
     min-height: 180px;
     display: grid;
     place-items: center;
-    border-radius: var(--mb-shape-panel);
+    border-radius: 0;
     outline: 0;
     color: var(--mb-color-on-surface-variant);
     background: color-mix(in srgb, var(--mb-color-surface-container) 48%, transparent);

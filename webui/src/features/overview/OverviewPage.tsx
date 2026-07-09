@@ -4,6 +4,8 @@ import { motion } from "motion/react";
 import { LoadingState } from "../../components/LoadingState";
 import { MaterialFilterChip } from "../../components/MaterialFilterChip";
 import { MaterialSwitch } from "../../components/MaterialSwitch";
+import { ChipSet } from "../../components/ui/Chip";
+import { Icon } from "../../components/ui/Icon";
 import { useI18n } from "../../i18n/I18nProvider";
 import type { MessageKey } from "../../i18n/messages";
 import { getUsageStats, type UsageRange } from "../../rpc/management";
@@ -61,7 +63,7 @@ export function OverviewPage() {
             <p>{t("overview.usageDescription")}</p>
           </div>
           <div className="usage-heading-controls">
-            <md-chip-set className="usage-range" role="group" aria-label={t("overview.rangeLabel")}>
+            <ChipSet className="usage-range" role="group" aria-label={t("overview.rangeLabel")}>
               {usageRanges.map((option) => (
                 <MaterialFilterChip
                   key={option}
@@ -72,7 +74,7 @@ export function OverviewPage() {
                   {t(usageRangeLabelKeys[option])}
                 </MaterialFilterChip>
               ))}
-            </md-chip-set>
+            </ChipSet>
             {usage.data ? <span className="status-pill status-pill--muted">{liveDuration}</span> : null}
             {import.meta.env.DEV ? (
               <label className="usage-demo-toggle">
@@ -239,8 +241,8 @@ function UsageMetric({
 }) {
   return (
     <motion.article className={`usage-metric usage-metric--${tone}`} variants={listItem}>
-      <span className="usage-metric__icon material-symbol" aria-hidden="true">
-        {icon}
+      <span className="usage-metric__icon" aria-hidden="true">
+        <Icon className="material-symbol" name={icon} size={18} />
       </span>
       <span className="usage-metric__label">{label}</span>
       <strong>{value}</strong>

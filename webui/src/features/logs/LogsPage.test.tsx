@@ -33,7 +33,7 @@ describe("LogsPage", () => {
     expect(toolbarActions).toBeInTheDocument();
     expect(getMaterialButton(topActions!, "Copy")).toBeInTheDocument();
     expect(getMaterialButton(topActions!, "Download")).toBeInTheDocument();
-    expect(toolbarActions!.querySelectorAll("md-outlined-button")).toHaveLength(0);
+    expect(toolbarActions!.querySelectorAll("button.bh-button--outlined, .bh-button--outlined")).toHaveLength(0);
 
     setMaterialTextFieldValue(getMaterialTextField(document.body, "Search logs"), "database");
 
@@ -79,13 +79,13 @@ describe("LogsPage", () => {
     expect(await screen.findByText(/server started/)).toBeInTheDocument();
 
     const followMode = screen.getByRole("group", { name: "Live follow mode" });
-    expect(getMaterialFilterChip(followMode, "Follow")).toHaveProperty("selected", true);
-    expect(getMaterialFilterChip(followMode, "Pause")).toHaveProperty("selected", false);
+    expect(getMaterialFilterChip(followMode, "Follow")).toHaveAttribute("aria-pressed", "true");
+    expect(getMaterialFilterChip(followMode, "Pause")).toHaveAttribute("aria-pressed", "false");
 
     fireEvent.click(getMaterialFilterChip(followMode, "Pause"));
 
-    expect(getMaterialFilterChip(followMode, "Follow")).toHaveProperty("selected", false);
-    expect(getMaterialFilterChip(followMode, "Pause")).toHaveProperty("selected", true);
+    expect(getMaterialFilterChip(followMode, "Follow")).toHaveAttribute("aria-pressed", "false");
+    expect(getMaterialFilterChip(followMode, "Pause")).toHaveAttribute("aria-pressed", "true");
   });
 
   test("localizes log row labels in Chinese locale", async () => {
@@ -184,7 +184,7 @@ describe("LogsPage", () => {
 });
 
 function getMaterialFilterChip(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-filter-chip")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-chip")).find(
     (chip) => chip.textContent?.trim() === label
   );
   if (!element) {
@@ -194,29 +194,71 @@ function getMaterialFilterChip(container: ParentNode, label: string) {
 }
 
 function getMaterialButton(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-outlined-button")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-button--outlined, .bh-button--outlined")).find(
     (button) => button.textContent?.includes(label)
   );
   if (!element) {
-    throw new Error(`Expected a Material Web outlined button labelled "${label}".`);
+    throw new Error(`Expected an outlined button labelled "${label}".`);
   }
   return element as HTMLElement & { disabled: boolean };
 }
 
 function getMaterialTextField(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-outlined-text-field")).find(
-    (textField) => (textField as HTMLElement & { label?: string }).label === label
+  const element = Array.from(container.querySelectorAll<HTMLElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => materialElementLabel(candidate) === label && !candidate.querySelector("select")
   );
   if (!element) {
-    throw new Error(`Expected a Material Web outlined text field labelled "${label}".`);
+    throw new Error(`Expected a text field labelled "${label}".`);
   }
-  return element as HTMLElement & { value: string };
+  const control = element.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+  Object.defineProperty(element, "label", { configurable: true, get: () => materialElementLabel(element) });
+  Object.defineProperty(element, "value", {
+    configurable: true,
+    get: () => control?.value ?? "",
+    set: (v: string) => {
+      if (!control) return;
+      const proto = Object.getPrototypeOf(control);
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      desc?.set?.call(control, v);
+    }
+  });
+  Object.defineProperty(element, "supportingText", {
+    configurable: true,
+    get: () => element.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  Object.defineProperty(element, "type", {
+    configurable: true,
+    get: () => (control && "type" in control ? (control as HTMLInputElement).type : element.getAttribute("data-type") ?? "text")
+  });
+  Object.defineProperty(element, "spellcheck", {
+    configurable: true,
+    get: () => control?.spellcheck ?? false
+  });
+  // attribute-style accessors used by testing-library toHaveAttribute
+  const originalGetAttribute = element.getAttribute.bind(element);
+  element.getAttribute = ((name: string) => {
+    if (name === "spellcheck" || name === "spellCheck") {
+      return control ? String(control.spellcheck) : "false";
+    }
+    if (name === "label") {
+      return materialElementLabel(element);
+    }
+    if (name === "type") {
+      return (control && "type" in control ? (control as HTMLInputElement).type : null);
+    }
+    return originalGetAttribute(name);
+  }) as typeof element.getAttribute;
+  return element as any;
 }
 
-function setMaterialTextFieldValue(element: HTMLElement & { value: string }, value: string) {
+function setMaterialTextFieldValue(element: HTMLElement, value: string) {
+  const control = (element.matches("input, textarea") ? element : element.querySelector("input, textarea")) as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!control) {
+    throw new Error("Expected input/textarea in text field");
+  }
   act(() => {
-    element.value = value;
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
+    fireEvent.input(control, { target: { value } });
+    fireEvent.change(control, { target: { value } });
   });
 }
 
@@ -308,4 +350,25 @@ function readBlobText(blob: Blob) {
     reader.addEventListener("error", () => reject(reader.error ?? new Error("failed to read blob")));
     reader.readAsText(blob);
   });
+}
+
+
+function materialElementLabel(element: HTMLElement & { label?: string }) {
+  const dataLabel = element.getAttribute("data-label");
+  if (dataLabel) {
+    return dataLabel;
+  }
+  const labelledBy = element.getAttribute("aria-labelledby");
+  if (labelledBy) {
+    return labelledBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent?.trim() ?? "")
+      .filter(Boolean)
+      .join(" ");
+  }
+  const labelEl = element.querySelector("label");
+  if (labelEl?.textContent) {
+    return labelEl.textContent.replace(/\s*\*$/, "").trim();
+  }
+  return element.label || element.getAttribute("aria-label") || element.getAttribute("label") || "";
 }

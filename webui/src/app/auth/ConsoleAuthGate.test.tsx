@@ -43,7 +43,7 @@ describe("ConsoleAuthGate", () => {
     renderHarness();
 
     expect(screen.getByText("App content")).toBeInTheDocument();
-    expect(document.querySelector("md-filled-text-field")).not.toBeInTheDocument();
+    expect(document.querySelector(".bh-field:not(.bh-select)")).not.toBeInTheDocument();
   });
 
   test("replaces the app with the Material login card when locked", () => {
@@ -55,7 +55,7 @@ describe("ConsoleAuthGate", () => {
     const card = document.querySelector(".auth-card");
     expect(card).toBeInTheDocument();
     // Real Material Web controls drive the login (skill requirement).
-    expect(card?.querySelector("md-outlined-text-field")).toBeInTheDocument();
-    expect(card?.querySelector("md-filled-button")).toBeInTheDocument();
+    expect(card?.querySelector(".bh-field:not(.bh-select)")).toBeInTheDocument();
+    expect(card?.querySelector("button.bh-button--filled, .bh-button--filled")).toBeInTheDocument();
   });
 });

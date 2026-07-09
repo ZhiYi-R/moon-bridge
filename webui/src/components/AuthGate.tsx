@@ -1,8 +1,9 @@
-import { createElement, type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, type ReactNode, useState } from "react";
 import { motion } from "motion/react";
 import { MaterialFilledButton, MaterialIconButton } from "./MaterialButton";
 import { MaterialCheckbox } from "./MaterialCheckbox";
 import { MaterialOutlinedTextField } from "./MaterialTextField";
+import { Icon } from "./ui/Icon";
 import { type ApiError, isAuthError } from "../rpc/http";
 import { useI18n } from "../i18n/I18nProvider";
 import { springs, surfaceMotion } from "../theme/motion";
@@ -50,11 +51,11 @@ export function AuthGate({ children, error, pending = false, onSubmit }: AuthGat
         <motion.span
           className="auth-card__badge"
           aria-hidden="true"
-          initial={{ scale: 0.6, opacity: 0 }}
+          initial={{ scale: 0.85, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={springs.spatial}
         >
-          {createElement("md-icon", null, "shield_lock")}
+          <Icon name="shield_lock" size={28} />
         </motion.span>
         <p className="eyebrow">{t("auth.eyebrow")}</p>
         <h1 id="auth-title">{t("auth.title")}</h1>
@@ -74,7 +75,6 @@ export function AuthGate({ children, error, pending = false, onSubmit }: AuthGat
               label={t(revealed ? "auth.hideToken" : "auth.revealToken")}
               onClick={() => setRevealed((current) => !current)}
               onMouseDown={(event) => event.preventDefault()}
-              slot="trailing-icon"
             />
           }
         />

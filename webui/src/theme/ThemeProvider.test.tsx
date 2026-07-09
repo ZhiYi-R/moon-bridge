@@ -13,8 +13,8 @@ function ThemeProbe() {
   return (
     <section>
       <p data-testid="theme-value">{theme}</p>
-      <button type="button" onClick={() => setTheme("light")}>
-        Set light
+      <button type="button" onClick={() => setTheme("bauhaus-classic")}>
+        Set classic
       </button>
       <button type="button" onClick={toggleTheme}>
         Toggle
@@ -30,18 +30,18 @@ describe("ThemeProvider", () => {
     document.documentElement.removeAttribute("style");
   });
 
-  it("defaults to the dark theme", () => {
+  it("defaults to the bauhaus-dark theme", () => {
     render(
       <ThemeProvider>
         <ThemeProbe />
       </ThemeProvider>
     );
 
-    expect(screen.getByTestId("theme-value")).toHaveTextContent("dark");
-    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(screen.getByTestId("theme-value")).toHaveTextContent("bauhaus-dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "bauhaus-dark");
   });
 
-  it("switches to light theme", async () => {
+  it("switches to classic theme", async () => {
     const user = userEvent.setup();
 
     render(
@@ -50,13 +50,13 @@ describe("ThemeProvider", () => {
       </ThemeProvider>
     );
 
-    await user.click(screen.getByRole("button", { name: "Set light" }));
+    await user.click(screen.getByRole("button", { name: "Set classic" }));
 
-    expect(screen.getByTestId("theme-value")).toHaveTextContent("light");
-    expect(document.documentElement).toHaveAttribute("data-theme", "light");
+    expect(screen.getByTestId("theme-value")).toHaveTextContent("bauhaus-classic");
+    expect(document.documentElement).toHaveAttribute("data-theme", "bauhaus-classic");
   });
 
-  it("applies container tokens used by expressive resource cards", () => {
+  it("applies container tokens used by resource cards", () => {
     render(
       <ThemeProvider>
         <ThemeProbe />
@@ -82,10 +82,22 @@ describe("ThemeProvider", () => {
 
     await user.click(screen.getByRole("button", { name: "Toggle" }));
 
-    expect(localStorage.getItem(CONSOLE_THEME_STORAGE_KEY)).toBe("light");
+    expect(localStorage.getItem(CONSOLE_THEME_STORAGE_KEY)).toBe("bauhaus-weimar");
   });
 
-  it("falls back to dark when localStorage is unavailable", () => {
+  it("migrates legacy dark/light storage values", () => {
+    localStorage.setItem(CONSOLE_THEME_STORAGE_KEY, "light");
+
+    render(
+      <ThemeProvider>
+        <ThemeProbe />
+      </ThemeProvider>
+    );
+
+    expect(screen.getByTestId("theme-value")).toHaveTextContent("bauhaus-classic");
+  });
+
+  it("falls back to bauhaus-dark when localStorage is unavailable", () => {
     const original = Object.getOwnPropertyDescriptor(window, "localStorage");
     Object.defineProperty(window, "localStorage", {
       configurable: true,
@@ -100,7 +112,7 @@ describe("ThemeProvider", () => {
       </ThemeProvider>
     );
 
-    expect(screen.getByTestId("theme-value")).toHaveTextContent("dark");
+    expect(screen.getByTestId("theme-value")).toHaveTextContent("bauhaus-dark");
 
     if (original) {
       Object.defineProperty(window, "localStorage", original);

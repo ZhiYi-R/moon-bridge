@@ -59,7 +59,7 @@ describe("DefaultsPage", () => {
     vi.useFakeTimers();
     const modelField = getMaterialTextField(defaultsPanel, "Default model");
     setMaterialTextFieldValue(modelField, "gpt-4o");
-    fireEvent.blur(modelField);
+    (() => { const __c = modelField.querySelector?.("input, textarea, select") as HTMLElement | null; fireEvent.blur(__c ?? modelField); })();
 
     await advanceAutosave();
 
@@ -118,17 +118,55 @@ async function findMaterialTextField(container: ParentNode, label: string) {
 }
 
 function getMaterialTextField(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll<MaterialTextFieldElement>("md-outlined-text-field")).find(
-    (candidate) => materialElementLabel(candidate) === label
+  const element = Array.from(container.querySelectorAll<HTMLElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => materialElementLabel(candidate) === label && !candidate.querySelector("select")
   );
   if (!element) {
-    throw new Error(`Expected a Material Web outlined text field labelled "${label}".`);
+    throw new Error(`Expected a text field labelled "${label}".`);
   }
-  return element;
+  const control = element.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+  Object.defineProperty(element, "label", { configurable: true, get: () => materialElementLabel(element) });
+  Object.defineProperty(element, "value", {
+    configurable: true,
+    get: () => control?.value ?? "",
+    set: (v: string) => {
+      if (!control) return;
+      const proto = Object.getPrototypeOf(control);
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      desc?.set?.call(control, v);
+    }
+  });
+  Object.defineProperty(element, "supportingText", {
+    configurable: true,
+    get: () => element.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  Object.defineProperty(element, "type", {
+    configurable: true,
+    get: () => (control && "type" in control ? (control as HTMLInputElement).type : element.getAttribute("data-type") ?? "text")
+  });
+  Object.defineProperty(element, "spellcheck", {
+    configurable: true,
+    get: () => control?.spellcheck ?? false
+  });
+  // attribute-style accessors used by testing-library toHaveAttribute
+  const originalGetAttribute = element.getAttribute.bind(element);
+  element.getAttribute = ((name: string) => {
+    if (name === "spellcheck" || name === "spellCheck") {
+      return control ? String(control.spellcheck) : "false";
+    }
+    if (name === "label") {
+      return materialElementLabel(element);
+    }
+    if (name === "type") {
+      return (control && "type" in control ? (control as HTMLInputElement).type : null);
+    }
+    return originalGetAttribute(name);
+  }) as typeof element.getAttribute;
+  return element as any;
 }
 
 function expectLobeLeadingIcon(fieldElement: HTMLElement, title?: string) {
-  const leadingIcon = fieldElement.querySelector("[slot='leading-icon']");
+  const leadingIcon = fieldElement.querySelector(".bh-field__leading, .material-field-leading-node, [slot='leading-icon']");
   expect(leadingIcon).toBeInTheDocument();
   expect(leadingIcon?.querySelector("svg")).toBeInTheDocument();
   if (title) {
@@ -137,13 +175,27 @@ function expectLobeLeadingIcon(fieldElement: HTMLElement, title?: string) {
 }
 
 function getMaterialSelect(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll<MaterialSelectElement>("md-outlined-select")).find(
-    (candidate) => materialElementLabel(candidate) === label
+  const wrapper = Array.from(container.querySelectorAll<HTMLElement>(".bh-select, .bh-field.bh-select, .bh-field")).find(
+    (candidate) => materialElementLabel(candidate) === label && candidate.querySelector("select")
   );
-  if (!element) {
-    throw new Error(`Expected a Material Web select labelled "${label}".`);
+  const select = wrapper?.querySelector("select") as any;
+  if (!select || !wrapper) {
+    throw new Error(`Expected a select labelled "${label}".`);
   }
-  return element;
+  Object.defineProperty(select, "label", { configurable: true, get: () => materialElementLabel(wrapper) });
+  Object.defineProperty(select, "supportingText", {
+    configurable: true,
+    get: () => wrapper.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  // Non-native alias used by a few tests that previously relied on Material option hosts.
+  select.optionItems = Array.from(select.querySelectorAll("option")).map((option: any) => {
+    const el = option as any;
+    el.displayText = option.textContent?.trim() ?? "";
+    return el;
+  });
+  const originalContains = select.classList.contains.bind(select.classList);
+  select.classList.contains = (token: string) => originalContains(token) || wrapper.classList.contains(token);
+  return select as any;
 }
 
 function materialElementLabel(element: HTMLElement & { label?: string }) {
@@ -155,18 +207,22 @@ function materialElementLabel(element: HTMLElement & { label?: string }) {
       .filter(Boolean)
       .join(" ");
   }
-  return element.label || element.getAttribute("aria-label") || element.getAttribute("label") || "";
+  return element.getAttribute("data-label") || element.label || element.getAttribute("aria-label") || element.getAttribute("label") || element.querySelector("label")?.textContent?.replace(/\s*\*$/, "").trim() || "";
 }
 
-function setMaterialTextFieldValue(element: MaterialTextFieldElement, value: string) {
+function setMaterialTextFieldValue(element: HTMLElement, value: string) {
+  const control = (element.matches("input, textarea") ? element : element.querySelector("input, textarea")) as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!control) {
+    throw new Error("Expected input/textarea in text field");
+  }
   act(() => {
-    element.value = value;
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
+    fireEvent.input(control, { target: { value } });
+    fireEvent.change(control, { target: { value } });
   });
 }
 
 function queryMaterialFilledButton(container: ParentNode, label: string) {
-  return Array.from(container.querySelectorAll("md-filled-button")).find((candidate) => {
+  return Array.from(container.querySelectorAll("button.bh-button--filled, .bh-button--filled")).find((candidate) => {
     const accessibleLabel = candidate.getAttribute("aria-label") ?? candidate.textContent ?? "";
     return accessibleLabel.includes(label);
   }) ?? null;

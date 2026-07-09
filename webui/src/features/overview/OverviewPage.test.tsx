@@ -91,13 +91,13 @@ describe("OverviewPage", () => {
     expect(screen.getByRole("img", { name: /Token split chart.*Input tokens: 300.*Output tokens: 80/ })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Cache split chart.*Cache write: 40.*Cache read: 120/ })).toBeInTheDocument();
     expect(screen.getByRole("img", { name: /Cost by model chart.*claude-sonnet: 0.42/ })).toBeInTheDocument();
-    expect(getMaterialFilterChip(document.body, "This session")).toHaveProperty("selected", true);
-    expect(getMaterialFilterChip(document.body, "24h")).toHaveProperty("selected", false);
+    expect(getMaterialFilterChip(document.body, "This session")).toHaveAttribute("aria-pressed", "true");
+    expect(getMaterialFilterChip(document.body, "24h")).toHaveAttribute("aria-pressed", "false");
 
     fireEvent.click(getMaterialFilterChip(document.body, "24h"));
 
-    expect(getMaterialFilterChip(document.body, "This session")).toHaveProperty("selected", false);
-    expect(getMaterialFilterChip(document.body, "24h")).toHaveProperty("selected", true);
+    expect(getMaterialFilterChip(document.body, "This session")).toHaveAttribute("aria-pressed", "false");
+    expect(getMaterialFilterChip(document.body, "24h")).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => {
       expect(management.getUsageStats).toHaveBeenCalledWith("24h");
     });
@@ -178,7 +178,7 @@ describe("OverviewPage", () => {
 
     fireEvent.click(getMaterialFilterChip(document.body, "24h"));
 
-    expect(getMaterialFilterChip(document.body, "24h")).toHaveProperty("selected", true);
+    expect(getMaterialFilterChip(document.body, "24h")).toHaveAttribute("aria-pressed", "true");
     await waitFor(() => {
       expect(usageRequest).toHaveBeenCalledWith("24h");
     });
@@ -341,7 +341,7 @@ describe("OverviewPage", () => {
 });
 
 function getMaterialFilterChip(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-filter-chip")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-chip")).find(
     (chip) => chip.textContent?.trim() === label
   );
   if (!element) {
@@ -351,29 +351,71 @@ function getMaterialFilterChip(container: ParentNode, label: string) {
 }
 
 function getMaterialTextField(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-outlined-text-field")).find(
-    (textField) => (textField as HTMLElement & { label?: string }).label === label
+  const element = Array.from(container.querySelectorAll<HTMLElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => materialElementLabel(candidate) === label && !candidate.querySelector("select")
   );
   if (!element) {
-    throw new Error(`Expected a Material Web outlined text field labelled "${label}".`);
+    throw new Error(`Expected a text field labelled "${label}".`);
   }
-  return element as HTMLElement & { value: string };
+  const control = element.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+  Object.defineProperty(element, "label", { configurable: true, get: () => materialElementLabel(element) });
+  Object.defineProperty(element, "value", {
+    configurable: true,
+    get: () => control?.value ?? "",
+    set: (v: string) => {
+      if (!control) return;
+      const proto = Object.getPrototypeOf(control);
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      desc?.set?.call(control, v);
+    }
+  });
+  Object.defineProperty(element, "supportingText", {
+    configurable: true,
+    get: () => element.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  Object.defineProperty(element, "type", {
+    configurable: true,
+    get: () => (control && "type" in control ? (control as HTMLInputElement).type : element.getAttribute("data-type") ?? "text")
+  });
+  Object.defineProperty(element, "spellcheck", {
+    configurable: true,
+    get: () => control?.spellcheck ?? false
+  });
+  // attribute-style accessors used by testing-library toHaveAttribute
+  const originalGetAttribute = element.getAttribute.bind(element);
+  element.getAttribute = ((name: string) => {
+    if (name === "spellcheck" || name === "spellCheck") {
+      return control ? String(control.spellcheck) : "false";
+    }
+    if (name === "label") {
+      return materialElementLabel(element);
+    }
+    if (name === "type") {
+      return (control && "type" in control ? (control as HTMLInputElement).type : null);
+    }
+    return originalGetAttribute(name);
+  }) as typeof element.getAttribute;
+  return element as any;
 }
 
 function getMaterialIconButton(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-icon-button")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-icon-button")).find(
     (iconButton) => iconButton.getAttribute("aria-label") === label
   );
   if (!element) {
-    throw new Error(`Expected a Material Web icon button labelled "${label}".`);
+    throw new Error(`Expected an icon button labelled "${label}".`);
   }
   return element as HTMLElement;
 }
 
-function setMaterialTextFieldValue(element: HTMLElement & { value: string }, value: string) {
+function setMaterialTextFieldValue(element: HTMLElement, value: string) {
+  const control = (element.matches("input, textarea") ? element : element.querySelector("input, textarea")) as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!control) {
+    throw new Error("Expected input/textarea in text field");
+  }
   act(() => {
-    element.value = value;
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
+    fireEvent.input(control, { target: { value } });
+    fireEvent.change(control, { target: { value } });
   });
 }
 
@@ -445,4 +487,25 @@ function restoreURLMethods() {
   if (revokeObjectURLDescriptor) {
     Object.defineProperty(URL, "revokeObjectURL", revokeObjectURLDescriptor);
   }
+}
+
+
+function materialElementLabel(element: HTMLElement & { label?: string }) {
+  const dataLabel = element.getAttribute("data-label");
+  if (dataLabel) {
+    return dataLabel;
+  }
+  const labelledBy = element.getAttribute("aria-labelledby");
+  if (labelledBy) {
+    return labelledBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent?.trim() ?? "")
+      .filter(Boolean)
+      .join(" ");
+  }
+  const labelEl = element.querySelector("label");
+  if (labelEl?.textContent) {
+    return labelEl.textContent.replace(/\s*\*$/, "").trim();
+  }
+  return element.label || element.getAttribute("aria-label") || element.getAttribute("label") || "";
 }

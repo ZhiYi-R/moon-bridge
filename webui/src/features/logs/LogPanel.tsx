@@ -3,6 +3,7 @@ import { motion } from "motion/react";
 import { MaterialIconButton, MaterialOutlinedButton } from "../../components/MaterialButton";
 import { MaterialFilterChip } from "../../components/MaterialFilterChip";
 import { MaterialOutlinedTextField } from "../../components/MaterialTextField";
+import { ChipSet } from "../../components/ui/Chip";
 import { useI18n } from "../../i18n/I18nProvider";
 import { createLogStream, getRecentLogs } from "../../rpc/logs";
 import type { LogEntry } from "../../rpc/types";
@@ -99,21 +100,21 @@ export function LogPanel({ labelledBy, embedded }: { labelledBy?: string; embedd
 
       <div className="logs-toolbar">
         <div className="logs-toolbar__actions">
-          <md-chip-set className="logs-chip-set logs-follow-mode" role="group" aria-label={t("logs.followMode")}>
+          <ChipSet className="logs-chip-set logs-follow-mode" role="group" aria-label={t("logs.followMode")}>
             <MaterialFilterChip value="follow" selected={follow} onSelect={() => setFollow(true)}>
               {t("logs.follow")}
             </MaterialFilterChip>
             <MaterialFilterChip value="pause" selected={!follow} onSelect={() => setFollow(false)}>
               {t("logs.pause")}
             </MaterialFilterChip>
-          </md-chip-set>
+          </ChipSet>
         </div>
         <p className="logs-count">
           {t("logs.visibleCount", { visible: visibleEntries.length, total: entries.length })}
         </p>
       </div>
 
-      <md-chip-set className="logs-chip-set log-level-filter" role="group" aria-label={t("logs.levelFilter")}>
+      <ChipSet className="logs-chip-set log-level-filter" role="group" aria-label={t("logs.levelFilter")}>
         {logLevels.map((level) => (
           <MaterialFilterChip
             key={level}
@@ -124,7 +125,7 @@ export function LogPanel({ labelledBy, embedded }: { labelledBy?: string; embedd
             {level === "ALL" ? t("logs.levelAll") : level}
           </MaterialFilterChip>
         ))}
-      </md-chip-set>
+      </ChipSet>
 
       {streamError ? (
         <p className="logs-stream-status" role="status">

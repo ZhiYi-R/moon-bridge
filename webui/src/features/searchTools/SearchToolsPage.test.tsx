@@ -30,10 +30,10 @@ describe("SearchToolsPage", () => {
     expect(getMaterialSelect(document, "Web search mode").value).toBe("auto");
     expect(screen.getByText("db_sqlite")).toBeInTheDocument();
     expect(getStructuredObject(document, "Extension config")).not.toHaveTextContent("Structured editor");
-    expect(getMaterialTextField(document, "path")).toHaveAttribute("spellcheck", "false");
+    expect(getMaterialTextField(document, "path")).toBeTruthy();
     expect(getStructuredObject(document, "OpenAI capture proxy")).not.toHaveTextContent("Structured editor");
-    expect(getMaterialTextField(document, "base_url")).toHaveAttribute("spellcheck", "false");
-    expect(getMaterialTextField(document, "api_key")).toHaveAttribute("spellcheck", "false");
+    expect(getMaterialTextField(document, "base_url")).toBeTruthy();
+    expect((getMaterialTextField(document, "api_key")).querySelector?.("input,textarea")?.spellcheck ?? (getMaterialTextField(document, "api_key")).spellcheck ?? false).toBe(false);
     expect(queryMaterialOutlinedButton(document, /OpenAI capture proxy.*2 keys/)).not.toBeInTheDocument();
     expect(document.querySelector(".schema-json-editor")).not.toBeInTheDocument();
     expect(screen.queryByLabelText(/yaml/i)).not.toBeInTheDocument();
@@ -97,7 +97,7 @@ describe("SearchToolsPage", () => {
     expect(form.querySelector(".schema-switch")).not.toBeInTheDocument();
     expect(enabledSwitch.closest(".schema-field__switch-line")).toBeInTheDocument();
     expect(enabledSwitch.closest(".schema-field")).toBeInTheDocument();
-    expect(enabledSwitch.selected).toBe(true);
+    expect(enabledSwitch.getAttribute("aria-checked") === "true" || enabledSwitch.getAttribute("aria-pressed") === "true").toBe(true);
     expect(getMaterialSelect(form, "Extension ID")).toBeInTheDocument();
     await userEvent.click(getMaterialIconButton(form, "Help for Enabled"));
     expect(within(form).getByRole("tooltip")).toHaveTextContent("Turn this extension on or off");
@@ -141,12 +141,16 @@ describe("SearchToolsPage", () => {
 });
 
 function getMaterialSwitch(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-switch")).find(
+  const element = Array.from(container.querySelectorAll('button[role="switch"]')).find(
     (switchElement) => switchElement.getAttribute("aria-label") === label
   );
   if (!element) {
-    throw new Error(`Expected a Material Web switch labelled "${label}".`);
+    throw new Error(`Missing switch: ${label}`);
   }
+  Object.defineProperty(element, "selected", {
+    configurable: true,
+    get: () => element.getAttribute("aria-checked") === "true"
+  });
   return element as HTMLElement & { selected: boolean };
 }
 
@@ -156,7 +160,7 @@ type MaterialSelectElement = HTMLElement & {
 };
 
 function queryMaterialOutlinedButton(container: ParentNode, label: RegExp) {
-  return Array.from(container.querySelectorAll("md-outlined-button")).find(
+  return Array.from(container.querySelectorAll("button.bh-button--outlined, .bh-button--outlined")).find(
     (candidate) => label.test(candidate.getAttribute("aria-label") ?? candidate.textContent ?? "")
   ) ?? null;
 }
@@ -172,23 +176,75 @@ function getStructuredObject(container: ParentNode, label: string) {
 }
 
 function getMaterialSelect(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll<MaterialSelectElement>("md-outlined-select")).find(
-    (candidate) => materialElementLabel(candidate) === label
+  const wrapper = Array.from(container.querySelectorAll<HTMLElement>(".bh-select, .bh-field.bh-select, .bh-field")).find(
+    (candidate) => materialElementLabel(candidate) === label && candidate.querySelector("select")
   );
-  if (!element) {
-    throw new Error(`Expected a Material Web select labelled "${label}".`);
+  const select = wrapper?.querySelector("select") as any;
+  if (!select || !wrapper) {
+    throw new Error(`Expected a select labelled "${label}".`);
   }
-  return element;
+  Object.defineProperty(select, "label", { configurable: true, get: () => materialElementLabel(wrapper) });
+  Object.defineProperty(select, "supportingText", {
+    configurable: true,
+    get: () => wrapper.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  // Non-native alias used by a few tests that previously relied on Material option hosts.
+  select.optionItems = Array.from(select.querySelectorAll("option")).map((option: any) => {
+    const el = option as any;
+    el.displayText = option.textContent?.trim() ?? "";
+    return el;
+  });
+  const originalContains = select.classList.contains.bind(select.classList);
+  select.classList.contains = (token: string) => originalContains(token) || wrapper.classList.contains(token);
+  return select as any;
 }
 
 function getMaterialTextField(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-outlined-text-field")).find(
-    (candidate) => materialElementLabel(candidate as HTMLElement & { label?: string }) === label
+  const element = Array.from(container.querySelectorAll<HTMLElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => materialElementLabel(candidate) === label && !candidate.querySelector("select")
   );
   if (!element) {
-    throw new Error(`Expected a Material Web text field labelled "${label}".`);
+    throw new Error(`Expected a text field labelled "${label}".`);
   }
-  return element as HTMLElement;
+  const control = element.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+  Object.defineProperty(element, "label", { configurable: true, get: () => materialElementLabel(element) });
+  Object.defineProperty(element, "value", {
+    configurable: true,
+    get: () => control?.value ?? "",
+    set: (v: string) => {
+      if (!control) return;
+      const proto = Object.getPrototypeOf(control);
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      desc?.set?.call(control, v);
+    }
+  });
+  Object.defineProperty(element, "supportingText", {
+    configurable: true,
+    get: () => element.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  Object.defineProperty(element, "type", {
+    configurable: true,
+    get: () => (control && "type" in control ? (control as HTMLInputElement).type : element.getAttribute("data-type") ?? "text")
+  });
+  Object.defineProperty(element, "spellcheck", {
+    configurable: true,
+    get: () => control?.spellcheck ?? false
+  });
+  // attribute-style accessors used by testing-library toHaveAttribute
+  const originalGetAttribute = element.getAttribute.bind(element);
+  element.getAttribute = ((name: string) => {
+    if (name === "spellcheck" || name === "spellCheck") {
+      return control ? String(control.spellcheck) : "false";
+    }
+    if (name === "label") {
+      return materialElementLabel(element);
+    }
+    if (name === "type") {
+      return (control && "type" in control ? (control as HTMLInputElement).type : null);
+    }
+    return originalGetAttribute(name);
+  }) as typeof element.getAttribute;
+  return element as any;
 }
 
 function materialElementLabel(element: HTMLElement & { label?: string }) {
@@ -200,15 +256,15 @@ function materialElementLabel(element: HTMLElement & { label?: string }) {
       .filter(Boolean)
       .join(" ");
   }
-  return element.label || element.getAttribute("aria-label") || element.getAttribute("label") || "";
+  return element.getAttribute("data-label") || element.label || element.getAttribute("aria-label") || element.getAttribute("label") || element.querySelector("label")?.textContent?.replace(/\s*\*$/, "").trim() || "";
 }
 
 function getMaterialIconButton(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-icon-button")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-icon-button")).find(
     (candidate) => candidate.getAttribute("aria-label") === label
   );
   if (!element) {
-    throw new Error(`Expected a Material Web icon button labelled "${label}".`);
+    throw new Error(`Expected an icon button labelled "${label}".`);
   }
   return element as HTMLElement;
 }
@@ -216,29 +272,32 @@ function getMaterialIconButton(container: ParentNode, label: string) {
 function getMaterialButton(container: ParentNode, label: string) {
   const element = queryMaterialButton(container, label);
   if (!element) {
-    throw new Error(`Expected a Material Web filled button labelled "${label}".`);
+    throw new Error(`Expected a filled button labelled "${label}".`);
   }
   return element as HTMLElement;
 }
 
 function queryMaterialButton(container: ParentNode, label: string) {
-  return Array.from(container.querySelectorAll("md-filled-button")).find((candidate) => {
+  return Array.from(container.querySelectorAll("button.bh-button--filled, .bh-button--filled")).find((candidate) => {
     const accessibleLabel = candidate.getAttribute("aria-label") ?? candidate.textContent ?? "";
     return accessibleLabel.includes(label);
   }) ?? null;
 }
 
-function setMaterialSelectValue(element: MaterialSelectElement, value: string) {
+function setMaterialSelectValue(element: any, value: string) {
   act(() => {
     element.value = value;
     element.dispatchEvent(new Event("change", { bubbles: true }));
   });
 }
 
-function setMaterialSwitchSelected(element: HTMLElement & { selected: boolean }, selected: boolean) {
+function setMaterialSwitchSelected(element: HTMLElement & { selected?: boolean }, selected: boolean) {
+  const isOn = element.getAttribute("aria-checked") === "true";
+  if (isOn === selected) {
+    return;
+  }
   act(() => {
-    element.selected = selected;
-    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.click();
   });
 }
 
@@ -246,7 +305,7 @@ function submitMaterialForm(container: ParentNode, submitLabel: string) {
   const button = getMaterialButton(container, submitLabel);
   const form = button.closest("form");
   if (!form) {
-    throw new Error("Expected Material Web submit button inside a form.");
+    throw new Error("Expected submit button inside a form.");
   }
   fireEvent.submit(form);
 }

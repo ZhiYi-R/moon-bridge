@@ -4,6 +4,7 @@ import type { ConfigGraph } from "../../rpc/types";
 import { useI18n } from "../../i18n/I18nProvider";
 import { MaterialFilledButton, MaterialIconButton, MaterialOutlinedButton } from "../../components/MaterialButton";
 import { MaterialAssistChip, MaterialFilterChip } from "../../components/MaterialFilterChip";
+import { ChipSet } from "../../components/ui/Chip";
 import { MaterialSelect, type MaterialSelectOption } from "../../components/MaterialSelect";
 import { MaterialOutlinedTextField } from "../../components/MaterialTextField";
 import type { MessageKey } from "../../i18n/messages";
@@ -11,7 +12,6 @@ import { MaterialSwitch } from "../../components/MaterialSwitch";
 import { useCreateConfigResource } from "./useConfigGraph";
 import { useAnchoredTooltipPosition } from "./helpTooltipPosition";
 import { modelIconForName, modelSelectOptions, protocolIconForValue } from "./modelProviderIcons";
-import type { MdIconButton } from "@material/web/iconbutton/icon-button.js";
 
 type CreatableKind = "provider" | "model" | "provider_offer" | "route" | "extension";
 
@@ -468,7 +468,7 @@ function ChipOptionGroup({
   return (
     <div className="schema-field form-field--create-track">
       <CreateFieldLabel helpText={helpText} label={label} />
-      <md-chip-set className="material-chip-group" role="group" aria-label={label}>
+      <ChipSet className="material-chip-group" role="group" aria-label={label}>
         {options.map((option) => (
           <MaterialFilterChip
             key={option}
@@ -479,7 +479,7 @@ function ChipOptionGroup({
             {optionLabel(option)}
           </MaterialFilterChip>
         ))}
-      </md-chip-set>
+      </ChipSet>
     </div>
   );
 }
@@ -524,7 +524,7 @@ function ContextWindowInput({
         />
         <CreateFieldHelpTooltip anchorRef={help.anchorRef} helpId={help.helpId} helpText={helpText} open={help.open} />
       </div>
-      <md-chip-set
+      <ChipSet
         className="material-chip-group create-resource__context-window-presets"
         role="group"
         aria-label={t("create.contextWindowPresets", { label })}
@@ -539,7 +539,7 @@ function ContextWindowInput({
             {presetLabel}
           </MaterialFilterChip>
         ))}
-      </md-chip-set>
+      </ChipSet>
     </div>
   );
 }
@@ -598,7 +598,7 @@ function useCreateFieldHelp(label: string) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
   const openedByHover = useRef(false);
-  const anchorRef = useRef<MdIconButton>(null);
+  const anchorRef = useRef<HTMLButtonElement>(null);
   const helpId = `${useStableCreateId(label)}-help`;
 
   return {

@@ -1,9 +1,11 @@
 export const sharedResourceStyles = `  .metric-card,
   .content-panel,
   .state-panel {
-    border-radius: var(--mb-shape-panel);
+    border-radius: 0;
+    border: var(--mb-border-width, 2px) solid var(--mb-color-outline);
     outline: 0;
     background: var(--mb-color-surface-container);
+    box-shadow: var(--mb-elevation-1);
   }
 
   .metric-card {
@@ -139,7 +141,7 @@ export const sharedResourceStyles = `  .metric-card,
     align-items: center;
     gap: 5px;
     min-height: 30px;
-    border-radius: var(--mb-shape-full);
+    border-radius: 0;
     padding: 0 12px;
     color: var(--mb-color-on-primary-container);
     background: var(--mb-color-primary-container);
@@ -251,7 +253,7 @@ export const sharedResourceStyles = `  .metric-card,
     width: min(760px, 100%);
     display: grid;
     gap: 14px;
-    border-radius: var(--mb-shape-panel);
+    border-radius: 0;
     outline: 0;
     padding: 18px 20px;
     background: var(--mb-color-surface-container-high);

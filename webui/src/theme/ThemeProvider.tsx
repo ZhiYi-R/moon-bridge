@@ -7,13 +7,21 @@ import {
   useMemo,
   useState
 } from "react";
-import { applyThemeTokens, type ConsoleTheme } from "./tokens";
+import {
+  applyThemeTokens,
+  CONSOLE_THEMES,
+  DEFAULT_CONSOLE_THEME,
+  migrateStoredTheme,
+  type ConsoleTheme
+} from "./tokens";
 
 export const CONSOLE_THEME_STORAGE_KEY = "moonbridge.console.theme";
 
 type ConsoleThemeContextValue = {
   theme: ConsoleTheme;
+  themes: readonly ConsoleTheme[];
   setTheme: (theme: ConsoleTheme) => void;
+  /** Cycles to the next theme pack (for compact controls / tests). */
   toggleTheme: () => void;
 };
 
@@ -23,17 +31,16 @@ const ConsoleThemeContext = createContext<ConsoleThemeContextValue | undefined>(
 
 function readStoredTheme(): ConsoleTheme {
   if (typeof window === "undefined") {
-    return "dark";
+    return DEFAULT_CONSOLE_THEME;
   }
 
   try {
     if (!window.localStorage) {
-      return "dark";
+      return DEFAULT_CONSOLE_THEME;
     }
-    const stored = window.localStorage.getItem(CONSOLE_THEME_STORAGE_KEY);
-    return stored === "light" || stored === "dark" ? stored : "dark";
+    return migrateStoredTheme(window.localStorage.getItem(CONSOLE_THEME_STORAGE_KEY));
   } catch {
-    return "dark";
+    return DEFAULT_CONSOLE_THEME;
   }
 }
 
@@ -45,7 +52,11 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggleTheme = useCallback(() => {
-    setThemeState((current) => (current === "dark" ? "light" : "dark"));
+    setThemeState((current) => {
+      const index = CONSOLE_THEMES.indexOf(current);
+      const nextIndex = index < 0 ? 0 : (index + 1) % CONSOLE_THEMES.length;
+      return CONSOLE_THEMES[nextIndex]!;
+    });
   }, []);
 
   useEffect(() => {
@@ -60,7 +71,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [theme]);
 
   const value = useMemo(
-    () => ({ theme, setTheme, toggleTheme }),
+    () => ({ theme, themes: CONSOLE_THEMES, setTheme, toggleTheme }),
     [theme, setTheme, toggleTheme]
   );
 

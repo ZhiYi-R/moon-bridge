@@ -2,7 +2,7 @@ export const resourceEditorStyles = `  .resource-editor-card {
     position: relative;
     display: grid;
     gap: 14px;
-    border-radius: var(--mb-shape-panel);
+    border-radius: 0;
     outline: 0;
     padding: 16px 18px;
     background: var(--mb-color-surface-container);
@@ -60,7 +60,7 @@ export const resourceEditorStyles = `  .resource-editor-card {
     align-items: center;
     gap: 6px;
     min-height: 30px;
-    border-radius: var(--mb-shape-full);
+    border-radius: 0;
     padding: 0 12px;
     font-size: 0.76rem;
     font-weight: 650;
@@ -96,7 +96,7 @@ export const resourceEditorStyles = `  .resource-editor-card {
     place-items: center;
     width: 30px;
     height: 30px;
-    border-radius: var(--mb-shape-md);
+    border-radius: 0;
     color: var(--mb-color-on-secondary-container);
     background: var(--mb-color-secondary-container);
     font-size: 18px;
@@ -206,7 +206,7 @@ export const resourceEditorStyles = `  .resource-editor-card {
     display: grid;
     gap: 10px;
     border: 1px solid color-mix(in srgb, var(--mb-color-error) 34%, transparent);
-    border-radius: var(--mb-shape-md);
+    border-radius: 0;
     padding: 14px 16px;
     color: var(--mb-color-on-error-container);
     background: color-mix(in srgb, var(--mb-color-error-container) 70%, var(--mb-color-surface));
@@ -252,7 +252,7 @@ export const resourceEditorStyles = `  .resource-editor-card {
   .resource-field-group {
     display: grid;
     gap: 12px;
-    border-radius: var(--mb-shape-md);
+    border-radius: 0;
     outline: 0;
     padding: 16px;
     background: color-mix(in srgb, var(--mb-color-surface) 68%, var(--mb-color-surface-container-high));

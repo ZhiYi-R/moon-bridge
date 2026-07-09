@@ -73,8 +73,8 @@ describe("config graph console smoke flow", () => {
 
     renderWithConsoleProviders(<OverviewPage />);
 
-    expect(document.documentElement.dataset.theme).toBe("dark");
-    expect(localStorage.getItem(CONSOLE_THEME_STORAGE_KEY)).toBe("dark");
+    expect(document.documentElement.dataset.theme).toBe("bauhaus-dark");
+    expect(localStorage.getItem(CONSOLE_THEME_STORAGE_KEY)).toBe("bauhaus-dark");
     expect(await screen.findByRole("heading", { name: "Usage Analytics" })).toBeInTheDocument();
     const requestsLabel = (await screen.findAllByText("Requests")).find((el) =>
       el.classList.contains("usage-metric__label")
@@ -103,7 +103,7 @@ describe("config graph console smoke flow", () => {
     await screen.findByLabelText("Defaults main");
     const modelField = getMaterialTextField(document, "Default model");
     setMaterialTextFieldValue(modelField, "gpt-4o");
-    fireEvent.blur(modelField);
+    (() => { const __c = modelField.querySelector?.("input, textarea, select") as HTMLElement | null; fireEvent.blur(__c ?? modelField); })();
 
     await waitFor(() => {
       expect(findPatch(calls)?.body).toEqual({
@@ -136,7 +136,7 @@ describe("config graph console smoke flow", () => {
     await screen.findByLabelText("Defaults main");
     const model = getMaterialTextField(document, "Default model");
     setMaterialTextFieldValue(model, "invalid-model");
-    fireEvent.blur(model);
+    (() => { const __c = model.querySelector?.("input, textarea, select") as HTMLElement | null; fireEvent.blur(__c ?? model); })();
 
     expect(model.value).toBe("invalid-model");
     expect(await screen.findByRole("alert")).toHaveTextContent("Model is invalid");
@@ -159,7 +159,7 @@ describe("config graph console smoke flow", () => {
     await screen.findByLabelText("Server main");
     const address = getMaterialTextField(document, "Listen address");
     setMaterialTextFieldValue(address, ":9999");
-    fireEvent.blur(address);
+    (() => { const __c = address.querySelector?.("input, textarea, select") as HTMLElement | null; fireEvent.blur(__c ?? address); })();
 
     await waitFor(() => {
       expect(address.value).toBe(":38440");
@@ -262,13 +262,51 @@ type MaterialTextFieldElement = HTMLElement & {
 };
 
 function getMaterialTextField(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll<MaterialTextFieldElement>("md-outlined-text-field")).find(
-    (candidate) => materialElementLabel(candidate) === label
+  const element = Array.from(container.querySelectorAll<HTMLElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => materialElementLabel(candidate) === label && !candidate.querySelector("select")
   );
   if (!element) {
-    throw new Error(`Expected a Material Web outlined text field labelled "${label}".`);
+    throw new Error(`Expected a text field labelled "${label}".`);
   }
-  return element;
+  const control = element.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+  Object.defineProperty(element, "label", { configurable: true, get: () => materialElementLabel(element) });
+  Object.defineProperty(element, "value", {
+    configurable: true,
+    get: () => control?.value ?? "",
+    set: (v: string) => {
+      if (!control) return;
+      const proto = Object.getPrototypeOf(control);
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      desc?.set?.call(control, v);
+    }
+  });
+  Object.defineProperty(element, "supportingText", {
+    configurable: true,
+    get: () => element.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  Object.defineProperty(element, "type", {
+    configurable: true,
+    get: () => (control && "type" in control ? (control as HTMLInputElement).type : element.getAttribute("data-type") ?? "text")
+  });
+  Object.defineProperty(element, "spellcheck", {
+    configurable: true,
+    get: () => control?.spellcheck ?? false
+  });
+  // attribute-style accessors used by testing-library toHaveAttribute
+  const originalGetAttribute = element.getAttribute.bind(element);
+  element.getAttribute = ((name: string) => {
+    if (name === "spellcheck" || name === "spellCheck") {
+      return control ? String(control.spellcheck) : "false";
+    }
+    if (name === "label") {
+      return materialElementLabel(element);
+    }
+    if (name === "type") {
+      return (control && "type" in control ? (control as HTMLInputElement).type : null);
+    }
+    return originalGetAttribute(name);
+  }) as typeof element.getAttribute;
+  return element as any;
 }
 
 function materialElementLabel(element: HTMLElement & { label?: string }) {
@@ -280,18 +318,22 @@ function materialElementLabel(element: HTMLElement & { label?: string }) {
       .filter(Boolean)
       .join(" ");
   }
-  return element.label || element.getAttribute("aria-label") || element.getAttribute("label") || "";
+  return element.getAttribute("data-label") || element.label || element.getAttribute("aria-label") || element.getAttribute("label") || element.querySelector("label")?.textContent?.replace(/\s*\*$/, "").trim() || "";
 }
 
-function setMaterialTextFieldValue(element: MaterialTextFieldElement, value: string) {
+function setMaterialTextFieldValue(element: HTMLElement, value: string) {
+  const control = (element.matches("input, textarea") ? element : element.querySelector("input, textarea")) as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!control) {
+    throw new Error("Expected input/textarea in text field");
+  }
   act(() => {
-    element.value = value;
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
+    fireEvent.input(control, { target: { value } });
+    fireEvent.change(control, { target: { value } });
   });
 }
 
 function getMaterialFilterChip(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-filter-chip")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-chip")).find(
     (candidate) => candidate.textContent?.trim() === label
   );
   if (!element) {

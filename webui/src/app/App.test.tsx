@@ -45,11 +45,11 @@ describe("AppShell", () => {
     );
 
     expect(screen.getByLabelText(/language/i)).toBeInTheDocument();
-    expect(getMaterialIconButton(document, "Switch to light theme")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /theme/i })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /apply/i })).not.toBeInTheDocument();
   });
 
-  test("uses Material Web locale actions instead of a native browser select", () => {
+  test("uses Bauhaus locale actions instead of a native browser select", () => {
     renderWithConsoleProviders(
       <MemoryRouter>
         <AppShell content={<div>Console content</div>} />
@@ -62,7 +62,7 @@ describe("AppShell", () => {
     expect(getMaterialButton(document, "中文", "outlined")).toHaveAttribute("aria-pressed", "false");
   });
 
-  test("keeps global filled button icon colors aligned with label colors", () => {
+  test("keeps global filled buttons as Bauhaus filled controls", () => {
     renderWithConsoleProviders(
       <MemoryRouter>
         <AppShell content={<div>Console content</div>} />
@@ -70,10 +70,10 @@ describe("AppShell", () => {
     );
 
     const selectedLocaleButton = getMaterialButton(document, "English", "filled");
-    expectMaterialFilledButtonContentColors(selectedLocaleButton, "var(--mb-color-on-primary)");
+    expect(selectedLocaleButton.className).toContain("bh-button--filled");
   });
 
-  test("changes locale through Material Web locale actions", () => {
+  test("changes locale through Bauhaus locale actions", () => {
     renderWithConsoleProviders(
       <MemoryRouter>
         <AppShell content={<div>Console content</div>} />
@@ -87,21 +87,19 @@ describe("AppShell", () => {
     expect(getMaterialButton(document, "中文", "filled")).toHaveAttribute("aria-pressed", "true");
   });
 
-  test("changes theme through the Material Web icon button", () => {
+  test("changes theme through the multi-theme picker", () => {
     renderWithConsoleProviders(
       <MemoryRouter>
         <AppShell content={<div>Console content</div>} />
       </MemoryRouter>
     );
 
-    const themeButton = getMaterialIconButton(document, "Switch to light theme");
-    expect(themeButton.tagName.toLowerCase()).toBe("md-icon-button");
-    expect(document.documentElement).toHaveAttribute("data-theme", "dark");
+    expect(document.documentElement).toHaveAttribute("data-theme", "bauhaus-dark");
 
-    fireEvent.click(themeButton);
+    const classic = screen.getByRole("button", { name: /classic/i });
+    fireEvent.click(classic);
 
-    expect(document.documentElement).toHaveAttribute("data-theme", "light");
-    expect(getMaterialIconButton(document, "Switch to dark theme")).toBeInTheDocument();
+    expect(document.documentElement).toHaveAttribute("data-theme", "bauhaus-classic");
   });
 
   test("keeps route content in a named main landmark with mobile-safe nav labels", () => {
@@ -119,7 +117,7 @@ describe("AppShell", () => {
     expect(screen.getByRole("navigation", { name: /console sections/i })).not.toHaveTextContent("Logs");
   });
 
-  test("gives shell background panels tonal surfaces without borders or glow", () => {
+  test("gives shell panels Bauhaus geometric surfaces", () => {
     renderWithConsoleProviders(
       <MemoryRouter>
         <AppShell
@@ -140,8 +138,6 @@ describe("AppShell", () => {
     const placeholderPanel = document.querySelector(".placeholder-panel")!;
 
     expect(railRule).toContain("background: var(--mb-color-surface-container-low)");
-    expect(railRule).not.toContain("box-shadow");
-    expect(railRule).not.toContain("background: transparent");
     for (const panel of [rail, contentPanel, placeholderPanel]) {
       expectPanelElementToBeFlat(panel);
     }
@@ -156,38 +152,12 @@ function getMaterialButton(
   label: string,
   variant: "filled" | "outlined"
 ) {
-  const tagName = variant === "filled" ? "md-filled-button" : "md-outlined-button";
+  const tagName = variant === "filled" ? "button.bh-button--filled, .bh-button--filled" : "button.bh-button--outlined, .bh-button--outlined";
   const element = Array.from(container.querySelectorAll(tagName)).find(
     (button) => button.textContent?.trim() === label
   );
   if (!element) {
-    throw new Error(`Expected a Material Web ${variant} button labelled "${label}".`);
+    throw new Error(`Expected a Bauhaus ${variant} button labelled "${label}".`);
   }
   return element as HTMLElement;
-}
-
-function getMaterialIconButton(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-icon-button")).find(
-    (button) => button.getAttribute("aria-label") === label
-  );
-  if (!element) {
-    throw new Error(`Expected a Material Web icon button labelled "${label}".`);
-  }
-  return element as HTMLElement;
-}
-
-function expectMaterialFilledButtonContentColors(button: HTMLElement, colorToken: string) {
-  expect(button.tagName.toLowerCase()).toBe("md-filled-button");
-  for (const property of [
-    "--md-filled-button-label-text-color",
-    "--md-filled-button-hover-label-text-color",
-    "--md-filled-button-focus-label-text-color",
-    "--md-filled-button-pressed-label-text-color",
-    "--md-filled-button-icon-color",
-    "--md-filled-button-hover-icon-color",
-    "--md-filled-button-focus-icon-color",
-    "--md-filled-button-pressed-icon-color"
-  ]) {
-    expect(getComputedStyle(button).getPropertyValue(property).trim()).toBe(colorToken);
-  }
 }

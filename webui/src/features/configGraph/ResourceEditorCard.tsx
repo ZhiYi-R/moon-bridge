@@ -6,6 +6,8 @@ import { useI18n } from "../../i18n/I18nProvider";
 import type { MessageKey } from "../../i18n/messages";
 import { springs } from "../../theme/motion";
 import { MaterialFilledButton, MaterialIconButton, MaterialOutlinedButton } from "../../components/MaterialButton";
+import { ChipSet } from "../../components/ui/Chip";
+import { MaterialSymbol } from "../../components/ui/Icon";
 import { MaterialInputChip } from "../../components/MaterialInputChip";
 import { MaterialSelect, type MaterialSelectOption } from "../../components/MaterialSelect";
 import { MaterialSwitch } from "../../components/MaterialSwitch";
@@ -17,7 +19,6 @@ import { type TooltipPosition, useAnchoredTooltipPosition } from "./helpTooltipP
 import { useAutosaveField, type AutosaveFieldStatus, type SaveFieldRequest } from "./useAutosaveField";
 import { useDeleteConfigResource, useGraphFieldSaver } from "./useConfigGraph";
 import { configDocPathForResource } from "./configDocPath";
-import type { MdIconButton } from "@material/web/iconbutton/icon-button.js";
 
 const statusLabelKeys: Record<ResourceStatus, MessageKey> = {
   saved: "resource.status.saved",
@@ -115,16 +116,12 @@ export function ResourceEditorCard({
   const statusGroup = (!summary || showStatusInSummary) ? (
     <span className="resource-editor-card__status-group" aria-label={t("resource.statusGroupLabel", { label })}>
       <span className={`resource-meta-pill status-pill status-pill--${resource.status}`}>
-        <span className="material-symbol" aria-hidden="true">
-          {statusIcon(resource.status)}
-        </span>
+        <MaterialSymbol className="material-symbol">{statusIcon(resource.status)}</MaterialSymbol>
         {t(statusLabelKeys[resource.status])}
       </span>
       {!summary && resource.runtimeImpact === "critical" ? (
         <span className="resource-meta-pill status-pill status-pill--critical">
-          <span className="material-symbol" aria-hidden="true">
-            {impactIcon(resource.runtimeImpact)}
-          </span>
+          <MaterialSymbol className="material-symbol">{impactIcon(resource.runtimeImpact)}</MaterialSymbol>
           {t(impactLabelKeys[resource.runtimeImpact])}
         </span>
       ) : null}
@@ -136,9 +133,7 @@ export function ResourceEditorCard({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           transition={springs.spatialFast}
         >
-          <span className="material-symbol" aria-hidden="true">
-            {liveStatusIcon(liveStatus)}
-          </span>
+          <MaterialSymbol className="material-symbol">{liveStatusIcon(liveStatus)}</MaterialSymbol>
           {t(liveStatusKeys[liveStatus])}
         </motion.span>
       ) : null}
@@ -156,9 +151,7 @@ export function ResourceEditorCard({
       <div className={`resource-editor-card__header${summary ? " resource-editor-card__header--summary" : ""}`}>
         <div className="resource-editor-card__identity">
           <div className="resource-editor-card__identity-line">
-            <span className="resource-kind-icon material-symbol" aria-hidden="true">
-              {kindIcon(resource.kind)}
-            </span>
+            <MaterialSymbol className="resource-kind-icon material-symbol">{kindIcon(resource.kind)}</MaterialSymbol>
             {summary ? summaryIdentityBadge(resource) : null}
             <h3>{resource.id}</h3>
           </div>
@@ -167,21 +160,19 @@ export function ResourceEditorCard({
             {summary
               ? summaryValueFacts(resource, t).map((fact) => (
                   <span className="resource-meta-pill resource-fact" key={fact.key}>
-                    <span className="material-symbol" aria-hidden="true">{fact.icon}</span>
+                    <MaterialSymbol className="material-symbol">{fact.icon}</MaterialSymbol>
                     {fact.text}
                   </span>
                 ))
               : (
                 <span className="resource-meta-pill resource-fact">
-                  <span className="material-symbol" aria-hidden="true">list_alt</span>
+                  <MaterialSymbol className="material-symbol">list_alt</MaterialSymbol>
                   {t(fieldCount === 1 ? "resource.fieldCount.one" : "resource.fieldCount.many", { count: fieldCount })}
                 </span>
               )}
             {!summary ? (
               <span className={`resource-meta-pill resource-fact resource-fact--${resource.hotReloadable ? "hot" : "restart"}`}>
-                <span className="material-symbol" aria-hidden="true">
-                  {resource.hotReloadable ? "bolt" : "restart_alt"}
-                </span>
+                <MaterialSymbol className="material-symbol">{resource.hotReloadable ? "bolt" : "restart_alt"}</MaterialSymbol>
                 {reloadText}
               </span>
             ) : null}
@@ -481,9 +472,7 @@ function ResourceFieldGroup({
     >
       <div className="resource-field-group__header">
         <h4>
-          <span className="material-symbol" aria-hidden="true">
-            {fieldGroupIcon(group)}
-          </span>
+          <MaterialSymbol className="material-symbol">{fieldGroupIcon(group)}</MaterialSymbol>
           {label}
         </h4>
         {collapsible ? (
@@ -553,9 +542,7 @@ function ReasoningFieldGroup({
     >
       <div className="resource-field-group__header">
         <h4>
-          <span className="material-symbol" aria-hidden="true">
-            {fieldGroupIcon(group)}
-          </span>
+          <MaterialSymbol className="material-symbol">{fieldGroupIcon(group)}</MaterialSymbol>
           {t(group.labelKey)}
         </h4>
         {reasoningSupportField ? (
@@ -1050,9 +1037,7 @@ function ProviderOfferBillingGroup({
     >
       <div className="resource-field-group__header">
         <h4>
-          <span className="material-symbol" aria-hidden="true">
-            {fieldGroupIcon(group)}
-          </span>
+          <MaterialSymbol className="material-symbol">{fieldGroupIcon(group)}</MaterialSymbol>
           {t(group.labelKey)}
         </h4>
         <span className="resource-field-group__switch" aria-label={t(group.labelKey)}>
@@ -1627,7 +1612,7 @@ function useStructuredFeatureFieldHelp(
   label: string
 ): StructuredFeatureFieldHelp {
   const i18n = useI18n();
-  const anchorRef = useRef<MdIconButton | null>(null);
+  const anchorRef = useRef<HTMLButtonElement | null>(null);
   const openedByHover = useRef(false);
   const [open, setOpen] = useState(false);
   const docPath = webSearchConfigPaths[fieldKey];
@@ -2244,7 +2229,7 @@ function EditableListResourceField<T>({
       <div className="editable-list-field__header">
         <span className="editable-list-field__title">{label}</span>
       </div>
-      <md-chip-set className="editable-list-field__items" role="list" aria-label={label}>
+      <ChipSet className="editable-list-field__items" role="list" aria-label={label}>
         {items.map((item) => {
           const itemLabel = valueFromDraft(item);
           return (
@@ -2259,7 +2244,7 @@ function EditableListResourceField<T>({
             </MaterialInputChip>
           );
         })}
-      </md-chip-set>
+      </ChipSet>
       <div className="editable-list-field__composer">
         <MaterialOutlinedTextField
           ariaLabel={t("field.editableList.addInput", { label })}

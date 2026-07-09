@@ -39,7 +39,7 @@ export const logStyles = `  .logs-panel__header {
     display: inline-flex;
     align-items: center;
     margin: 0;
-    border-radius: var(--mb-shape-full);
+    border-radius: 0;
     padding: 0 14px;
     color: var(--mb-color-on-surface-variant);
     background: var(--mb-color-surface-container-high);
@@ -61,7 +61,7 @@ export const logStyles = `  .logs-panel__header {
   .logs-stream-status {
     margin: 0 0 14px;
     border: 1px solid color-mix(in srgb, var(--mb-color-error) 45%, transparent);
-    border-radius: var(--mb-shape-md);
+    border-radius: 0;
     padding: 12px 14px;
     color: var(--mb-color-on-error-container);
     background: var(--mb-color-error-container);
@@ -92,7 +92,7 @@ export const logStyles = `  .logs-panel__header {
     overflow: auto;
     display: grid;
     gap: 4px;
-    border-radius: var(--mb-shape-panel);
+    border-radius: 0;
     outline: 0;
     padding: 10px;
     background: var(--mb-color-surface-container-lowest);
@@ -103,7 +103,7 @@ export const logStyles = `  .logs-panel__header {
     display: grid;
     place-items: center;
     margin: 0;
-    border-radius: var(--mb-shape-panel);
+    border-radius: 0;
     outline: 0;
     padding: 18px;
     color: var(--mb-color-on-surface-variant);
@@ -118,7 +118,7 @@ export const logStyles = `  .logs-panel__header {
     grid-template-columns: auto auto minmax(0, 1fr);
     align-items: baseline;
     gap: 10px;
-    border-radius: var(--mb-shape-xs);
+    border-radius: 0;
     padding: 7px 12px;
     background: color-mix(in srgb, var(--mb-color-surface-container) 58%, transparent);
     transition: background-color var(--mb-duration-short) var(--mb-ease-standard);
@@ -134,7 +134,7 @@ export const logStyles = `  .logs-panel__header {
     justify-content: center;
     justify-self: start;
     min-width: 56px;
-    border-radius: var(--mb-shape-xs);
+    border-radius: 0;
     padding: 2px 8px;
     color: var(--mb-color-on-surface-variant);
     background: var(--mb-color-surface-container-high);

@@ -7,7 +7,9 @@ import { type ConfigPath, getConfigDescription } from "../configDocs/configDescr
 export const defaultPage = { limit: 20, offset: 0 };
 
 export function PageHeader({
-  title
+  eyebrow,
+  title,
+  children
 }: {
   eyebrow: string;
   title: string;
@@ -15,7 +17,12 @@ export function PageHeader({
 }) {
   return (
     <header className="page-header">
+      <div className="page-header__eyebrow-row">
+        <span aria-hidden="true" className="page-header__mark" />
+        <p className="eyebrow">{eyebrow}</p>
+      </div>
       <h1>{title}</h1>
+      {children ? <p>{children}</p> : null}
     </header>
   );
 }

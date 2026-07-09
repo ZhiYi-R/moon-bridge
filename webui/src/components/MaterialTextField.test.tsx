@@ -28,7 +28,7 @@ describe("MaterialTextField", () => {
       />
     );
 
-    expect(getOutlinedTextField(container, "Max uses")).toHaveAttribute("label", "Max uses");
+    expect(getOutlinedTextField(container, "Max uses")).toHaveAttribute("data-label", "Max uses");
   });
 
   test("marks single-line filled text fields with the compact density class", () => {
@@ -68,8 +68,8 @@ type MaterialTextFieldElement = HTMLElement & {
 };
 
 function getOutlinedTextField(container: ParentNode, label: string) {
-  const field = Array.from(container.querySelectorAll<MaterialTextFieldElement>("md-outlined-text-field")).find(
-    (candidate) => candidate.label === label
+  const field = Array.from(container.querySelectorAll<MaterialTextFieldElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => candidate.getAttribute("data-label") === label
   );
   if (!field) {
     throw new Error(`Expected outlined text field labelled "${label}".`);
@@ -78,8 +78,8 @@ function getOutlinedTextField(container: ParentNode, label: string) {
 }
 
 function getFilledTextField(container: ParentNode, label: string) {
-  const field = Array.from(container.querySelectorAll<MaterialTextFieldElement>("md-filled-text-field")).find(
-    (candidate) => candidate.label === label
+  const field = Array.from(container.querySelectorAll<MaterialTextFieldElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => candidate.getAttribute("data-label") === label
   );
   if (!field) {
     throw new Error(`Expected filled text field labelled "${label}".`);

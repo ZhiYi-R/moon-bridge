@@ -1,13 +1,17 @@
-import "@material/web/icon/icon.js";
-import "@material/web/ripple/ripple.js";
-import { createElement, type ReactNode } from "react";
+import { type ReactNode } from "react";
 import { NavLink, Outlet } from "react-router-dom";
 import { motion } from "motion/react";
-import { MaterialFilledButton, MaterialIconButton, MaterialOutlinedButton } from "../components/MaterialButton";
-import { type Locale, type MessageKey } from "../i18n/messages";
+import {
+  MaterialFilledButton,
+  MaterialIconButton,
+  MaterialOutlinedButton
+} from "../components/MaterialButton";
+import { Icon } from "../components/ui/Icon";
+import { type MessageKey } from "../i18n/messages";
 import { useI18n } from "../i18n/I18nProvider";
 import { useConsoleTheme } from "../theme/ThemeProvider";
-import { pageMotion, springs } from "../theme/motion";
+import type { ConsoleTheme } from "../theme/tokens";
+import { pageMotion } from "../theme/motion";
 import { shellStyles } from "./styles/shellStyles";
 import { ConsoleAuthGate } from "./auth/ConsoleAuthGate";
 import { useConsoleAuth } from "./auth/ConsoleAuthContext";
@@ -22,12 +26,23 @@ const navItems = [
   { to: "/security", icon: "shield", labelKey: "nav.security" }
 ] as const;
 
+const themeMessageKeys: Record<ConsoleTheme, MessageKey> = {
+  "bauhaus-classic": "theme.bauhausClassic",
+  "bauhaus-dark": "theme.bauhausDark",
+  "bauhaus-weimar": "theme.bauhausWeimar",
+  "bauhaus-mono": "theme.bauhausMono"
+};
+
+const themeSwatches: Record<ConsoleTheme, string> = {
+  "bauhaus-classic": "#E30613",
+  "bauhaus-dark": "#FF3B45",
+  "bauhaus-weimar": "#C41E3A",
+  "bauhaus-mono": "#111111"
+};
+
 type NavItem = (typeof navItems)[number];
 
 export function App() {
-  // shellStyles (incl. base tokens + .auth-card) is injected here — not in
-  // AppShell — so the login card is fully styled even while the shell is
-  // unmounted behind ConsoleAuthGate.
   return (
     <>
       <style>{shellStyles}</style>
@@ -43,19 +58,24 @@ export function AppShell({ content }: { content?: ReactNode }) {
 }
 
 function AppShellContent({ content }: { content?: ReactNode }) {
-  const { theme, toggleTheme } = useConsoleTheme();
+  const { theme, themes, setTheme } = useConsoleTheme();
   const { locale, setLocale, t } = useI18n();
   const { signOut } = useConsoleAuth();
-  const nextTheme = theme === "dark" ? "light" : "dark";
-  const themeIcon = theme === "dark" ? "light_mode" : "dark_mode";
-  const nextThemeLabel = t(nextTheme === "dark" ? "theme.dark" : "theme.light");
 
   return (
     <div className="app-shell">
       <header className="top-app-bar">
-        <div>
-          <p>Moon Bridge</p>
-          <strong>{t("app.console")}</strong>
+        <div className="top-app-bar__brand">
+          <div className="top-app-bar__mark" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+            <span />
+          </div>
+          <div>
+            <p>Moon Bridge</p>
+            <strong>{t("app.console")}</strong>
+          </div>
         </div>
         <div className="top-app-bar__meta">
           <div className="locale-switch" role="group" aria-label={t("app.language")}>
@@ -69,32 +89,35 @@ function AppShellContent({ content }: { content?: ReactNode }) {
               />
             ))}
           </div>
-          <motion.div
-            className="theme-toggle"
-            whileHover={{ scale: 1.06 }}
-            whileTap={{ scale: 0.9 }}
-            transition={springs.spatialFast}
-          >
-            <motion.span
-              key={themeIcon}
-              style={{ display: "inline-flex" }}
-              initial={{ rotate: -90, opacity: 0, scale: 0.6 }}
-              animate={{ rotate: 0, opacity: 1, scale: 1 }}
-              transition={springs.spatial}
-            >
-              <MaterialIconButton
-                icon={themeIcon}
-                label={t("app.switchTheme", { theme: nextThemeLabel })}
-                onClick={toggleTheme}
-              />
-            </motion.span>
-          </motion.div>
+          <div className="theme-picker" role="group" aria-label={t("theme.picker")}>
+            <span>{t("theme.picker")}</span>
+            {themes.map((pack) => (
+              <MaterialOutlinedButton
+                key={pack}
+                ariaPressed={theme === pack}
+                className="theme-picker__button"
+                onClick={() => setTheme(pack)}
+              >
+                <span
+                  aria-hidden="true"
+                  className="theme-picker__swatch"
+                  style={{ background: themeSwatches[pack] }}
+                />
+                {t(themeMessageKeys[pack])}
+              </MaterialOutlinedButton>
+            ))}
+          </div>
           <MaterialIconButton
             className="app-bar__sign-out"
             icon="lock"
             label={t("app.signOut")}
             onClick={signOut}
           />
+        </div>
+        <div className="top-app-bar__stripe" aria-hidden="true">
+          <span />
+          <span />
+          <span />
         </div>
       </header>
 
@@ -150,17 +173,9 @@ function NavRailItem({ item, label }: { item: NavItem; label: string }) {
     >
       {({ isActive }) => (
         <>
+          {isActive ? <span aria-hidden="true" className="nav-item__indicator" /> : null}
           <span className="nav-item__icon">
-            {isActive ? (
-              <motion.span
-                aria-hidden="true"
-                className="nav-item__indicator"
-                layoutId="nav-active-indicator"
-                transition={springs.spatial}
-              />
-            ) : null}
-            {createElement("md-icon", null, item.icon)}
-            {createElement("md-ripple")}
+            <Icon name={item.icon} size={18} />
           </span>
           <span className="nav-item__label">{label}</span>
         </>

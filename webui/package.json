@@ -13,7 +13,6 @@
   },
   "dependencies": {
     "@lobehub/icons": "^5.10.0",
-    "@material/web": "^2.4.0",
     "@tanstack/react-query": "^5.83.0",
     "@tanstack/react-table": "^8.21.3",
     "motion": "^12.23.6",

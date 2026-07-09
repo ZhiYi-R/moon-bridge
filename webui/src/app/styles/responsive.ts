@@ -126,9 +126,8 @@ export const responsiveStyles = `  @media (max-width: 760px) {
 
     .resource-editor-card:hover,
     .usage-metric:hover,
-    md-filled-button:active,
-    md-outlined-button:active,
-    .nav-item:hover .nav-item__icon md-icon {
+    .bh-button:active,
+    .nav-item:hover .nav-item__icon .bh-icon {
       transform: none !important;
     }
   }

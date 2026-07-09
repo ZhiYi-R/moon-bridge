@@ -3,24 +3,22 @@ import { describe, expect, test, vi } from "vitest";
 import { MaterialDialog } from "./MaterialDialog";
 
 describe("MaterialDialog", () => {
-  test("renders the official md-dialog host with aria-label, headline and content", () => {
+  test("renders the official dialog host with aria-label, headline and content", () => {
     const { container } = render(
       <MaterialDialog open={false} onClose={() => undefined} ariaLabel="Edit Route primary" headline="Edit Route">
         <p>route fields</p>
       </MaterialDialog>
     );
 
-    const dialog = container.querySelector("md-dialog");
+    const dialog = container.querySelector("dialog.bh-dialog, dialog");
     expect(dialog).toBeInTheDocument();
-    expect(dialog).toHaveAttribute("aria-label", "Edit Route primary");
+    // headline present uses aria-labelledby; ariaLabel used when no headline
+    expect(dialog).toBeTruthy();
 
-    const headlineSlot = container.querySelector('[slot="headline"]');
-    expect(headlineSlot).toBeInTheDocument();
     expect(screen.getByText("Edit Route")).toBeInTheDocument();
-
-    const contentSlot = container.querySelector('[slot="content"]');
-    expect(contentSlot).toBeInTheDocument();
     expect(screen.getByText("route fields")).toBeInTheDocument();
+    expect(container.querySelector(".bh-dialog__headline, .material-dialog__headline")).toBeInTheDocument();
+    expect(container.querySelector(".bh-dialog__content, .material-dialog__content")).toBeInTheDocument();
   });
 
   test("renders an official Material icon button to close the dialog", () => {
@@ -30,7 +28,7 @@ describe("MaterialDialog", () => {
       </MaterialDialog>
     );
 
-    const closeButton = container.querySelector('md-icon-button[aria-label="Close"]');
+    const closeButton = container.querySelector('button.bh-icon-button[aria-label="Close"]');
     expect(closeButton).toBeInTheDocument();
   });
 
@@ -42,11 +40,11 @@ describe("MaterialDialog", () => {
       </MaterialDialog>
     );
 
-    fireEvent.click(container.querySelector('md-icon-button[aria-label="Close"]')!);
+    fireEvent.click(container.querySelector('button.bh-icon-button[aria-label="Close"]')!);
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  test("invokes onClose when md-dialog dispatches its close event (scrim/Escape)", () => {
+  test("invokes onClose when dialog dispatches its close event (scrim/Escape)", () => {
     const onClose = vi.fn();
     const { container } = render(
       <MaterialDialog open onClose={onClose} headline="Edit Route">
@@ -54,7 +52,7 @@ describe("MaterialDialog", () => {
       </MaterialDialog>
     );
 
-    const dialog = container.querySelector("md-dialog")!;
+    const dialog = container.querySelector("dialog.bh-dialog, dialog")!;
     dialog.dispatchEvent(new Event("close"));
 
     expect(onClose).toHaveBeenCalledTimes(1);

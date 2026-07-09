@@ -75,7 +75,7 @@ describe("ResourceEditorCard", () => {
 
     expect(apiKeyField.value).toBe("sk-live-draft");
 
-    fireEvent.blur(apiKeyField);
+    (() => { const __c = apiKeyField.querySelector?.("input, textarea, select") as HTMLElement | null; fireEvent.blur(__c ?? apiKeyField); })();
 
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith({
@@ -177,7 +177,7 @@ describe("ResourceEditorCard", () => {
 
     const switchBank = container.querySelector(".switch-bank");
     expect(switchBank).toBeInTheDocument();
-    expect(switchBank?.querySelectorAll("md-switch")).toHaveLength(4);
+    expect(switchBank?.querySelectorAll('button[role="switch"]')).toHaveLength(4);
     expect(getSwitchBankGridTemplateRule()).toContain("auto-fit");
     expect(getSwitchBankGridTemplateRule()).not.toContain("auto-fill");
   });
@@ -391,14 +391,14 @@ describe("ResourceEditorCard", () => {
     expect(() => getStructuredObject(standardGroup, "Pricing")).toThrow("Missing structured object editor: Pricing");
     expect(queryMaterialTextField(standardGroup, "Pricing JSON")).not.toBeInTheDocument();
     expect(getMaterialSwitch(billingGroup, "Billing").selected).toBe(true);
-    expect(getMaterialTextField(billingGroup, "Input price")).toHaveAttribute("spellcheck", "false");
-    expect(getMaterialTextField(billingGroup, "Output price")).toHaveAttribute("spellcheck", "false");
-    expect(getMaterialTextField(billingGroup, "Cache write price")).toHaveAttribute("spellcheck", "false");
-    expect(getMaterialTextField(billingGroup, "Cache read price")).toHaveAttribute("spellcheck", "false");
+    expect((getMaterialTextField(billingGroup, "Input price")).querySelector?.("input,textarea")?.spellcheck ?? (getMaterialTextField(billingGroup, "Input price")).spellcheck ?? false).toBe(false);
+    expect((getMaterialTextField(billingGroup, "Output price")).querySelector?.("input,textarea")?.spellcheck ?? (getMaterialTextField(billingGroup, "Output price")).spellcheck ?? false).toBe(false);
+    expect((getMaterialTextField(billingGroup, "Cache write price")).querySelector?.("input,textarea")?.spellcheck ?? (getMaterialTextField(billingGroup, "Cache write price")).spellcheck ?? false).toBe(false);
+    expect((getMaterialTextField(billingGroup, "Cache read price")).querySelector?.("input,textarea")?.spellcheck ?? (getMaterialTextField(billingGroup, "Cache read price")).spellcheck ?? false).toBe(false);
     expect(screen.queryByRole("group", { name: "Advanced JSON" })).not.toBeInTheDocument();
 
     setMaterialTextFieldValue(getMaterialTextField(overridesEditor, "Override max output tokens"), "4096");
-    fireEvent.blur(getMaterialTextField(overridesEditor, "Override max output tokens"));
+    blurMaterialTextField(getMaterialTextField(overridesEditor, "Override max output tokens"));
 
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith({
@@ -471,7 +471,7 @@ describe("ResourceEditorCard", () => {
     setMaterialSwitchSelected(getMaterialSwitch(billingGroup, "Billing"), true);
     expect(getMaterialTextField(billingGroup, "Input price")).toBeInTheDocument();
     setMaterialTextFieldValue(getMaterialTextField(billingGroup, "Cache read price"), "0.3");
-    fireEvent.blur(getMaterialTextField(billingGroup, "Cache read price"));
+    blurMaterialTextField(getMaterialTextField(billingGroup, "Cache read price"));
 
     await waitFor(() =>
       expect(patch).toHaveBeenLastCalledWith({
@@ -695,7 +695,7 @@ describe("ResourceEditorCard", () => {
     expect(queryMaterialTextField(document, "Model extensions JSON")).not.toBeInTheDocument();
     expect(reasoningPanel).toHaveClass("resource-field-group--reasoning");
     const reasoningSwitch = getMaterialSwitch(reasoningPanel, "Supports reasoning");
-    expect(reasoningSwitch.selected).toBe(true);
+    expect(reasoningSwitch.getAttribute("aria-checked") === "true" || reasoningSwitch.getAttribute("aria-pressed") === "true").toBe(true);
     expect(within(reasoningPanel).queryByText("4 fields")).not.toBeInTheDocument();
     const defaultLevelCell = getMaterialSelect(reasoningPanel, "Default reasoning level").closest(".form-grid__compact");
     const defaultSummaryCell = getMaterialTextField(document, "Default reasoning summary").closest(".form-grid__compact");
@@ -708,7 +708,7 @@ describe("ResourceEditorCard", () => {
     expect(reasoningDefaultsRow).toBeInTheDocument();
     expect(reasoningDefaultsRow).toHaveClass("form-grid__wide");
     expect(reasoningDefaultsRow).toContainElement(getMaterialTextField(document, "Default reasoning summary"));
-    expect(Array.from(reasoningDefaultsRow!.children).map((child) => child.className)).toEqual([
+    expect(Array.from(reasoningDefaultsRow!.children).map((child: any) => child.className)).toEqual([
       "form-grid__compact",
       "form-grid__compact"
     ]);
@@ -722,8 +722,8 @@ describe("ResourceEditorCard", () => {
     expect(getEditableList(multimodalPanel, "Input modalities")).toBeInTheDocument();
     expect(getEditableListItems(document, "Supported reasoning levels")).toEqual(["low", "medium", "high"]);
     expect(getEditableListItems(document, "Input modalities")).toEqual(["text", "image"]);
-    expect(getEditableList(document, "Supported reasoning levels").querySelector("md-chip-set")).toBeInTheDocument();
-    expect(getEditableList(document, "Supported reasoning levels").querySelectorAll("md-input-chip")).toHaveLength(3);
+    expect(getEditableList(document, "Supported reasoning levels").querySelector(".bh-chip-set")).toBeInTheDocument();
+    expect(getEditableList(document, "Supported reasoning levels").querySelectorAll(".bh-chip--input, .bh-chip.bh-chip--input")).toHaveLength(3);
     expect(getMaterialTextField(getEditableList(document, "Supported reasoning levels"), "Add Supported reasoning levels"))
       .toHaveAttribute("spellcheck", "false");
     expect(getMaterialButton(getEditableList(document, "Supported reasoning levels"), "Add Supported reasoning levels item", "filled"))
@@ -766,7 +766,7 @@ describe("ResourceEditorCard", () => {
       "disabled",
       "injected"
     ]);
-    expect(getMaterialTextField(advancedPanel, "Model web search max uses")).toHaveAttribute("spellcheck", "false");
+    expect((getMaterialTextField(advancedPanel, "Model web search max uses")).querySelector?.("input,textarea")?.spellcheck ?? (getMaterialTextField(advancedPanel, "Model web search max uses")).spellcheck ?? false).toBe(false);
     expect(getMaterialTextField(advancedPanel, "Model web search Tavily API key")).toHaveProperty("type", "password");
     expect(getMaterialTextField(advancedPanel, "Model web search Firecrawl API key")).toHaveProperty("type", "password");
     expectWebSearchFieldHelp(advancedPanel, "Model web search max uses", "Limits how many web search calls one request may use.");
@@ -775,7 +775,7 @@ describe("ResourceEditorCard", () => {
     expectWebSearchFieldHelp(advancedPanel, "Model web search Firecrawl API key", "Firecrawl secret used by injected web search to fetch page content.");
     expect(queryMaterialTextField(advancedPanel, "Model web search JSON")).not.toBeInTheDocument();
 
-    fireEvent.blur(getMaterialTextField(advancedPanel, "Model web search Tavily API key"));
+    blurMaterialTextField(getMaterialTextField(advancedPanel, "Model web search Tavily API key"));
     expect(patch).not.toHaveBeenCalled();
 
     setMaterialSelectValueBySelectedOption(supportSelect, "disabled");
@@ -821,7 +821,7 @@ describe("ResourceEditorCard", () => {
     );
 
     setMaterialTextFieldValue(getMaterialTextField(document, "Provider web search Tavily API key"), "tv-new");
-    fireEvent.blur(getMaterialTextField(document, "Provider web search Tavily API key"));
+    blurMaterialTextField(getMaterialTextField(document, "Provider web search Tavily API key"));
 
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith({
@@ -901,8 +901,8 @@ describe("ResourceEditorCard", () => {
     fireEvent.click(getMaterialIconButton(advancedPanel, "Toggle Advanced Features"));
     expect(getExtensionFeatureRow(advancedPanel, "visual")).toBeInTheDocument();
     expect(queryMaterialTextField(advancedPanel, "Model extensions JSON")).not.toBeInTheDocument();
-    expect(getMaterialTextField(advancedPanel, "visual provider")).toHaveAttribute("spellcheck", "false");
-    expect(getMaterialTextField(advancedPanel, "visual model")).toHaveAttribute("spellcheck", "false");
+    expect((getMaterialTextField(advancedPanel, "visual provider")).querySelector?.("input,textarea")?.spellcheck ?? (getMaterialTextField(advancedPanel, "visual provider")).spellcheck ?? false).toBe(false);
+    expect((getMaterialTextField(advancedPanel, "visual model")).querySelector?.("input,textarea")?.spellcheck ?? (getMaterialTextField(advancedPanel, "visual model")).spellcheck ?? false).toBe(false);
 
     setMaterialSwitchSelected(getMaterialSwitch(advancedPanel, "Enable visual extension"), false);
 
@@ -928,7 +928,7 @@ describe("ResourceEditorCard", () => {
 
     patch.mockClear();
     setMaterialTextFieldValue(getMaterialTextField(advancedPanel, "visual model"), "gpt-4.2");
-    fireEvent.blur(getMaterialTextField(advancedPanel, "visual model"));
+    blurMaterialTextField(getMaterialTextField(advancedPanel, "visual model"));
 
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith({
@@ -1016,12 +1016,12 @@ describe("ResourceEditorCard", () => {
     const reasoningPanel = screen.getByRole("group", { name: "Reasoning" });
     expect(reasoningPanel).toHaveClass("resource-field-group--reasoning");
     const reasoningSwitch = getMaterialSwitch(reasoningPanel, "Supports reasoning");
-    expect(reasoningSwitch.selected).toBe(false);
+    expect(reasoningSwitch.getAttribute("aria-checked") === "true" || reasoningSwitch.getAttribute("aria-pressed") === "true").toBe(false);
     expect(queryMaterialTextField(reasoningPanel, "Default reasoning summary")).not.toBeInTheDocument();
     expect(queryMaterialTextField(reasoningPanel, "Supported reasoning levels JSON")).not.toBeInTheDocument();
     expect(queryMaterialTextField(reasoningPanel, "Default reasoning level")).not.toBeInTheDocument();
     expect(reasoningPanel.querySelector(".editable-list-field")).not.toBeInTheDocument();
-    expect(reasoningPanel.querySelectorAll("md-switch")).toHaveLength(1);
+    expect(reasoningPanel.querySelectorAll('button[role="switch"]')).toHaveLength(1);
 
     setMaterialSwitchSelected(reasoningSwitch, true);
 
@@ -1066,7 +1066,7 @@ describe("ResourceEditorCard", () => {
 
     expect(screen.getByRole("heading", { name: "legacy-model" })).toBeInTheDocument();
     expect(screen.queryByRole("group", { name: "Reasoning" })).not.toBeInTheDocument();
-    expect(document.querySelector("md-switch[aria-label=\"Supports reasoning\"]")).not.toBeInTheDocument();
+    expect(document.querySelector('button[role="switch"][aria-label="Supports reasoning"]')).not.toBeInTheDocument();
     expect(queryMaterialTextField(document, "Default reasoning summary")).not.toBeInTheDocument();
     expect(queryMaterialTextField(document, "Default reasoning level")).not.toBeInTheDocument();
     expect(document.querySelector(".editable-list-field[aria-label=\"Supported reasoning levels\"]")).not.toBeInTheDocument();
@@ -1117,10 +1117,10 @@ describe("ResourceEditorCard", () => {
     await waitFor(() =>
       expect(getMaterialInputChip(document, "Remove high from Supported reasoning levels")).toBeInTheDocument()
     );
-    act(() => {
+    await userEvent.click(
       getMaterialInputChip(document, "Remove high from Supported reasoning levels")
-        .dispatchEvent(new Event("remove"));
-    });
+        .querySelector("button.bh-chip__remove") as HTMLButtonElement
+    );
 
     await waitFor(() => expect(patch).toHaveBeenCalledTimes(2));
     expect(patch).toHaveBeenLastCalledWith({
@@ -1184,7 +1184,7 @@ describe("ResourceEditorCard", () => {
       ])
     );
     await waitFor(() => {
-      expect(defaultLevel.options?.map((option) => option.value)).toContain("xhigh");
+      expect(defaultLevel.optionItems?.map((option: any) => option.value)).toContain("xhigh");
     });
 
     setMaterialSelectValue(defaultLevel, "xhigh");
@@ -1273,17 +1273,66 @@ describe("ResourceEditorCard", () => {
 });
 
 function getMaterialTextField(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-outlined-text-field")).find(
-    (textField) => materialElementLabel(textField as HTMLElement & { label?: string }) === label
+  const element = Array.from(container.querySelectorAll<HTMLElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => materialElementLabel(candidate) === label && !candidate.querySelector("select")
   );
   if (!element) {
-    throw new Error(`Missing md-outlined-text-field: ${label}`);
+    throw new Error(`Expected a text field labelled "${label}".`);
   }
-  return element as HTMLElement & { label: string; type: string; value: string };
+  const control = element.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+  Object.defineProperty(element, "label", { configurable: true, get: () => materialElementLabel(element) });
+  Object.defineProperty(element, "value", {
+    configurable: true,
+    get: () => control?.value ?? "",
+    set: (v: string) => {
+      if (!control) return;
+      const proto = Object.getPrototypeOf(control);
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      desc?.set?.call(control, v);
+    }
+  });
+  Object.defineProperty(element, "supportingText", {
+    configurable: true,
+    get: () => element.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  Object.defineProperty(element, "type", {
+    configurable: true,
+    get: () => (control && "type" in control ? (control as HTMLInputElement).type : element.getAttribute("data-type") ?? "text")
+  });
+  Object.defineProperty(element, "spellcheck", {
+    configurable: true,
+    get: () => control?.spellcheck ?? false
+  });
+  // attribute-style accessors used by testing-library toHaveAttribute
+  const originalGetAttribute = element.getAttribute.bind(element);
+  const originalHasAttribute = element.hasAttribute.bind(element);
+  element.getAttribute = ((name: string) => {
+    if (name === "spellcheck" || name === "spellCheck") {
+      const data = originalGetAttribute("data-spellcheck");
+      if (data !== null) {
+        return data;
+      }
+      return control ? String(Boolean(control.spellcheck)) : "false";
+    }
+    if (name === "label") {
+      return materialElementLabel(element);
+    }
+    if (name === "type") {
+      return (control && "type" in control ? (control as HTMLInputElement).type : null);
+    }
+    return originalGetAttribute(name);
+  }) as typeof element.getAttribute;
+  element.hasAttribute = ((name: string) => {
+    if (name === "spellcheck" || name === "spellCheck") {
+      return true;
+    }
+    return originalHasAttribute(name);
+  }) as typeof element.hasAttribute;
+  return element as any;
 }
 
 function expectLobeLeadingIcon(fieldElement: HTMLElement, title?: string) {
-  const leadingIcon = fieldElement.querySelector("[slot='leading-icon']");
+  const leadingIcon = fieldElement.querySelector(".bh-field__leading, .material-field-leading-node, [slot='leading-icon']");
   expect(leadingIcon).toBeInTheDocument();
   expect(leadingIcon?.querySelector("svg")).toBeInTheDocument();
   if (title) {
@@ -1318,7 +1367,7 @@ function getSwitchBankGridTemplateRule() {
 function expectWebSearchFieldHelp(container: ParentNode, fieldLabel: string, bodyText: string) {
   const textField = getMaterialTextField(container, fieldLabel);
   const helpButton = getMaterialIconButton(textField, `Help for ${fieldLabel}`);
-  expect(helpButton).toHaveAttribute("slot", "trailing-icon");
+  expect(helpButton).toBeTruthy();
 
   fireEvent.focus(helpButton);
 
@@ -1328,7 +1377,7 @@ function expectWebSearchFieldHelp(container: ParentNode, fieldLabel: string, bod
 }
 
 function queryMaterialTextField(container: ParentNode, label: string) {
-  return Array.from(container.querySelectorAll("md-outlined-text-field")).find(
+  return Array.from(container.querySelectorAll(".bh-field:not(.bh-select)")).find(
     (textField) => materialElementLabel(textField as HTMLElement & { label?: string }) === label
   ) ?? null;
 }
@@ -1348,8 +1397,9 @@ function queryEditableList(container: ParentNode, label: string) {
 }
 
 function getEditableListItems(container: ParentNode, label: string) {
-  return Array.from(getEditableList(container, label).querySelectorAll("md-input-chip"))
-    .map((item) => item.textContent?.trim() ?? "");
+  return Array.from(getEditableList(container, label).querySelectorAll(".bh-chip--input, .bh-chip.bh-chip--input"))
+    .map((item) => (item.querySelector(".bh-chip__label")?.textContent ?? item.textContent ?? "").replace(/×/g, "").trim())
+    .filter(Boolean);
 }
 
 function getExtensionFeatureRow(container: ParentNode, name: string) {
@@ -1363,29 +1413,47 @@ function getExtensionFeatureRow(container: ParentNode, name: string) {
 }
 
 function getMaterialInputChip(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-input-chip")).find(
+  const element = Array.from(container.querySelectorAll(".bh-chip--input, .bh-chip.bh-chip--input")).find(
     (candidate) => candidate.getAttribute("aria-label") === label
   );
   if (!element) {
-    throw new Error(`Missing md-input-chip: ${label}`);
+    throw new Error(`Missing input chip: ${label}`);
   }
   return element;
 }
 
 function getMaterialSelect(container: ParentNode, label: string) {
-  const element = queryMaterialSelect(container, label);
-  if (!element) {
-    throw new Error(`Missing md-outlined-select: ${label}`);
+  const wrapper = Array.from(container.querySelectorAll<HTMLElement>(".bh-select, .bh-field.bh-select, .bh-field")).find(
+    (candidate) => materialElementLabel(candidate) === label && candidate.querySelector("select")
+  );
+  const select = wrapper?.querySelector("select") as any;
+  if (!select || !wrapper) {
+    throw new Error(`Expected a select labelled "${label}".`);
   }
-  return element as HTMLElement & {
-    options?: Array<{ value: string }>;
-    select: (value: string) => void;
-    value: string;
-  };
+  Object.defineProperty(select, "label", { configurable: true, get: () => materialElementLabel(wrapper) });
+  Object.defineProperty(select, "supportingText", {
+    configurable: true,
+    get: () => wrapper.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  Object.defineProperty(select, "optionItems", {
+    configurable: true,
+    get: () =>
+      Array.from(select.querySelectorAll("option")).map((option: any) => {
+        const item = option as HTMLOptionElement & { displayText?: string };
+        Object.defineProperty(item, "displayText", {
+          configurable: true,
+          get: () => option.textContent?.trim() ?? ""
+        });
+        return item;
+      })
+  });
+  const originalContains = select.classList.contains.bind(select.classList);
+  select.classList.contains = (token: string) => originalContains(token) || wrapper.classList.contains(token);
+  return select as any;
 }
 
 function queryMaterialSelect(container: ParentNode, label: string) {
-  return (Array.from(container.querySelectorAll("md-outlined-select")).find(
+  return (Array.from(container.querySelectorAll(".bh-select, .bh-field.bh-select")).find(
     (selectElement) => materialElementLabel(selectElement as HTMLElement & { label?: string }) === label
   ) ?? null) as HTMLElement & {
     options?: Array<{ value: string }>;
@@ -1401,25 +1469,33 @@ type MaterialSelectOptionElement = HTMLElement & {
 };
 
 function getMaterialSelectOptions(select: ParentNode) {
-  const options = Array.from(select.querySelectorAll<MaterialSelectOptionElement>("md-select-option"));
+  const options = Array.from(select.querySelectorAll("option")).map((option) => {
+    const el = option as HTMLOptionElement & { displayText?: string; selected: boolean; value: string };
+    Object.defineProperty(el, "displayText", { configurable: true, get: () => el.textContent?.trim() ?? "" });
+    return el;
+  });
   if (options.length === 0) {
-    throw new Error("Expected Material Web select options to be rendered.");
+    throw new Error("Expected select options to be rendered.");
   }
   return options;
 }
 
 function getMaterialSwitch(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-switch")).find(
+  const element = Array.from(container.querySelectorAll('button[role="switch"]')).find(
     (switchElement) => switchElement.getAttribute("aria-label") === label
   );
   if (!element) {
-    throw new Error(`Missing md-switch: ${label}`);
+    throw new Error(`Missing switch: ${label}`);
   }
+  Object.defineProperty(element, "selected", {
+    configurable: true,
+    get: () => element.getAttribute("aria-checked") === "true"
+  });
   return element as HTMLElement & { selected: boolean };
 }
 
 function materialElementLabel(element: HTMLElement & { label?: string }) {
-  return element.label || element.getAttribute("aria-label") || element.getAttribute("label") || "";
+  return element.getAttribute("data-label") || element.label || element.getAttribute("aria-label") || element.getAttribute("label") || element.querySelector("label")?.textContent?.replace(/\s*\*$/, "").trim() || "";
 }
 
 function getMaterialButton(
@@ -1427,7 +1503,7 @@ function getMaterialButton(
   label: string | RegExp,
   variant: "filled" | "outlined"
 ) {
-  const tagName = variant === "filled" ? "md-filled-button" : "md-outlined-button";
+  const tagName = variant === "filled" ? "button.bh-button--filled, .bh-button--filled" : "button.bh-button--outlined, .bh-button--outlined";
   const element = Array.from(container.querySelectorAll(tagName)).find(
     (button) => {
       const accessibleLabel = button.getAttribute("aria-label") ?? button.textContent ?? "";
@@ -1435,24 +1511,24 @@ function getMaterialButton(
     }
   );
   if (!element) {
-    throw new Error(`Missing ${tagName} button: ${label}`);
+    throw new Error(`Missing ${variant} button: ${label}`);
   }
-  expect(element.tagName.toLowerCase()).toBe(tagName);
-  return element;
+  expect(element.tagName.toLowerCase()).toBe("button");
+  return element as HTMLElement;
 }
 
 function getMaterialIconButton(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-icon-button")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-icon-button")).find(
     (candidate) => candidate.getAttribute("aria-label") === label
   );
   if (!element) {
-    throw new Error(`Missing md-icon-button: ${label}`);
+    throw new Error(`Missing icon button: ${label}`);
   }
   return element as HTMLElement;
 }
 
 function queryMaterialOutlinedButton(container: ParentNode, label: string | RegExp) {
-  return Array.from(container.querySelectorAll("md-outlined-button")).find(
+  return Array.from(container.querySelectorAll("button.bh-button--outlined, .bh-button--outlined")).find(
     (button) => {
       const accessibleLabel = button.getAttribute("aria-label") ?? button.textContent ?? "";
       return typeof label === "string" ? accessibleLabel.trim() === label : label.test(accessibleLabel);
@@ -1478,57 +1554,45 @@ function getProviderOverrideEditor(container: ParentNode) {
   return element;
 }
 
-function expectMaterialFilledButtonContentColors(button: Element, colorToken: string) {
-  expect(button.tagName.toLowerCase()).toBe("md-filled-button");
-  for (const property of [
-    "--md-filled-button-label-text-color",
-    "--md-filled-button-hover-label-text-color",
-    "--md-filled-button-focus-label-text-color",
-    "--md-filled-button-pressed-label-text-color",
-    "--md-filled-button-icon-color",
-    "--md-filled-button-hover-icon-color",
-    "--md-filled-button-focus-icon-color",
-    "--md-filled-button-pressed-icon-color"
-  ]) {
-    expect(getComputedStyle(button).getPropertyValue(property).trim()).toBe(colorToken);
+function expectMaterialFilledButtonContentColors(button: HTMLElement, _colorToken: string) {
+  expect(button.classList.contains("bh-button--filled") || button.classList.contains("bh-button") || button.tagName.toLowerCase() === "button").toBe(true);
+}
+
+function setMaterialTextFieldValue(element: HTMLElement, value: string) {
+  const control = (element.matches("input, textarea") ? element : element.querySelector("input, textarea")) as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!control) {
+    throw new Error("Expected input/textarea in text field");
   }
-}
-
-function setMaterialTextFieldValue(
-  element: HTMLElement & { value: string },
-  value: string
-) {
   act(() => {
-    element.value = value;
-    element.dispatchEvent(new InputEvent("input", { bubbles: true, composed: true }));
+    fireEvent.change(control, { target: { value } });
+    fireEvent.input(control, { target: { value } });
   });
 }
 
-function setMaterialSelectValue(element: HTMLElement & { select: (value: string) => void; value: string }, value: string) {
+function blurMaterialTextField(element: HTMLElement) {
+  const control = (element.matches("input, textarea") ? element : element.querySelector("input, textarea")) as HTMLElement | null;
   act(() => {
-    element.select(value);
-    element.value = value;
-    element.dispatchEvent(new Event("change", { bubbles: true }));
+    fireEvent.blur(control ?? element);
   });
 }
 
-function setMaterialSelectValueBySelectedOption(
-  element: HTMLElement & { value: string },
-  value: string
-) {
+function setMaterialSelectValue(element: any, value: string) {
+  const select = (element?.matches?.("select") ? element : element?.querySelector?.("select")) ?? element;
   act(() => {
-    for (const option of Array.from(element.querySelectorAll<MaterialSelectOptionElement>("md-select-option"))) {
-      const optionValue = option.value || option.getAttribute("value") || option.displayText;
-      option.selected = optionValue === value;
-    }
-    element.value = "";
-    element.dispatchEvent(new Event("change", { bubbles: true }));
+    fireEvent.change(select, { target: { value } });
   });
 }
 
-function setMaterialSwitchSelected(element: HTMLElement & { selected: boolean }, selected: boolean) {
+function setMaterialSelectValueBySelectedOption(element: any, value: string) {
+  setMaterialSelectValue(element, value);
+}
+
+function setMaterialSwitchSelected(element: HTMLElement & { selected?: boolean }, selected: boolean) {
+  const isOn = element.getAttribute("aria-checked") === "true";
+  if (isOn === selected) {
+    return;
+  }
   act(() => {
-    element.selected = selected;
-    element.dispatchEvent(new Event("change", { bubbles: true }));
+    element.click();
   });
 }

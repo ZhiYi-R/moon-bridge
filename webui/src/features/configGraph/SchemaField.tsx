@@ -16,7 +16,6 @@ import { MaterialIconButton } from "../../components/MaterialButton";
 import { MaterialOutlinedTextField, type MaterialTextFieldElement } from "../../components/MaterialTextField";
 import { MaterialSwitch } from "../../components/MaterialSwitch";
 import { SelectMenu, type SelectMenuOption } from "./SelectMenu";
-import type { MdIconButton } from "@material/web/iconbutton/icon-button.js";
 import { type TooltipPosition, useAnchoredTooltipPosition } from "./helpTooltipPosition";
 import { protocolIconForValue } from "./modelProviderIcons";
 
@@ -66,7 +65,7 @@ export function SchemaField({
   const [helpOpen, setHelpOpen] = useState(false);
   const [revealed, setRevealed] = useState(false);
   const emittedSecretDraftRef = useRef<string | undefined>(undefined);
-  const trailingHelpAnchorRef = useRef<MdIconButton>(null);
+  const trailingHelpAnchorRef = useRef<HTMLButtonElement>(null);
   const displayLabel = fieldLabel(field, docPath, locale);
 
   useEffect(() => {
@@ -766,7 +765,7 @@ function FieldHelpButton({
   label: string;
   setHelpOpen: (open: boolean | ((current: boolean) => boolean)) => void;
 }) {
-  const anchorRef = useRef<MdIconButton>(null);
+  const anchorRef = useRef<HTMLButtonElement>(null);
   return (
     <span className="schema-field__help-wrap">
       <FieldHelpIconButton
@@ -808,7 +807,7 @@ function renderFieldTrailing({
   helpId: string;
   helpOpen: boolean;
   setHelpOpen: (open: boolean | ((current: boolean) => boolean)) => void;
-  trailingHelpAnchorRef?: RefObject<MdIconButton | null>;
+  trailingHelpAnchorRef?: RefObject<HTMLButtonElement | null>;
 }) {
   // Material Web's text-field trailing slot holds exactly one icon (fixed-width
   // container + absolutely-positioned slotted content). Secret fields use that
@@ -848,7 +847,7 @@ function FieldHelpIconButton({
   setHelpOpen,
   slot
 }: {
-  anchorRef?: RefObject<MdIconButton | null>;
+  anchorRef?: RefObject<HTMLButtonElement | null>;
   field: FieldSchema;
   helpId: string;
   helpOpen: boolean;

@@ -1,4 +1,4 @@
-import { act, screen, waitFor } from "@testing-library/react";
+import {act, screen, waitFor, fireEvent} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithConsoleProviders } from "../test/renderWithConsoleProviders";
 import { afterEach, describe, expect, test, vi } from "vitest";
@@ -113,27 +113,65 @@ describe("AuthGate", () => {
 });
 
 function getMaterialTextField(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-outlined-text-field")).find(
-    (textField) => (textField as HTMLElement & { label: string }).label === label
+  const element = Array.from(container.querySelectorAll<HTMLElement>(".bh-field:not(.bh-select)")).find(
+    (candidate) => materialElementLabel(candidate) === label && !candidate.querySelector("select")
   );
   if (!element) {
-    throw new Error(`Expected a Material Web text field labelled "${label}".`);
+    throw new Error(`Expected a text field labelled "${label}".`);
   }
-  return element as HTMLElement & { label: string; type: string; value: string };
+  const control = element.querySelector("input, textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+  Object.defineProperty(element, "label", { configurable: true, get: () => materialElementLabel(element) });
+  Object.defineProperty(element, "value", {
+    configurable: true,
+    get: () => control?.value ?? "",
+    set: (v: string) => {
+      if (!control) return;
+      const proto = Object.getPrototypeOf(control);
+      const desc = Object.getOwnPropertyDescriptor(proto, "value");
+      desc?.set?.call(control, v);
+    }
+  });
+  Object.defineProperty(element, "supportingText", {
+    configurable: true,
+    get: () => element.querySelector(".bh-field__support")?.textContent?.trim() ?? ""
+  });
+  Object.defineProperty(element, "type", {
+    configurable: true,
+    get: () => (control && "type" in control ? (control as HTMLInputElement).type : element.getAttribute("data-type") ?? "text")
+  });
+  Object.defineProperty(element, "spellcheck", {
+    configurable: true,
+    get: () => control?.spellcheck ?? false
+  });
+  // attribute-style accessors used by testing-library toHaveAttribute
+  const originalGetAttribute = element.getAttribute.bind(element);
+  element.getAttribute = ((name: string) => {
+    if (name === "spellcheck" || name === "spellCheck") {
+      return control ? String(control.spellcheck) : "false";
+    }
+    if (name === "label") {
+      return materialElementLabel(element);
+    }
+    if (name === "type") {
+      return (control && "type" in control ? (control as HTMLInputElement).type : null);
+    }
+    return originalGetAttribute(name);
+  }) as typeof element.getAttribute;
+  return element as any;
 }
 
 function getMaterialIconButton(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-icon-button")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-icon-button")).find(
     (button) => button.getAttribute("aria-label") === label
   );
   if (!element) {
-    throw new Error(`Expected a Material Web icon button labelled "${label}".`);
+    throw new Error(`Expected an icon button labelled "${label}".`);
   }
   return element as HTMLElement;
 }
 
 function getMaterialCheckbox(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-checkbox")).find(
+  const element = Array.from(container.querySelectorAll('input[type="checkbox"]')).find(
     (checkbox) => checkbox.getAttribute("aria-label") === label
   );
   if (!element) {
@@ -143,33 +181,46 @@ function getMaterialCheckbox(container: ParentNode, label: string) {
 }
 
 function getMaterialButton(container: ParentNode, label: string) {
-  const element = Array.from(container.querySelectorAll("md-filled-button")).find(
+  const element = Array.from(container.querySelectorAll("button.bh-button--filled, .bh-button--filled")).find(
     (button) => button.textContent?.trim() === label
   );
   if (!element) {
-    throw new Error(`Expected a Material Web filled button labelled "${label}".`);
+    throw new Error(`Expected a filled button labelled "${label}".`);
   }
   return element as HTMLElement & { type: string };
 }
 
-function setMaterialTextFieldValue(element: HTMLElement & { value: string }, value: string) {
+function setMaterialTextFieldValue(element: HTMLElement, value: string) {
+  const control = (element.matches("input, textarea") ? element : element.querySelector("input, textarea")) as HTMLInputElement | HTMLTextAreaElement | null;
+  if (!control) {
+    throw new Error("Expected input/textarea in text field");
+  }
   act(() => {
-    element.value = value;
-    element.dispatchEvent(new Event("input", { bubbles: true }));
+    fireEvent.input(control, { target: { value } });
+    fireEvent.change(control, { target: { value } });
   });
 }
 
-function setMaterialCheckboxChecked(element: HTMLElement & { checked: boolean }, checked: boolean) {
-  act(() => {
-    element.checked = checked;
-    element.dispatchEvent(new Event("change", { bubbles: true }));
-  });
+function setMaterialCheckboxChecked(element: HTMLInputElement | HTMLElement, checked: boolean) {
+  const input = (
+    element instanceof HTMLInputElement
+      ? element
+      : element.querySelector("input[type='checkbox']")
+  ) as HTMLInputElement;
+  if (!input) {
+    throw new Error("Expected checkbox input");
+  }
+  if (input.checked === checked) {
+    return;
+  }
+  // React checkbox onChange is driven by click, not property assignment.
+  fireEvent.click(input);
 }
 
 async function submitAuthForm(button: HTMLElement) {
   const form = button.closest("form");
   if (!form) {
-    throw new Error("Expected Material Web submit button inside AuthGate form.");
+    throw new Error("Expected submit button inside AuthGate form.");
   }
   let clicked = false;
   let submitted = false;
@@ -188,4 +239,25 @@ async function submitAuthForm(button: HTMLElement) {
       await Promise.resolve();
     });
   }
+}
+
+
+function materialElementLabel(element: HTMLElement & { label?: string }) {
+  const dataLabel = element.getAttribute("data-label");
+  if (dataLabel) {
+    return dataLabel;
+  }
+  const labelledBy = element.getAttribute("aria-labelledby");
+  if (labelledBy) {
+    return labelledBy
+      .split(/\s+/)
+      .map((id) => document.getElementById(id)?.textContent?.trim() ?? "")
+      .filter(Boolean)
+      .join(" ");
+  }
+  const labelEl = element.querySelector("label");
+  if (labelEl?.textContent) {
+    return labelEl.textContent.replace(/\s*\*$/, "").trim();
+  }
+  return element.label || element.getAttribute("aria-label") || element.getAttribute("label") || "";
 }

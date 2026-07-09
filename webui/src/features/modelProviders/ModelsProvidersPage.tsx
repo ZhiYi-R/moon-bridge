@@ -1,3 +1,4 @@
+import { MaterialSymbol } from "../../components/ui/Icon";
 import { useMemo, useState } from "react";
 import { LoadingState } from "../../components/LoadingState";
 import { useI18n } from "../../i18n/I18nProvider";
@@ -185,7 +186,7 @@ function ModelProviderBindings({
     >
       <div className="resource-field-group__header">
         <h4 id={headingId}>
-          <span className="material-symbol" aria-hidden="true">cloud_sync</span>
+          <MaterialSymbol className="material-symbol">cloud_sync</MaterialSymbol>
           {offersLabel}
         </h4>
         <div className="resource-field-group__header-actions">

@@ -88,7 +88,7 @@ export const formStyles = `  .form-grid {
     max-width: min(320px, 78vw);
     display: grid;
     gap: 6px;
-    border-radius: var(--mb-shape-md);
+    border-radius: 0;
     padding: 16px;
     color: var(--mb-color-on-surface-variant);
     background: var(--mb-color-surface-container-high);
@@ -120,7 +120,7 @@ export const formStyles = `  .form-grid {
   .rich-tooltip__chip {
     display: inline-flex;
     align-items: center;
-    border-radius: var(--mb-shape-full);
+    border-radius: 0;
     padding: 2px 9px;
     background: color-mix(in srgb, var(--mb-color-primary) 14%, transparent);
     color: var(--mb-color-on-surface);
@@ -137,7 +137,7 @@ export const formStyles = `  .form-grid {
     align-items: center;
     justify-content: space-between;
     gap: 10px;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     outline: 0;
     padding: 4px 6px 4px 14px;
     background: color-mix(in srgb, var(--mb-color-surface-container-high) 60%, transparent);
@@ -155,7 +155,7 @@ export const formStyles = `  .form-grid {
     width: 100%;
     display: grid;
     gap: 10px;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     padding: 12px;
     color: var(--mb-color-on-surface-variant);
     background: color-mix(in srgb, var(--mb-color-surface-container-high) 58%, transparent);
@@ -181,7 +181,7 @@ export const formStyles = `  .form-grid {
     min-height: 24px;
     display: inline-flex;
     align-items: center;
-    border-radius: var(--mb-shape-full);
+    border-radius: 0;
     padding: 2px 11px;
     color: var(--mb-color-on-secondary-container);
     background: var(--mb-color-secondary-container);
@@ -200,7 +200,7 @@ export const formStyles = `  .form-grid {
     min-width: 0;
     display: grid;
     gap: 3px;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     padding: 8px 10px;
     background: color-mix(in srgb, var(--mb-color-surface-container-highest) 54%, transparent);
   }
@@ -235,7 +235,7 @@ export const formStyles = `  .form-grid {
     width: 100%;
     display: grid;
     gap: 10px;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     padding: 12px;
     color: var(--mb-color-on-surface-variant);
     background: color-mix(in srgb, var(--mb-color-surface-container-high) 58%, transparent);
@@ -284,7 +284,7 @@ export const formStyles = `  .form-grid {
     display: grid;
     gap: 10px;
     min-width: 0;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     outline: 0;
     padding: 12px;
     background: color-mix(in srgb, var(--mb-color-surface-container-high) 58%, transparent);
@@ -345,7 +345,7 @@ export const formStyles = `  .form-grid {
     display: grid;
     gap: 12px;
     min-width: 0;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     outline: 0;
     padding: 12px;
     background: color-mix(in srgb, var(--mb-color-surface-container-high) 58%, transparent);
@@ -383,7 +383,7 @@ export const formStyles = `  .form-grid {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     padding: 8px;
     background: color-mix(in srgb, var(--mb-color-surface-container-highest) 48%, transparent);
   }
@@ -449,7 +449,7 @@ export const formStyles = `  .form-grid {
     justify-self: end;
     gap: 6px;
     min-height: 24px;
-    border-radius: var(--mb-shape-full);
+    border-radius: 0;
     padding: 2px 11px;
     color: var(--mb-color-on-surface-variant);
     background: color-mix(in srgb, var(--mb-color-surface-container-high) 78%, transparent);
@@ -711,7 +711,7 @@ export const formStyles = `  .form-grid {
   .edit-state-banner {
     margin: 0;
     border: 1px solid color-mix(in srgb, var(--mb-color-primary) 40%, transparent);
-    border-radius: var(--mb-shape-md);
+    border-radius: 0;
     padding: 14px 16px;
     background: color-mix(in srgb, var(--mb-color-primary-container) 42%, var(--mb-color-surface));
   }
@@ -731,7 +731,7 @@ export const formStyles = `  .form-grid {
 
   .field-error {
     margin: 0;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     padding: 8px 12px;
     color: var(--mb-color-on-error-container);
     background: var(--mb-color-error-container);
@@ -743,7 +743,7 @@ export const formStyles = `  .form-grid {
 
   .field-warning {
     margin: 0;
-    border-radius: var(--mb-shape-sm);
+    border-radius: 0;
     padding: 8px 12px;
     color: var(--mb-color-on-warning-container);
     background: var(--mb-color-warning-container);
@@ -769,7 +769,7 @@ export const formStyles = `  .form-grid {
     max-height: 420px;
     overflow: auto;
     margin: 0;
-    border-radius: var(--mb-shape-md);
+    border-radius: 0;
     padding: 16px;
     color: var(--mb-color-on-surface);
     background: var(--mb-color-surface-container-lowest);

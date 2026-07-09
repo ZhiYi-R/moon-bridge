@@ -1,106 +1,90 @@
-export const shellLayoutStyles = `  .workspace {
+export const shellLayoutStyles = `
+  .workspace {
     display: grid;
-    grid-template-columns: 96px minmax(0, 1fr);
-    min-height: calc(100vh - 69px);
+    grid-template-columns: var(--mb-nav-width, 200px) minmax(0, 1fr);
+    min-height: calc(100vh - var(--mb-header-height, 72px));
   }
 
   .navigation-rail {
     position: sticky;
-    top: 69px;
+    top: var(--mb-header-height, 72px);
     align-self: start;
-    height: calc(100vh - 69px);
+    height: calc(100vh - var(--mb-header-height, 72px));
     display: flex;
     flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 14px 8px;
+    gap: 0;
+    padding: 0;
     outline: 0;
+    border-right: var(--mb-border-width-thick, 3px) solid var(--mb-color-outline);
     background: var(--mb-color-surface-container-low);
+    overflow-y: auto;
   }
 
   .nav-item {
     position: relative;
     width: 100%;
-    min-height: 58px;
+    min-height: 56px;
     display: grid;
-    justify-items: center;
-    align-content: center;
-    gap: 5px;
-    padding: 6px 2px;
-    border-radius: var(--mb-shape-md);
+    grid-template-columns: 40px minmax(0, 1fr);
+    align-items: center;
+    gap: 10px;
+    padding: 10px 14px 10px 12px;
+    border-bottom: 1px solid color-mix(in srgb, var(--mb-color-outline) 35%, transparent);
     color: var(--mb-color-on-surface-variant);
     text-decoration: none;
     -webkit-tap-highlight-color: transparent;
-    transition: color var(--mb-duration-medium) var(--mb-ease-standard);
+    transition: color var(--mb-motion-standard), background-color var(--mb-motion-standard);
   }
 
   .nav-item__icon {
     position: relative;
     display: grid;
     place-items: center;
-    width: 56px;
-    height: 32px;
-    border-radius: var(--mb-shape-full);
+    width: 36px;
+    height: 36px;
+    border: 2px solid var(--mb-color-outline-variant);
+    background: var(--mb-color-surface-container);
     overflow: hidden;
-    isolation: isolate;
-    --md-ripple-hover-color: var(--mb-color-on-surface);
-    --md-ripple-pressed-color: var(--mb-color-primary);
-    --md-icon-size: 24px;
-  }
-
-  .nav-item__icon md-icon {
-    position: relative;
-    z-index: 1;
-    transition: transform var(--mb-duration-medium) var(--mb-ease-spring);
   }
 
   .nav-item__indicator {
     position: absolute;
-    inset: 0;
-    z-index: 0;
-    border-radius: var(--mb-shape-full);
-    background: var(--mb-color-secondary-container);
-  }
-
-  .nav-item__icon::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    z-index: 0;
-    border-radius: inherit;
-    background: transparent;
-    transition: background var(--mb-duration-short) var(--mb-ease-standard);
-  }
-
-  .nav-item:hover .nav-item__icon::after {
-    background: color-mix(in srgb, var(--mb-color-on-surface) 8%, transparent);
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    background: var(--mb-color-primary);
   }
 
   .nav-item__label {
-    max-width: 90px;
-    font-size: 0.6875rem;
-    line-height: 1.15;
-    font-weight: 600;
-    letter-spacing: 0.01em;
-    text-align: center;
+    max-width: none;
+    font-size: 0.78rem;
+    line-height: 1.2;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    text-align: left;
     white-space: normal;
-    transition: color var(--mb-duration-medium) var(--mb-ease-standard);
   }
 
   .nav-item:hover {
     color: var(--mb-color-on-surface);
+    background: color-mix(in srgb, var(--mb-color-primary) 8%, transparent);
   }
 
-  .nav-item:hover .nav-item__icon md-icon {
-    transform: translateY(-1px) scale(1.08);
+  .nav-item:hover .nav-item__icon {
+    border-color: var(--mb-color-primary);
   }
 
   .nav-item--active {
     color: var(--mb-color-on-surface);
+    background: color-mix(in srgb, var(--mb-color-primary) 12%, transparent);
   }
 
   .nav-item--active .nav-item__icon {
-    color: var(--mb-color-on-secondary-container);
+    color: var(--mb-color-on-primary);
+    background: var(--mb-color-primary);
+    border-color: var(--mb-color-primary);
   }
 
   .nav-item--active .nav-item__label {
@@ -109,27 +93,23 @@ export const shellLayoutStyles = `  .workspace {
   }
 
   .nav-item:focus-visible {
-    outline: none;
-  }
-
-  .nav-item:focus-visible .nav-item__icon {
-    outline: 2px solid var(--mb-color-primary);
-    outline-offset: 3px;
+    outline: 2px solid var(--mb-color-accent-yellow);
+    outline-offset: -2px;
   }
 
   .content-surface {
     min-width: 0;
-    padding: 24px var(--mb-content-gutter);
+    padding: 28px var(--mb-content-gutter);
   }
 
   .placeholder-panel {
     min-height: calc(100vh - 120px);
     display: flex;
     align-items: center;
-    border-radius: var(--mb-shape-panel);
-    outline: 0;
+    border: var(--mb-border-width, 2px) solid var(--mb-color-outline);
     padding: 32px;
     background: var(--mb-color-surface-container);
+    box-shadow: var(--mb-elevation-1);
   }
 
   .placeholder-panel > div {
@@ -139,16 +119,34 @@ export const shellLayoutStyles = `  .workspace {
   .eyebrow {
     margin: 0 0 10px;
     color: var(--mb-color-primary);
-    font-size: 0.75rem;
+    font-size: 0.72rem;
     font-weight: 700;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
+  }
+
+  .page-header__eyebrow-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+  }
+
+  .page-header__mark {
+    width: 14px;
+    height: 14px;
+    background: var(--mb-color-primary);
+    border: 2px solid var(--mb-color-outline);
+    flex-shrink: 0;
   }
 
   h1 {
     margin: 0;
-    font-size: clamp(2rem, 4vw, 3.5rem);
+    font-size: clamp(1.8rem, 3.2vw, 2.6rem);
     line-height: 1.05;
-    font-weight: 650;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
   }
 
   .placeholder-panel p:last-child {
@@ -162,14 +160,14 @@ export const shellLayoutStyles = `  .workspace {
   .page-stack {
     display: grid;
     gap: 20px;
-    /* Center the page content within the available rail+content area and cap it at the
-       content measure so wide/ultrawide screens stay readable instead of stretching. */
     width: min(100%, var(--mb-content-max));
     margin-inline: auto;
   }
 
   .page-header {
     max-width: none;
+    padding-bottom: 8px;
+    border-bottom: 2px solid var(--mb-color-outline);
   }
 
   .page-header h1 {
@@ -184,5 +182,4 @@ export const shellLayoutStyles = `  .workspace {
     font-size: 0.95rem;
     line-height: 1.55;
   }
-
 `;
