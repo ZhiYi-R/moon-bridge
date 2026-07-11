@@ -14,7 +14,7 @@ type ChatRequest struct {
 	Messages          []ChatMessage   `json:"messages"`
 	Temperature       *float64        `json:"temperature,omitempty"`
 	TopP              *float64        `json:"top_p,omitempty"`
-	MaxTokens         int             `json:"max_completion_tokens,omitempty"`
+	MaxTokens         int             `json:"max_tokens,omitempty"`
 	Stop              []string        `json:"stop,omitempty"`
 	Stream            bool            `json:"stream,omitempty"`
 	Tools             []ChatTool      `json:"tools,omitempty"`
