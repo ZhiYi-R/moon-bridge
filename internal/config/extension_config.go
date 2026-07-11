@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 
 	"gopkg.in/yaml.v3"
 )
@@ -239,7 +240,14 @@ func decodeTypedExtensionConfig(spec ExtensionConfigSpec, raw map[string]any) an
 	if typed == nil {
 		return cloneAnyMap(raw)
 	}
-	data, _ := json.Marshal(raw)
-	_ = json.Unmarshal(data, typed)
+	data, err := json.Marshal(raw)
+	if err != nil {
+		slog.Warn("扩展配置序列化失败，回退到原始配置", "extension", spec.Name, "error", err)
+		return cloneAnyMap(raw)
+	}
+	if err := json.Unmarshal(data, typed); err != nil {
+		slog.Warn("扩展配置解码失败，回退到原始配置", "extension", spec.Name, "error", err)
+		return cloneAnyMap(raw)
+	}
 	return typed
 }

@@ -249,7 +249,9 @@ func traceError(stage string, err error) map[string]string {
 func writeJSON(writer http.ResponseWriter, status int, payload any) {
 	writer.Header().Set("Content-Type", "application/json")
 	writer.WriteHeader(status)
-	_ = json.NewEncoder(writer).Encode(payload)
+	if err := json.NewEncoder(writer).Encode(payload); err != nil {
+		slog.Warn("写入 JSON 响应失败", "status", status, "error", err)
+	}
 }
 func writeOpenAIError(writer http.ResponseWriter, status int, payload openai.ErrorResponse) {
 	writeJSON(writer, status, payload)
@@ -259,7 +261,11 @@ func writeSSE(writer http.ResponseWriter, event openai.StreamEvent) error {
 	if event.Data == nil {
 		payload = []byte("{}")
 	} else {
-		payload, _ = json.Marshal(event.Data)
+		marshaled, err := json.Marshal(event.Data)
+		if err != nil {
+			return fmt.Errorf("marshal SSE event %q: %w", event.Event, err)
+		}
+		payload = marshaled
 	}
 	if _, err := writer.Write([]byte("event: " + event.Event + "\n")); err != nil {
 		return err
