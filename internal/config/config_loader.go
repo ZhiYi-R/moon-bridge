@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"moonbridge/internal/util"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -444,13 +446,13 @@ func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config,
 
 	cfg := Config{
 		Mode:             mode,
-		Addr:             valueOrDefault(strings.TrimSpace(fileConfig.Server.Addr), DefaultAddr),
+		Addr:             util.OrDefault(strings.TrimSpace(fileConfig.Server.Addr), DefaultAddr),
 		AuthToken:        strings.TrimSpace(fileConfig.Server.AuthToken),
-		MaxSessions:      intOrDefault(fileConfig.Server.MaxSessions, 0),
-		SessionTTL:       valueOrDefault(strings.TrimSpace(fileConfig.Server.SessionTTL), "24h"),
+		MaxSessions:      util.OrDefault(fileConfig.Server.MaxSessions, 0),
+		SessionTTL:       util.OrDefault(strings.TrimSpace(fileConfig.Server.SessionTTL), "24h"),
 		TraceRequests:    traceEnabled,
-		LogLevel:         valueOrDefault(strings.TrimSpace(fileConfig.Log.Level), "info"),
-		LogFormat:        valueOrDefault(strings.TrimSpace(fileConfig.Log.Format), "text"),
+		LogLevel:         util.OrDefault(strings.TrimSpace(fileConfig.Log.Level), "info"),
+		LogFormat:        util.OrDefault(strings.TrimSpace(fileConfig.Log.Format), "text"),
 		SystemPrompt:     defaults.SystemPrompt,
 		DefaultModel:     defaults.Model,
 		Defaults:         defaults,
@@ -458,12 +460,12 @@ func FromFileConfigWithOptions(fileConfig FileConfig, opts LoadOptions) (Config,
 		Routes:           routes,
 		ProviderDefs:     providerDefs,
 		WebSearchSupport: webSearchSupport,
-		WebSearchMaxUses: intOrDefault(fileConfig.WebSearch.MaxUses, 8),
+		WebSearchMaxUses: util.OrDefault(fileConfig.WebSearch.MaxUses, 8),
 		TavilyAPIKey:     strings.TrimSpace(fileConfig.WebSearch.TavilyAPIKey),
 		FirecrawlAPIKey:  strings.TrimSpace(fileConfig.WebSearch.FirecrawlAPIKey),
-		SearchMaxRounds:  intOrDefault(fileConfig.WebSearch.SearchMaxRounds, 5),
+		SearchMaxRounds:  util.OrDefault(fileConfig.WebSearch.SearchMaxRounds, 5),
 		WebSearchExtra:   cloneAnyMap(fileConfig.WebSearch.Extra),
-		DefaultMaxTokens: intOrDefault(defaults.MaxTokens, 1024),
+		DefaultMaxTokens: util.OrDefault(defaults.MaxTokens, 1024),
 		Cache:            fromCacheFileConfig(fileConfig.Cache),
 		Persistence:      FromPersistenceFileConfig(fileConfig.Persistence),
 		ResponseProxy:    responseProxy,
@@ -514,11 +516,11 @@ func fromModelDefFileConfig(fileConfig map[string]ModelDefFileConfig, specs exte
 				Description: strings.TrimSpace(p.Description),
 			})
 		}
-		supportsReasoning := boolOrDefault(
+		supportsReasoning := util.Deref(
 			m.SupportsReasoning,
 			len(reasoningPresets) > 0 ||
 				strings.TrimSpace(m.DefaultReasoningLevel) != "" ||
-				boolOrDefault(m.SupportsReasoningSummaries, false) ||
+				util.Deref(m.SupportsReasoningSummaries, false) ||
 				strings.TrimSpace(m.DefaultReasoningSummary) != "",
 		)
 		models[trimmedSlug] = ModelDef{
@@ -530,10 +532,10 @@ func fromModelDefFileConfig(fileConfig map[string]ModelDefFileConfig, specs exte
 			SupportsReasoning:           supportsReasoning,
 			DefaultReasoningLevel:       strings.TrimSpace(m.DefaultReasoningLevel),
 			SupportedReasoningLevels:    reasoningPresets,
-			SupportsReasoningSummaries:  boolOrDefault(m.SupportsReasoningSummaries, false),
+			SupportsReasoningSummaries:  util.Deref(m.SupportsReasoningSummaries, false),
 			DefaultReasoningSummary:     strings.TrimSpace(m.DefaultReasoningSummary),
 			InputModalities:             m.InputModalities,
-			SupportsImageDetailOriginal: boolOrDefault(m.SupportsImageDetailOriginal, false),
+			SupportsImageDetailOriginal: util.Deref(m.SupportsImageDetailOriginal, false),
 			WebSearch:                   ws,
 			Extensions:                  modelExtensions,
 		}
@@ -635,7 +637,7 @@ func fromProviderDefFileConfig(fileConfig map[string]ProviderDefFileConfig, spec
 		pd := ProviderDef{
 			BaseURL:          strings.TrimRight(strings.TrimSpace(def.BaseURL), "/"),
 			APIKey:           strings.TrimSpace(def.APIKey),
-			Version:          valueOrDefault(strings.TrimSpace(def.Version), "2023-06-01"),
+			Version:          util.OrDefault(strings.TrimSpace(def.Version), "2023-06-01"),
 			UserAgent:        strings.TrimSpace(def.UserAgent),
 			Protocol:         strings.TrimSpace(def.Protocol),
 			WebSearchSupport: wsSupport,
@@ -952,7 +954,7 @@ func FromAnthropicProxyFileConfig(fileConfig ProxyTargetFileConfig) AnthropicPro
 		Model:           strings.TrimSpace(fileConfig.Model),
 		ProviderBaseURL: strings.TrimRight(strings.TrimSpace(fileConfig.BaseURL), "/"),
 		ProviderAPIKey:  strings.TrimSpace(fileConfig.APIKey),
-		ProviderVersion: valueOrDefault(strings.TrimSpace(fileConfig.Version), "2023-06-01"),
+		ProviderVersion: util.OrDefault(strings.TrimSpace(fileConfig.Version), "2023-06-01"),
 	}
 }
 
@@ -964,16 +966,16 @@ func FromPersistenceFileConfig(fileConfig PersistenceFileConfig) PersistenceConf
 
 func fromCacheFileConfig(fileConfig CacheFileConfig) CacheConfig {
 	return CacheConfig{
-		Mode:                     valueOrDefault(strings.TrimSpace(fileConfig.Mode), "automatic"),
-		TTL:                      valueOrDefault(strings.TrimSpace(fileConfig.TTL), "5m"),
-		PromptCaching:            boolOrDefault(fileConfig.PromptCaching, true),
-		AutomaticPromptCache:     boolOrDefault(fileConfig.AutomaticPromptCache, true),
-		ExplicitCacheBreakpoints: boolOrDefault(fileConfig.ExplicitCacheBreakpoints, true),
-		AllowRetentionDowngrade:  boolOrDefault(fileConfig.AllowRetentionDowngrade, false),
-		MaxBreakpoints:           intOrDefault(fileConfig.MaxBreakpoints, 4),
-		MinCacheTokens:           intOrDefault(fileConfig.MinCacheTokens, 1024),
-		ExpectedReuse:            intOrDefault(fileConfig.ExpectedReuse, 2),
-		MinimumValueScore:        intOrDefault(fileConfig.MinimumValueScore, 2048),
-		MinBreakpointTokens:      intOrDefault(fileConfig.MinBreakpointTokens, 1024),
+		Mode:                     util.OrDefault(strings.TrimSpace(fileConfig.Mode), "automatic"),
+		TTL:                      util.OrDefault(strings.TrimSpace(fileConfig.TTL), "5m"),
+		PromptCaching:            util.Deref(fileConfig.PromptCaching, true),
+		AutomaticPromptCache:     util.Deref(fileConfig.AutomaticPromptCache, true),
+		ExplicitCacheBreakpoints: util.Deref(fileConfig.ExplicitCacheBreakpoints, true),
+		AllowRetentionDowngrade:  util.Deref(fileConfig.AllowRetentionDowngrade, false),
+		MaxBreakpoints:           util.OrDefault(fileConfig.MaxBreakpoints, 4),
+		MinCacheTokens:           util.OrDefault(fileConfig.MinCacheTokens, 1024),
+		ExpectedReuse:            util.OrDefault(fileConfig.ExpectedReuse, 2),
+		MinimumValueScore:        util.OrDefault(fileConfig.MinimumValueScore, 2048),
+		MinBreakpointTokens:      util.OrDefault(fileConfig.MinBreakpointTokens, 1024),
 	}
 }

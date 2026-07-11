@@ -690,27 +690,6 @@ func (cfg CacheConfig) Validate() error {
 	return nil
 }
 
-func valueOrDefault(value string, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
-func intOrDefault(value int, fallback int) int {
-	if value == 0 {
-		return fallback
-	}
-	return value
-}
-
-func boolOrDefault(value *bool, fallback bool) bool {
-	if value == nil {
-		return fallback
-	}
-	return *value
-}
-
 func (cfg Config) validateExtensions() error {
 	for _, spec := range cfg.extensionSpecs {
 		if spec.Validate == nil {

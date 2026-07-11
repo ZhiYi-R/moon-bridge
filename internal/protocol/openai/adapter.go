@@ -17,6 +17,7 @@ import (
 
 	"moonbridge/internal/extension/codextool"
 	"moonbridge/internal/format"
+	"moonbridge/internal/util"
 )
 
 // ============================================================================
@@ -1262,7 +1263,7 @@ func convertInput(raw json.RawMessage, model string) ([]format.CoreMessage, []fo
 			}
 			pendingFCBlocks = append(pendingFCBlocks, format.CoreContentBlock{
 				Type:          "tool_use",
-				ToolUseID:     firstNonEmpty(item.CallID, item.ID),
+				ToolUseID:     util.FirstNonEmpty(item.CallID, item.ID),
 				ToolName:      item.Name,
 				ToolNamespace: item.Namespace,
 				ToolInput:     toolInput,
@@ -1287,7 +1288,7 @@ func convertInput(raw json.RawMessage, model string) ([]format.CoreMessage, []fo
 			}
 			pendingFCBlocks = append(pendingFCBlocks, format.CoreContentBlock{
 				Type:          "tool_use",
-				ToolUseID:     firstNonEmpty(item.CallID, item.ID),
+				ToolUseID:     util.FirstNonEmpty(item.CallID, item.ID),
 				ToolName:      item.Name,
 				ToolNamespace: item.Namespace,
 				ToolInput:     toolInput,
@@ -1487,16 +1488,6 @@ func convertToolChoice(raw json.RawMessage) (*format.CoreToolChoice, error) {
 // ============================================================================
 // Utility
 // ============================================================================
-
-// firstNonEmpty returns the first non-empty string from the list.
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
-}
 
 // copyContentParts returns a shallow copy of a ContentPart slice.
 func copyContentParts(parts []ContentPart) []ContentPart {

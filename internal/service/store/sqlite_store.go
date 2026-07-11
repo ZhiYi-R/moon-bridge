@@ -15,6 +15,7 @@ import (
 
 	"moonbridge/internal/config"
 	"moonbridge/internal/db"
+	"moonbridge/internal/util"
 )
 
 // SQLiteConfigStore implements ConfigStore backed by a SQLite database.
@@ -266,12 +267,12 @@ func toModelDefFileConfig(def config.ModelDef) config.ModelDefFileConfig {
 		DefaultReasoningSummary:  def.DefaultReasoningSummary,
 		InputModalities:          def.InputModalities,
 	}
-	m.SupportsReasoning = boolPtr(def.SupportsReasoning)
+	m.SupportsReasoning = util.Ptr(def.SupportsReasoning)
 	if def.SupportsReasoningSummaries {
-		m.SupportsReasoningSummaries = boolPtr(true)
+		m.SupportsReasoningSummaries = util.Ptr(true)
 	}
 	if def.SupportsImageDetailOriginal {
-		m.SupportsImageDetailOriginal = boolPtr(true)
+		m.SupportsImageDetailOriginal = util.Ptr(true)
 	}
 	if len(def.Extensions) > 0 {
 		m.Extensions = make(map[string]config.ExtensionFileConfig, len(def.Extensions))
@@ -292,10 +293,6 @@ func toModelDefFileConfig(def config.ModelDef) config.ModelDefFileConfig {
 		}
 	}
 	return m
-}
-
-func boolPtr(v bool) *bool {
-	return &v
 }
 
 func cloneMap(m map[string]any) map[string]any {

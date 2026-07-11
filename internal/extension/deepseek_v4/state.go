@@ -10,6 +10,7 @@ import (
 
 	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/anthropic"
+	"moonbridge/internal/util"
 )
 
 const persistedThinkingSummaryPrefix = "moonbridge:deepseek_v4_thinking:v1:"
@@ -173,7 +174,7 @@ func (stream *StreamState) Start(index int, block *format.CoreContentBlock) bool
 	if stream == nil || block == nil || !IsReasoningContentBlock(block) {
 		return false
 	}
-	stream.thinkingText[index] = firstNonEmpty(block.ReasoningText, block.Text)
+	stream.thinkingText[index] = util.FirstNonEmpty(block.ReasoningText, block.Text)
 	stream.thinkingSignature[index] = block.ReasoningSignature
 	return true
 }
@@ -184,10 +185,10 @@ func (stream *StreamState) Delta(index int, delta anthropic.StreamDelta) bool {
 	}
 	switch delta.Type {
 	case "thinking_delta", "reasoning_content_delta":
-		stream.thinkingText[index] += firstNonEmpty(delta.Thinking, delta.Text)
+		stream.thinkingText[index] += util.FirstNonEmpty(delta.Thinking, delta.Text)
 		return true
 	case "signature_delta":
-		stream.thinkingSignature[index] += firstNonEmpty(delta.Signature, delta.Text)
+		stream.thinkingSignature[index] += util.FirstNonEmpty(delta.Signature, delta.Text)
 		return true
 	default:
 		return false

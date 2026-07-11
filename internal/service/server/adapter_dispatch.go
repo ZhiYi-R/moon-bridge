@@ -23,6 +23,7 @@ import (
 	"moonbridge/internal/service/stats"
 	mbtrace "moonbridge/internal/service/trace"
 	"moonbridge/internal/session"
+	"moonbridge/internal/util"
 )
 
 // ============================================================================
@@ -827,7 +828,7 @@ func streamOutputItemToCoreBlocks(item openai.OutputItem) []format.CoreContentBl
 	case "reasoning":
 		return reasoningBlocksFromStreamOutput(item.Summary)
 	case "function_call", "custom_tool_call", "local_shell_call":
-		toolUseID := firstNonEmptyString(item.CallID, item.ID)
+		toolUseID := util.FirstNonEmpty(item.CallID, item.ID)
 		if toolUseID == "" {
 			return nil
 		}
@@ -888,15 +889,6 @@ func streamOutputToolInput(item openai.OutputItem) json.RawMessage {
 		return nil
 	}
 	return payload
-}
-
-func firstNonEmptyString(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 // handleAdapterStream handles the streaming path through adapter dispatch.
