@@ -16,6 +16,7 @@ import (
 	"moonbridge/internal/config"
 	"moonbridge/internal/extension/visual"
 	"moonbridge/internal/modelref"
+	"moonbridge/internal/util"
 )
 
 // ModelInfo represents a model entry in the OpenAI /v1/models response.
@@ -469,13 +470,6 @@ func WriteModelsCatalog(path string, providerCfg config.ProviderConfig, pluginCf
 	return os.WriteFile(path, data, 0644)
 }
 
-func valueOrDefault(value string, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
 // routeFor resolves a model alias to a RouteEntry from a ProviderConfig.
 func routeFor(providerCfg config.ProviderConfig, modelAlias string) config.RouteEntry {
 	if provider, upstream := modelref.Parse(modelAlias); provider != "" {
@@ -547,7 +541,7 @@ func GenerateConfigToml(output io.Writer, modelAlias string, baseURL string, cod
 	fmt.Fprintln(output)
 	fmt.Fprintln(output, "[model_providers.moonbridge]")
 	fmt.Fprintln(output, `name = "Moon Bridge"`)
-	fmt.Fprintf(output, "base_url = %q\n", valueOrDefault(baseURL, "http://"+config.DefaultAddr+"/v1"))
+	fmt.Fprintf(output, "base_url = %q\n", util.OrDefault(baseURL, "http://"+config.DefaultAddr+"/v1"))
 	if serverCfg.AuthToken != "" {
 		fmt.Fprintln(output, `requires_openai_auth = true`)
 	}

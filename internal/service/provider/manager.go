@@ -466,13 +466,6 @@ func newHTTPClient(cfg HTTPConfig) *http.Client {
 	}
 }
 
-func valueOrDefault(value, fallback string) string {
-	if value == "" {
-		return fallback
-	}
-	return value
-}
-
 // ClientForKey returns the anthropic.Client for a given provider key.
 func (pm *ProviderManager) ClientForKey(key string) (ProviderClient, error) {
 	pm.mu.RLock()

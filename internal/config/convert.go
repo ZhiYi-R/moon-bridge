@@ -1,6 +1,8 @@
 package config
 
 import (
+	"moonbridge/internal/util"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -122,12 +124,12 @@ func toModelDefFileConfig(def ModelDef) ModelDefFileConfig {
 		WebSearch:                toWebSearchFileConfig(def.WebSearch),
 	}
 
-	m.SupportsReasoning = boolPtr(def.SupportsReasoning)
+	m.SupportsReasoning = util.Ptr(def.SupportsReasoning)
 	if def.SupportsReasoningSummaries {
-		m.SupportsReasoningSummaries = boolPtr(true)
+		m.SupportsReasoningSummaries = util.Ptr(true)
 	}
 	if def.SupportsImageDetailOriginal {
-		m.SupportsImageDetailOriginal = boolPtr(true)
+		m.SupportsImageDetailOriginal = util.Ptr(true)
 	}
 
 	if len(def.Extensions) > 0 {
@@ -251,18 +253,14 @@ func toCacheFileConfig(c CacheConfig) CacheFileConfig {
 	return CacheFileConfig{
 		Mode:                     c.Mode,
 		TTL:                      c.TTL,
-		PromptCaching:            boolPtr(c.PromptCaching),
-		AutomaticPromptCache:     boolPtr(c.AutomaticPromptCache),
-		ExplicitCacheBreakpoints: boolPtr(c.ExplicitCacheBreakpoints),
-		AllowRetentionDowngrade:  boolPtr(c.AllowRetentionDowngrade),
+		PromptCaching:            util.Ptr(c.PromptCaching),
+		AutomaticPromptCache:     util.Ptr(c.AutomaticPromptCache),
+		ExplicitCacheBreakpoints: util.Ptr(c.ExplicitCacheBreakpoints),
+		AllowRetentionDowngrade:  util.Ptr(c.AllowRetentionDowngrade),
 		MaxBreakpoints:           c.MaxBreakpoints,
 		MinCacheTokens:           c.MinCacheTokens,
 		ExpectedReuse:            c.ExpectedReuse,
 		MinimumValueScore:        c.MinimumValueScore,
 		MinBreakpointTokens:      c.MinBreakpointTokens,
 	}
-}
-
-func boolPtr(v bool) *bool {
-	return &v
 }

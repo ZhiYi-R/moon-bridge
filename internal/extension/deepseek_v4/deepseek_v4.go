@@ -8,6 +8,7 @@ import (
 	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/openai"
+	"moonbridge/internal/util"
 )
 
 // StripReasoningContent removes the reasoning_content field from message
@@ -112,7 +113,7 @@ func StreamDeltaForReasoning(delta anthropic.StreamDelta) string {
 		return delta.Text
 	}
 	if delta.Type == "thinking_delta" {
-		return firstNonEmpty(delta.Thinking, delta.Text)
+		return util.FirstNonEmpty(delta.Thinking, delta.Text)
 	}
 	return ""
 }
@@ -124,15 +125,6 @@ func IsReasoningContentBlock(block *format.CoreContentBlock) bool {
 		return false
 	}
 	return block.Type == "reasoning" || block.Type == "reasoning_content"
-}
-
-func firstNonEmpty(values ...string) string {
-	for _, value := range values {
-		if value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 // ToAnthropicRequest mutates an Anthropic request for DeepSeek V4 quirks.
