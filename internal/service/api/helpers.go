@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -77,7 +78,8 @@ func AuthMiddleware(tokenProvider func() string, storeAvailable func() bool) fun
 					respondError(w, http.StatusUnauthorized, "invalid_auth", "认证失败: 缺少 Authorization header")
 					return
 				}
-				if strings.TrimSpace(auth[7:]) != token {
+				provided := strings.TrimSpace(auth[7:])
+				if subtle.ConstantTimeCompare([]byte(provided), []byte(token)) != 1 {
 					respondError(w, http.StatusUnauthorized, "invalid_auth", "认证失败: 无效的认证令牌")
 					return
 				}
