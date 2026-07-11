@@ -3,6 +3,7 @@ package visual
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"moonbridge/internal/config"
@@ -98,8 +99,11 @@ func ConfigForModel(pluginCfg config.PluginConfig, modelAlias string) (Config, b
 	var cfg *Config
 	if setting, ok := pluginCfg.Extensions[PluginName]; ok && len(setting.RawConfig) > 0 {
 		data, err := json.Marshal(setting.RawConfig)
-		if err == nil {
-			_ = json.Unmarshal(data, &cfg)
+		if err != nil {
+			slog.Warn("visual 配置序列化失败，使用默认值", "error", err)
+		} else if err := json.Unmarshal(data, &cfg); err != nil {
+			slog.Warn("visual 配置解码失败，使用默认值", "error", err)
+			cfg = nil
 		}
 	}
 	if cfg == nil {

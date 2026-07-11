@@ -650,7 +650,9 @@ func runHTTPServer(ctx context.Context, addr string, handler http.Handler, error
 	httpServer := &http.Server{Addr: addr, Handler: handler}
 	defer func() {
 		if closer, ok := handler.(io.Closer); ok {
-			_ = closer.Close()
+			if err := closer.Close(); err != nil {
+				slog.Error("关闭 HTTP handler 失败", "error", err)
+			}
 		}
 	}()
 	errCh := make(chan error, 1)

@@ -562,7 +562,7 @@ func GenerateConfigToml(output io.Writer, modelAlias string, baseURL string, cod
 
 // writeAuthJSON writes the API key into Codex's auth.json so that model_providers
 // using requires_openai_auth can find the bearer token.
-func writeAuthJSON(path, token string) error {
+func writeAuthJSON(path, token string) (err error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return err
@@ -571,6 +571,13 @@ func writeAuthJSON(path, token string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	return json.NewEncoder(f).Encode(map[string]string{"openai_api_key": token})
+	defer func() {
+		if closeErr := f.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close %s: %w", path, closeErr)
+		}
+	}()
+	if err := json.NewEncoder(f).Encode(map[string]string{"openai_api_key": token}); err != nil {
+		return fmt.Errorf("encode auth.json: %w", err)
+	}
+	return nil
 }
