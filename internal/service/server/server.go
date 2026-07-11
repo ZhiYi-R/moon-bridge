@@ -1,6 +1,7 @@
 package server
 
 import (
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -367,7 +368,8 @@ func checkAuth(r *http.Request, expectedToken string) bool {
 	if !strings.HasPrefix(auth, "Bearer ") {
 		return false
 	}
-	return strings.TrimSpace(auth[7:]) == expectedToken
+	provided := strings.TrimSpace(auth[7:])
+	return subtle.ConstantTimeCompare([]byte(provided), []byte(expectedToken)) == 1
 }
 
 func (s *Server) resolveModelOrFallback(modelName string) (*provider.ResolvedRoute, error) {
