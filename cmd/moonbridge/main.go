@@ -12,10 +12,10 @@ import (
 	"syscall"
 
 	"log/slog"
-	"moonbridge/internal/config"
-	"moonbridge/internal/extension/codex"
-	"moonbridge/internal/logger"
-	"moonbridge/internal/service/app"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/codex"
+	"github.com/ZhiYi-R/moon-bridge/internal/logger"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/app"
 )
 
 const (

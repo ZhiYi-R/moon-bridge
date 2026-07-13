@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/service/store"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/store"
 )
 
 // ---- Providers ----

@@ -9,7 +9,7 @@ import (
 	"strings"
 
 	"log/slog"
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 )
 
 // ToolHandler executes a tool given its input and returns a formatted result string.

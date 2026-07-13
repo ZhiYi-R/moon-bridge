@@ -10,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/logger"
-	"moonbridge/internal/protocol/openai"
-	"moonbridge/internal/service/provider"
-	"moonbridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/logger"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/openai"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/provider"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
 
-	mbtrace "moonbridge/internal/service/trace"
+	mbtrace "github.com/ZhiYi-R/moon-bridge/internal/service/trace"
 )
 
 func (server *Server) onRequestCompleted(model, actualModel, providerKey string, startTime time.Time, usage plugin.RequestUsage, cost float64, status, errMsg string) {

@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 )
 
 // ---------------------------------------------------------------------------

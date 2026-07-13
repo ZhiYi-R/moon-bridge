@@ -8,9 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/service/api"
-	"moonbridge/internal/session"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/api"
+	"github.com/ZhiYi-R/moon-bridge/internal/session"
 )
 
 // Manager handles session lifecycle: lookup, creation, TTL enforcement,

@@ -1,11 +1,11 @@
 package websearchinjected
 
 import (
-	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/extension/websearch"
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/service/provider"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/websearch"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/provider"
 )
 
 const PluginName = "web_search_injected"

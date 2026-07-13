@@ -3,8 +3,8 @@ package config_test
 import (
 	"testing"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/extension/visual"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/visual"
 )
 
 func TestConfigToFileConfigRoundtrip(t *testing.T) {

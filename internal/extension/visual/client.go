@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"moonbridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
 )
 
 const visualSystemPrompt = "You are a vision analysis model behind Moon Bridge Visual. Analyze images carefully, state uncertainty, and do not invent visual facts."

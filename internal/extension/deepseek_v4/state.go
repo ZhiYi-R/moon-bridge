@@ -8,8 +8,8 @@ import (
 	"strings"
 	"sync"
 
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 )
 
 const persistedThinkingSummaryPrefix = "moonbridge:deepseek_v4_thinking:v1:"

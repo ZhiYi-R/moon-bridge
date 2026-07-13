@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
 )
 
 // enabledPlugin creates a Plugin with EnabledForModel always returning true.

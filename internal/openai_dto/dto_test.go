@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
-	"moonbridge/internal/protocol/openai"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/openai"
 )
 
 func TestResponseJSONIncludesFunctionCallAndCachedUsage(t *testing.T) {

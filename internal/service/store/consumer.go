@@ -2,9 +2,9 @@ package store
 
 import (
 	"log/slog"
-	"moonbridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
 
-	"moonbridge/internal/db"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
 )
 
 // ConfigStoreConsumer implements db.Consumer for the config_store tables.

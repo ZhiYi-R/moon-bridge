@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/modelref"
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/modelref"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 )
 
 // HTTPConfig controls the HTTP connection pool for a provider.

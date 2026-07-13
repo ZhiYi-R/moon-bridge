@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/db"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
 )
 
 // SQLiteConfigStore implements ConfigStore backed by a SQLite database.

@@ -3,15 +3,15 @@ package plugin
 import (
 	"context"
 	"encoding/json"
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 	"net/http"
 	"time"
 
-	"moonbridge/internal/format"
-	"moonbridge/internal/logger"
-	"moonbridge/internal/protocol/openai"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/logger"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/openai"
 
-	foundationdb "moonbridge/internal/db"
+	foundationdb "github.com/ZhiYi-R/moon-bridge/internal/db"
 )
 
 // --- Request pipeline capabilities ---

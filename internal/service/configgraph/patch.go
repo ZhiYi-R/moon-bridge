@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"moonbridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
 )
 
 func ApplyPatchToFileConfig(fc config.FileConfig, ops []PatchOp) (config.FileConfig, []FieldError) {

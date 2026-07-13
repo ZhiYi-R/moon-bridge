@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"strings"
 
-	mbtrace "moonbridge/internal/service/trace"
+	mbtrace "github.com/ZhiYi-R/moon-bridge/internal/service/trace"
 )
 
 type HeaderOverride func(http.Header)

@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	mbtrace "moonbridge/internal/service/trace"
+	mbtrace "github.com/ZhiYi-R/moon-bridge/internal/service/trace"
 )
 
 type ResponseConfig struct {

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"moonbridge/internal/logger"
+	"github.com/ZhiYi-R/moon-bridge/internal/logger"
 )
 
 func TestGetLogsRecentReturnsNewestRawLinesInOrder(t *testing.T) {

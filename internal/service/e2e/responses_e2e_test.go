@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/service/provider"
-	"moonbridge/internal/service/server"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/provider"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/server"
 )
 
 func TestResponsesTextE2E(t *testing.T) {

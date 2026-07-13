@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/protocol/chat"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/chat"
 )
 
 // loadDotEnv reads key=value lines from .env.test relative to the project root

@@ -5,10 +5,10 @@ import (
 	"database/sql"
 	"testing"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/db"
-	dbd1 "moonbridge/internal/extension/db/d1"
-	"moonbridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
+	dbd1 "github.com/ZhiYi-R/moon-bridge/internal/extension/db/d1"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
 
 	_ "modernc.org/sqlite"
 )

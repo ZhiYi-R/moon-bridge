@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
 )
 
 func TestRebuildApplyPatchGrammarUpdateFileIncludesValidPatchMarkers(t *testing.T) {

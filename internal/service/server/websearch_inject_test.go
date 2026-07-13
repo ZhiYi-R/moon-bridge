@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/protocol/chat"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/chat"
 )
 
 type wsInjectRTFunc func(*http.Request) (*http.Response, error)

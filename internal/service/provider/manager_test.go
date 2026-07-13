@@ -2,13 +2,13 @@ package provider
 
 import (
 	"context"
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"moonbridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
 )
 
 func TestProviderManagerRoutesProtocolAndUpstreamModel(t *testing.T) {

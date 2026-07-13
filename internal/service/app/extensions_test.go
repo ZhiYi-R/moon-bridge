@@ -6,15 +6,15 @@ import (
 	"log/slog"
 	"testing"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/db"
-	dbd1 "moonbridge/internal/extension/db/d1"
-	dbsqlite "moonbridge/internal/extension/db/sqlite"
-	"moonbridge/internal/extension/deepseek_v4"
-	kimiworkaround "moonbridge/internal/extension/kimi_workaround"
-	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/extension/visual"
-	"moonbridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
+	dbd1 "github.com/ZhiYi-R/moon-bridge/internal/extension/db/d1"
+	dbsqlite "github.com/ZhiYi-R/moon-bridge/internal/extension/db/sqlite"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/deepseek_v4"
+	kimiworkaround "github.com/ZhiYi-R/moon-bridge/internal/extension/kimi_workaround"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/visual"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
 )
 
 func ptrBool(v bool) *bool { return &v }

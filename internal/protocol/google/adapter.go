@@ -11,9 +11,9 @@ import (
 	"strconv"
 	"sync"
 
-	"moonbridge/internal/extension/codextool"
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/cache"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/codextool"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/cache"
 )
 
 // ============================================================================

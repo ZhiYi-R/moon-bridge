@@ -12,12 +12,12 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/protocol/chat"
-	"moonbridge/internal/protocol/google"
-	"moonbridge/internal/protocol/openai"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/chat"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/google"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/openai"
 )
 
 // ============================================================================

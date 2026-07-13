@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	"moonbridge/internal/config"
-	runtimepkg "moonbridge/internal/service/runtime"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	runtimepkg "github.com/ZhiYi-R/moon-bridge/internal/service/runtime"
 )
 
 type Store interface {

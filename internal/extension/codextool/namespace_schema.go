@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"moonbridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
 )
 
 // NamespaceStrategy controls how namespace tools are converted for upstream providers.

@@ -1,8 +1,8 @@
 package provider
 
 import (
-	"moonbridge/internal/config"
-	"moonbridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
 )
 
 // BuildProviderDefsFromConfig converts config into provider definition map.

@@ -12,9 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	visualpkg "moonbridge/internal/extension/visual"
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/chat"
+	visualpkg "github.com/ZhiYi-R/moon-bridge/internal/extension/visual"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/chat"
 )
 
 // TestVisualOnOpenAIChat_OrchestratesBriefAcrossTwoMocks proves the visual

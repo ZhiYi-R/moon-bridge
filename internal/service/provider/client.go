@@ -5,7 +5,7 @@ package provider
 import (
 	"context"
 
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 )
 
 // ProviderClient is the interface for upstream provider API clients.

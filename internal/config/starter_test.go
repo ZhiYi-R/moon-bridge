@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"moonbridge/internal/config"
-	dbsqlite "moonbridge/internal/extension/db/sqlite"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	dbsqlite "github.com/ZhiYi-R/moon-bridge/internal/extension/db/sqlite"
 )
 
 func TestStarterConfigYAMLBuildsLoadableTransformSQLiteConfig(t *testing.T) {

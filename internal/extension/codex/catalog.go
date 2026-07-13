@@ -13,9 +13,9 @@ import (
 	"sort"
 	"strings"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/extension/visual"
-	"moonbridge/internal/modelref"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/visual"
+	"github.com/ZhiYi-R/moon-bridge/internal/modelref"
 )
 
 // ModelInfo represents a model entry in the OpenAI /v1/models response.

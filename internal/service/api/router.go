@@ -3,10 +3,10 @@ package api
 import (
 	"net/http"
 
-	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/service/runtime"
-	"moonbridge/internal/service/stats"
-	"moonbridge/internal/service/store"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/runtime"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/store"
 )
 
 // ConfigStore subset used by the API handlers.

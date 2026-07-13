@@ -7,7 +7,7 @@ import (
 	"context"
 	"errors"
 
-	"moonbridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
 )
 
 // ErrConfigNotSeeded reports an empty persistence store that has tables but no

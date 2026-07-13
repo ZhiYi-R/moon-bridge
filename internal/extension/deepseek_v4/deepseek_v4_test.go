@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	pluginpkg "moonbridge/internal/extension/plugin"
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/anthropic"
-	"moonbridge/internal/protocol/openai"
+	pluginpkg "github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/openai"
 )
 
 func TestStripReasoningContentStripsField(t *testing.T) {

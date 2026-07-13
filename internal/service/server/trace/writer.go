@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"io"
 
-	mbtrace "moonbridge/internal/service/trace"
+	mbtrace "github.com/ZhiYi-R/moon-bridge/internal/service/trace"
 )
 
 // Writer is the interface for recording request/response traces.

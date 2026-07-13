@@ -3,7 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
-	"moonbridge/internal/modelref"
+	"github.com/ZhiYi-R/moon-bridge/internal/modelref"
 	"strings"
 )
 
