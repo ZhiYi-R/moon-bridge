@@ -11,11 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/service/configgraph"
-	"moonbridge/internal/service/provider"
-	"moonbridge/internal/service/stats"
-	mbtrace "moonbridge/internal/service/trace"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/configgraph"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/provider"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
+	mbtrace "github.com/ZhiYi-R/moon-bridge/internal/service/trace"
 )
 
 type probeWebSearchCandidateFunc func(context.Context, string, string) (bool, error)

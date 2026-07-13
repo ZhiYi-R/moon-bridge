@@ -9,9 +9,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/service/provider"
-	"moonbridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/provider"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
 )
 
 // ConfigSnapshot is an immutable snapshot of the runtime state.

@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"moonbridge/internal/config"
-	dbsqlite "moonbridge/internal/extension/db/sqlite"
-	"moonbridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	dbsqlite "github.com/ZhiYi-R/moon-bridge/internal/extension/db/sqlite"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
 )
 
 func TestName(t *testing.T) {

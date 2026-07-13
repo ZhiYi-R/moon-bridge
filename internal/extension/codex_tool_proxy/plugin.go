@@ -7,8 +7,8 @@
 package codextoolproxy
 
 import (
-	"moonbridge/internal/config"
-	"moonbridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
 )
 
 const PluginName = "codex_tool_proxy"

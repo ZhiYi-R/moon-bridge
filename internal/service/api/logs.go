@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"moonbridge/internal/logger"
+	"github.com/ZhiYi-R/moon-bridge/internal/logger"
 )
 
 type logResponseEntry struct {

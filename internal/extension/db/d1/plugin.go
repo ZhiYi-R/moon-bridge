@@ -20,9 +20,9 @@ import (
 	"database/sql"
 	"fmt"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/db"
-	"moonbridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
 )
 
 const PluginName = "db_d1"

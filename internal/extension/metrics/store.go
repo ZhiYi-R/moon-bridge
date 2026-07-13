@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"moonbridge/internal/db"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
 )
 
 // Record represents a single request metric row.

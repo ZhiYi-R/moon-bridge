@@ -1,7 +1,7 @@
 package visual
 
 import (
-	"moonbridge/internal/protocol/chat"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/chat"
 )
 
 // StripImagesFromChat strips image_url content parts from a chat.ChatRequest

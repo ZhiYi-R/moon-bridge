@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"moonbridge/internal/service/configgraph"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/configgraph"
 )
 
 type createConfigResourceRequest struct {

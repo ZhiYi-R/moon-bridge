@@ -4,14 +4,14 @@ import (
 	"encoding/json"
 	"testing"
 
-	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
-	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/anthropic"
-	openai "moonbridge/internal/protocol/openai"
-	"moonbridge/internal/service/provider"
-	"moonbridge/internal/service/stats"
-	"moonbridge/internal/session"
+	deepseekv4 "github.com/ZhiYi-R/moon-bridge/internal/extension/deepseek_v4"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
+	openai "github.com/ZhiYi-R/moon-bridge/internal/protocol/openai"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/provider"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/session"
 )
 
 func TestRequestHasImage(t *testing.T) {

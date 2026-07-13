@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/db"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
 
 	_ "modernc.org/sqlite"
 )

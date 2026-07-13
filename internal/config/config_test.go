@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/config"
-	deepseekv4 "moonbridge/internal/extension/deepseek_v4"
-	"moonbridge/internal/extension/visual"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	deepseekv4 "github.com/ZhiYi-R/moon-bridge/internal/extension/deepseek_v4"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/visual"
 )
 
 func builtinExtensionSpecsForTest() []config.ExtensionConfigSpec {

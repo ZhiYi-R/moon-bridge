@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"log/slog"
-	"moonbridge/internal/extension/websearch"
-	"moonbridge/internal/protocol/chat"
-	"moonbridge/internal/protocol/google"
-	openai "moonbridge/internal/protocol/openai"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/websearch"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/chat"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/google"
+	openai "github.com/ZhiYi-R/moon-bridge/internal/protocol/openai"
 )
 
 // ============================================================================

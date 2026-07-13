@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 )
 
 // Legacy types and functions maintained for backward compatibility.

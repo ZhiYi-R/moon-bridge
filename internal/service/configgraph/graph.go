@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"moonbridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
 )
 
 const (

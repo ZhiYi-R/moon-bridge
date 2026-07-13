@@ -9,7 +9,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"moonbridge/internal/service/webui"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/webui"
 )
 
 func TestHandlerServesConsoleIndex(t *testing.T) {

@@ -3,7 +3,7 @@ package app
 import (
 	"strings"
 
-	"moonbridge/internal/db"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
 )
 
 // ResolvePersistenceActiveProvider chooses the provider name that should be

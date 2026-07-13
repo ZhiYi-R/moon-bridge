@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"moonbridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
 )
 
 // Grammar helpers

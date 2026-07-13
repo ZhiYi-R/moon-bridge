@@ -4,8 +4,8 @@ import (
 	"context"
 	"testing"
 
-	"moonbridge/internal/extension/codextool"
-	"moonbridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/codextool"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
 )
 
 type flattenNoopCacheManager struct{}

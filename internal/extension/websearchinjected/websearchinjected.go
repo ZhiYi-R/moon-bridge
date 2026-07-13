@@ -11,9 +11,9 @@ package websearchinjected
 import (
 	"net/http"
 
-	"moonbridge/internal/extension/websearch"
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/anthropic"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/websearch"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/anthropic"
 )
 
 // IsEnabled checks whether the injected web search extension should activate.

@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/service/store"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/store"
 )
 
 func TestSQLiteStoreSeedLoadRoundtrip(t *testing.T) {

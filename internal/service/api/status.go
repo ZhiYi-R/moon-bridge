@@ -5,8 +5,8 @@ import (
 	"sort"
 	"time"
 
-	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
 )
 
 // ---- Status ----

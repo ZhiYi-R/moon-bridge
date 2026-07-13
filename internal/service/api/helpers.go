@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"moonbridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
 )
 
 // ---- JSON response helpers ----

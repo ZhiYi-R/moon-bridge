@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"moonbridge/internal/db"
-	mbtrics "moonbridge/internal/extension/metrics"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
+	mbtrics "github.com/ZhiYi-R/moon-bridge/internal/extension/metrics"
 
 	_ "modernc.org/sqlite"
 )

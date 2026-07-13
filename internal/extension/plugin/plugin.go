@@ -9,7 +9,7 @@ package plugin
 import (
 	"log/slog"
 
-	"moonbridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
 )
 
 // Plugin is the base interface all plugins must implement.

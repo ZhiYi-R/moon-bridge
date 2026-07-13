@@ -5,7 +5,7 @@
 package usage
 
 import (
-	"moonbridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
 )
 
 // Tracker is the interface for recording request usage and billing.

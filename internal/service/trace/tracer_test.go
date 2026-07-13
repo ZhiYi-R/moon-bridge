@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/service/trace"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/trace"
 )
 
 func TestTracerWritesRedactedRecord(t *testing.T) {

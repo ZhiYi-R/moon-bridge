@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"moonbridge/internal/service/api"
-	"moonbridge/internal/session"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/api"
+	"github.com/ZhiYi-R/moon-bridge/internal/session"
 )
 
 func (server *Server) ListSessions() []api.SessionInfo {

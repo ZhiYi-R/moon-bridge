@@ -9,12 +9,12 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/db"
-	"moonbridge/internal/extension/plugin"
-	"moonbridge/internal/service/runtime"
-	"moonbridge/internal/service/stats"
-	"moonbridge/internal/service/store"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/runtime"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/store"
 
 	_ "modernc.org/sqlite"
 )

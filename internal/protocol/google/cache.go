@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"time"
 
-	"moonbridge/internal/protocol/cache"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/cache"
 )
 
 // cacheKey computes a stable cache key for Gemini requests.

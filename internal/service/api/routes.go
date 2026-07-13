@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"net/http"
 
-	"moonbridge/internal/service/store"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/store"
 )
 
 // ---- Routes ----

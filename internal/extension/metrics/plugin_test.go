@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/db"
-	mbtrics "moonbridge/internal/extension/metrics"
-	"moonbridge/internal/extension/plugin"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/db"
+	mbtrics "github.com/ZhiYi-R/moon-bridge/internal/extension/metrics"
+	"github.com/ZhiYi-R/moon-bridge/internal/extension/plugin"
 
 	_ "modernc.org/sqlite"
 )

@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"strings"
 
-	"moonbridge/internal/config"
-	"moonbridge/internal/format"
-	"moonbridge/internal/protocol/cache"
-	"moonbridge/internal/protocol/openai"
+	"github.com/ZhiYi-R/moon-bridge/internal/config"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/cache"
+	"github.com/ZhiYi-R/moon-bridge/internal/protocol/openai"
 )
 
 // ============================================================================

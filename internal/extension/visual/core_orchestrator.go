@@ -8,7 +8,7 @@ import (
 
 	"log/slog"
 
-	"moonbridge/internal/format"
+	"github.com/ZhiYi-R/moon-bridge/internal/format"
 )
 
 // CoreUpstreamProvider wraps any CoreProvider to be used as the upstream

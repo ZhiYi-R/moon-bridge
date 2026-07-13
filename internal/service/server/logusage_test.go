@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"moonbridge/internal/logger"
-	"moonbridge/internal/service/stats"
+	"github.com/ZhiYi-R/moon-bridge/internal/logger"
+	"github.com/ZhiYi-R/moon-bridge/internal/service/stats"
 )
 
 // resetLoggerForTest re-initialises the global logger with a JSON handler
