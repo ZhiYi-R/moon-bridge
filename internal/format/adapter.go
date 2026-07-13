@@ -164,6 +164,17 @@ type CorePluginHooks struct {
 	// from the upstream provider response.
 	PostProcessCoreResponse func(ctx context.Context, resp *CoreResponse)
 
+	// TransformResponseBlocks transforms the final content blocks before
+	// they are returned to the client. Plugins use this to intercept and
+	// convert provider-specific formats (e.g. DSML tool calls) into
+	// standard content blocks.
+	TransformResponseBlocks func(ctx context.Context, model string, blocks []CoreContentBlock) []CoreContentBlock
+
+	// TransformStreamEvents wraps a stream of CoreStreamEvent and may
+	// intercept/transform text blocks (e.g. DSML tool calls) before they
+	// reach the client. Returns the transformed channel.
+	TransformStreamEvents func(ctx context.Context, model string, src <-chan CoreStreamEvent) <-chan CoreStreamEvent
+
 	// TransformError transforms an error message.
 	TransformError func(ctx context.Context, model string, msg string) string
 
@@ -217,6 +228,14 @@ func (hooks CorePluginHooks) WithDefaults() CorePluginHooks {
 	}
 	if hooks.PostProcessCoreResponse == nil {
 		hooks.PostProcessCoreResponse = func(_ context.Context, _ *CoreResponse) {}
+	}
+
+	if hooks.TransformResponseBlocks == nil {
+		hooks.TransformResponseBlocks = func(_ context.Context, _ string, blocks []CoreContentBlock) []CoreContentBlock { return blocks }
+	}
+
+	if hooks.TransformStreamEvents == nil {
+		hooks.TransformStreamEvents = func(_ context.Context, _ string, src <-chan CoreStreamEvent) <-chan CoreStreamEvent { return src }
 	}
 	if hooks.TransformError == nil {
 		hooks.TransformError = func(_ context.Context, _ string, msg string) string { return msg }

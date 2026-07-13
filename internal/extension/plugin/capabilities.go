@@ -260,3 +260,18 @@ type CoreContentRememberer interface {
 type PatchProxyDecider interface {
 	DisablePatchProxy(model string) bool
 }
+
+// ResponseContentTransformer is implemented by plugins that transform
+// response content blocks after they are received from the provider but
+// before they are returned to the client. Used to convert provider-specific
+// formats (e.g. DSML tool calls) into standard content blocks.
+type ResponseContentTransformer interface {
+	TransformResponseBlocks(ctx context.Context, model string, blocks []format.CoreContentBlock) []format.CoreContentBlock
+}
+
+// StreamBlocksTransformer is implemented by plugins that transform stream
+// events before they reach the client. Used to intercept provider-specific
+// formats (e.g. DSML tool calls) in streaming responses.
+type StreamBlocksTransformer interface {
+	TransformStreamBlocks(ctx context.Context, model string, events <-chan format.CoreStreamEvent) <-chan format.CoreStreamEvent
+}

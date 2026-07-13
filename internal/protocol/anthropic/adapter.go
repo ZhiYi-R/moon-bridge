@@ -392,6 +392,9 @@ func (a *AnthropicProviderAdapter) ToCoreResponseWithRequest(ctx context.Context
 
 	// Convert content blocks to Core message.
 	coreContent := a.fromContentBlocks(msgResp.Content)
+	if len(coreContent) > 0 {
+		coreContent = a.hooks.TransformResponseBlocks(ctx, msgResp.Model, coreContent)
+	}
 	if req != nil {
 		toolMap := codextool.DecodeToolMapFromExtensions(req.Extensions)
 		for i := range coreContent {
@@ -542,6 +545,7 @@ func (a *AnthropicProviderAdapter) ToCoreStream(ctx context.Context, src any) (*
 			state.convertEvent(events, ev)
 		}
 	}()
+
 
 	return &format.StreamResult{
 		Events: events,
@@ -1330,3 +1334,9 @@ func cleanSchema(schema map[string]any) map[string]any {
 	}
 	return result
 }
+
+
+// wrapStreamWithTransform lazily captures the model from the first
+// message_start event in the stream, then applies the provided transform
+// function to the remaining events. If no transform is set or the first
+// event is not message_start, the original channel is returned unchanged.

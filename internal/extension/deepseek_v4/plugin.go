@@ -466,6 +466,8 @@ var (
 	_ plugin.SessionStateProvider = (*DSPlugin)(nil)
 	_ plugin.ThinkingPrepender    = (*DSPlugin)(nil)
 	_ plugin.ReasoningExtractor   = (*DSPlugin)(nil)
+	_ plugin.ResponseContentTransformer = (*DSPlugin)(nil)
+	_ plugin.StreamBlocksTransformer   = (*DSPlugin)(nil)
 )
 
 // =========================================================================
@@ -596,4 +598,22 @@ func anthropicBlockToCore(b anthropic.ContentBlock) format.CoreContentBlock {
 	default:
 		return format.CoreContentBlock{Type: "text", Text: b.Text}
 	}
+}
+
+// --- ResponseContentTransformer ---
+
+// TransformResponseBlocks implements plugin.ResponseContentTransformer.
+// It scans response content blocks for DSML tool calls and converts them
+// to standard tool_use blocks, removing all raw DSML markers from the output.
+func (p *DSPlugin) TransformResponseBlocks(_ context.Context, _ string, blocks []format.CoreContentBlock) []format.CoreContentBlock {
+	return TransformDSMLBlocks(blocks)
+}
+
+// --- StreamBlocksTransformer ---
+
+// TransformStreamBlocks implements plugin.StreamBlocksTransformer.
+// It wraps a CoreStreamEvent channel to intercept and transform DSML
+// tool calls in streaming text blocks before they reach the client.
+func (p *DSPlugin) TransformStreamBlocks(ctx context.Context, model string, events <-chan format.CoreStreamEvent) <-chan format.CoreStreamEvent {
+	return TransformStreamEvents(ctx, model, events)
 }
