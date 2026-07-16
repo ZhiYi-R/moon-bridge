@@ -1,0 +1,7 @@
+{
+  "context_window": 204800,
+  "display_name": "MiniMax M2.7",
+  "description": "Text model with always-on reasoning.",
+  "supports_reasoning": true,
+  "input_modalities": ["text"]
+}

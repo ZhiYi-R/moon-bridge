@@ -158,6 +158,12 @@ models:
   claude-sonnet-4-20250514:
     extensions: {}   # no overrides, metadata only
 
+  MiniMax-M3:
+    extensions: {}   # no overrides, metadata only
+
+  MiniMax-M2.7:
+    extensions: {}   # no overrides, metadata only
+
   # kimi-for-coding:
   #   context_window: 128000
   #   extensions:
@@ -228,6 +234,82 @@ providers:
           output_price: 15
           cache_write_price: 3.75
           cache_read_price: 0.30
+
+  # MiniMax global endpoints: https://platform.minimax.io/docs
+  minimax-global-anthropic:
+    protocol: "anthropic"
+    base_url: "https://api.minimax.io/anthropic"
+    api_key: "replace-me"
+    version: "2023-06-01"
+    user_agent: "moonbridge/1.0"
+    offers:
+      - model: MiniMax-M3
+        pricing:
+          input_price: 0.3
+          output_price: 1.2
+          cache_read_price: 0.06
+      - model: MiniMax-M2.7
+        pricing:
+          input_price: 0.3
+          output_price: 1.2
+          cache_write_price: 0.375
+          cache_read_price: 0.06
+
+  minimax-global-openai:
+    protocol: "openai-chat"
+    base_url: "https://api.minimax.io/v1"
+    api_key: "replace-me"
+    user_agent: "moonbridge/1.0"
+    offers:
+      - model: MiniMax-M3
+        pricing:
+          input_price: 0.3
+          output_price: 1.2
+          cache_read_price: 0.06
+      - model: MiniMax-M2.7
+        pricing:
+          input_price: 0.3
+          output_price: 1.2
+          cache_write_price: 0.375
+          cache_read_price: 0.06
+
+  # MiniMax China endpoints: https://platform.minimaxi.com/docs
+  minimax-cn-anthropic:
+    protocol: "anthropic"
+    base_url: "https://api.minimaxi.com/anthropic"
+    api_key: "replace-me"
+    version: "2023-06-01"
+    user_agent: "moonbridge/1.0"
+    offers:
+      - model: MiniMax-M3
+        pricing:
+          input_price: 0.3
+          output_price: 1.2
+          cache_read_price: 0.06
+      - model: MiniMax-M2.7
+        pricing:
+          input_price: 0.3
+          output_price: 1.2
+          cache_write_price: 0.375
+          cache_read_price: 0.06
+
+  minimax-cn-openai:
+    protocol: "openai-chat"
+    base_url: "https://api.minimaxi.com/v1"
+    api_key: "replace-me"
+    user_agent: "moonbridge/1.0"
+    offers:
+      - model: MiniMax-M3
+        pricing:
+          input_price: 0.3
+          output_price: 1.2
+          cache_read_price: 0.06
+      - model: MiniMax-M2.7
+        pricing:
+          input_price: 0.3
+          output_price: 1.2
+          cache_write_price: 0.375
+          cache_read_price: 0.06
 
   # Google Gemini (Vertex AI via GenAI SDK)
   # gemini:
