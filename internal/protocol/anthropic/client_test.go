@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -74,6 +75,39 @@ func TestClientCreateMessageSendsHeadersAndParsesResponse(t *testing.T) {
 	}
 	if response.Content[0].Text != "Hello" {
 		t.Fatalf("response content = %+v", response.Content)
+	}
+}
+
+func TestClientCreateMessagePreservesBaseURLPathPrefix(t *testing.T) {
+	var requestPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestPath = r.URL.Path
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(anthropic.MessageResponse{
+			ID:      "msg_123",
+			Type:    "message",
+			Role:    "assistant",
+			Content: []anthropic.ContentBlock{{Type: "text", Text: "Hello"}},
+		})
+	}))
+	defer server.Close()
+
+	client := anthropic.NewClient(anthropic.ClientConfig{
+		BaseURL: server.URL + "/anthropic",
+		APIKey:  "upstream-key",
+		Version: "2023-06-01",
+		Client:  server.Client(),
+	})
+	_, err := client.CreateMessage(context.Background(), anthropic.MessageRequest{
+		Model:     "test-model",
+		MaxTokens: 64,
+		Messages:  []anthropic.Message{{Role: "user", Content: []anthropic.ContentBlock{{Type: "text", Text: "Hi"}}}},
+	})
+	if err != nil {
+		t.Fatalf("CreateMessage() error = %v", err)
+	}
+	if requestPath != "/anthropic/v1/messages" {
+		t.Fatalf("request path = %q, want %q", requestPath, "/anthropic/v1/messages")
 	}
 }
 
