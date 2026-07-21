@@ -404,6 +404,21 @@ func (p *DSPlugin) TransformError(_ *plugin.RequestContext, msg string) string {
 
 // MutateCoreRequest injects DeepSeek thinking configuration into the CoreRequest.
 func (p *DSPlugin) MutateCoreRequest(ctx context.Context, req *format.CoreRequest) {
+	// Clear incompatible sampling params for DeepSeek V4.
+	req.Temperature = nil
+	req.TopP = nil
+
+	// Apply reasoning effort from request context (if available).
+	// In the adapter path, reasoning is extracted from OpenAI extensions
+	// and set on CoreRequest.Output by the OpenAI adapter before this hook runs.
+	if req.Output == nil || req.Output.Effort == "" {
+		if req.Output == nil {
+			req.Output = &format.CoreOutputConfig{}
+		}
+		// Default to high effort for DeepSeek V4 models.
+		req.Output.Effort = "high"
+	}
+
 	if req.Extensions == nil {
 		req.Extensions = make(map[string]any)
 	}
@@ -418,9 +433,13 @@ func (p *DSPlugin) MutateCoreRequest(ctx context.Context, req *format.CoreReques
 		}
 	}
 
-	req.Extensions["thinking"] = map[string]any{
-		"budget_tokens": budgetTokens,
+	// Set thinking config on CoreRequest.Thinking so the Anthropic adapter
+	// can convert it to the upstream request format.
+	if req.Thinking == nil {
+		req.Thinking = &format.CoreThinkingConfig{}
 	}
+	req.Thinking.Type = "enabled"
+	req.Thinking.BudgetTokens = budgetTokens
 }
 
 // --- ReasoningExtractor ---
