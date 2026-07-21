@@ -587,6 +587,42 @@ func (r *Registry) CorePluginHooks() format.CorePluginHooks {
 				}
 				rmem.RememberCoreContent(ctx, content)
 			}
+
+		// ResponseContentTransformer -> TransformResponseBlocks
+		for _, p := range r.plugins {
+			if t, ok := p.(ResponseContentTransformer); ok {
+				prev := hooks.TransformResponseBlocks
+				pluginImpl := p
+				hooks.TransformResponseBlocks = func(ctx context.Context, model string, blocks []format.CoreContentBlock) []format.CoreContentBlock {
+					if prev != nil {
+						blocks = prev(ctx, model, blocks)
+					}
+					if !pluginImpl.EnabledForModel(model) {
+						return blocks
+					}
+					return t.TransformResponseBlocks(ctx, model, blocks)
+				}
+				break
+			}
+		}
+
+		// ResponseContentTransformer -> TransformStreamEvents
+		for _, p := range r.plugins {
+			if t, ok := p.(StreamBlocksTransformer); ok {
+				prev := hooks.TransformStreamEvents
+				pluginImpl := p
+				hooks.TransformStreamEvents = func(ctx context.Context, model string, src <-chan format.CoreStreamEvent) <-chan format.CoreStreamEvent {
+					if prev != nil {
+						src = prev(ctx, model, src)
+					}
+					if !pluginImpl.EnabledForModel(model) {
+						return src
+					}
+					return t.TransformStreamBlocks(ctx, model, src)
+				}
+				break
+			}
+		}
 		}
 	}
 

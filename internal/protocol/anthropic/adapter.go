@@ -328,6 +328,26 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 		)
 	}
 
+	// Normalize tool_use/tool_result pairing for DeepSeek compatibility.
+	// DeepSeek requires every tool_use block to have a matching tool_result
+	// in the immediately following user message — stricter than Anthropic.
+	anthropicReq.Messages = normalizeToolUsePairing(anthropicReq.Messages)
+
+	// Ensure no message has nil Content after normalization — DeepSeek rejects
+	// null content fields in messages.
+	filtered := anthropicReq.Messages[:0]
+	for i := range anthropicReq.Messages {
+		if len(anthropicReq.Messages[i].Content) == 0 {
+			continue
+		}
+		// Defensive: replace nil with empty slice so JSON emits [] not null.
+		if anthropicReq.Messages[i].Content == nil {
+			anthropicReq.Messages[i].Content = []ContentBlock{}
+		}
+		filtered = append(filtered, anthropicReq.Messages[i])
+	}
+	anthropicReq.Messages = filtered
+
 	// Tools
 	if len(req.Tools) > 0 {
 		anthropicReq.Tools = make([]Tool, 0, len(req.Tools))
@@ -392,6 +412,9 @@ func (a *AnthropicProviderAdapter) ToCoreResponseWithRequest(ctx context.Context
 
 	// Convert content blocks to Core message.
 	coreContent := a.fromContentBlocks(msgResp.Content)
+	if len(coreContent) > 0 {
+		coreContent = a.hooks.TransformResponseBlocks(ctx, msgResp.Model, coreContent)
+	}
 	if req != nil {
 		toolMap := codextool.DecodeToolMapFromExtensions(req.Extensions)
 		for i := range coreContent {
@@ -542,6 +565,7 @@ func (a *AnthropicProviderAdapter) ToCoreStream(ctx context.Context, src any) (*
 			state.convertEvent(events, ev)
 		}
 	}()
+
 
 	return &format.StreamResult{
 		Events: events,
@@ -1330,3 +1354,163 @@ func cleanSchema(schema map[string]any) map[string]any {
 	}
 	return result
 }
+
+
+// normalizeToolUsePairing ensures every assistant message with tool_use blocks
+// is immediately followed by a user message containing tool_result blocks for
+// all of those tool_use blocks.
+//
+// DeepSeek's API has stricter validation than standard Anthropic: it checks
+// ALL tool_use blocks across the entire conversation and requires every one
+// to have a matching tool_result in the immediately following user message.
+//
+// This function:
+//  1. For each assistant message with tool_use, scans subsequent user
+//     messages for matching tool_results.
+//  2. Consolidates tool_results scattered across multiple user messages
+//     into the first user message after the assistant.
+//  3. Removes empty user messages that only held moved tool_results.
+//  4. Removes orphaned tool_use blocks (no matching tool_result anywhere).
+func normalizeToolUsePairing(messages []Message) []Message {
+	for i := 0; i < len(messages); i++ {
+		msg := &messages[i]
+		if msg.Role != "assistant" {
+			continue
+		}
+
+		// Collect tool_use IDs and their indices in this assistant message.
+		toolUseIDs := make(map[string]int) // id → index in msg.Content
+		for j, block := range msg.Content {
+			if block.Type == "tool_use" && block.ID != "" {
+				toolUseIDs[block.ID] = j
+			}
+		}
+		if len(toolUseIDs) == 0 {
+			continue
+		}
+
+		// Scan subsequent user messages for matching tool_results.
+		var collectedResults []ContentBlock
+		foundIDs := make(map[string]bool)
+		type msgPair struct {
+			idx     int
+			content []ContentBlock
+		}
+		var resultMsgs []msgPair
+
+		scanEnd := i + 1
+		for j := i + 1; j < len(messages); j++ {
+			next := &messages[j]
+			if next.Role != "user" {
+				continue
+			}
+			scanEnd = j + 1
+
+			hasMatchingResult := false
+			for k, block := range next.Content {
+				if block.Type == "tool_result" {
+					if _, ok := toolUseIDs[block.ToolUseID]; ok {
+						hasMatchingResult = true
+						if !foundIDs[block.ToolUseID] {
+							foundIDs[block.ToolUseID] = true
+							collectedResults = append(collectedResults, next.Content[k])
+						}
+					}
+				}
+			}
+
+			if hasMatchingResult {
+				// Build remaining content: keep everything except
+				// tool_result blocks that belong to the current assistant.
+				var remaining []ContentBlock
+				for _, block := range next.Content {
+					if block.Type != "tool_result" {
+						remaining = append(remaining, block)
+					} else if _, belongs := toolUseIDs[block.ToolUseID]; !belongs {
+						remaining = append(remaining, block)
+					}
+				}
+				resultMsgs = append(resultMsgs, msgPair{idx: j, content: remaining})
+			}
+		}
+
+		if len(resultMsgs) == 0 {
+			// No tool_results found for these tool_use IDs.
+			// Remove orphaned tool_use blocks from the assistant message.
+			var kept []ContentBlock
+			for _, block := range msg.Content {
+				if block.Type != "tool_use" {
+					kept = append(kept, block)
+				}
+			}
+			msg.Content = kept
+			continue
+		}
+
+		// Place consolidated tool_result message immediately after
+		// the assistant message (position i+1).
+		targetIdx := i + 1
+
+		// Build consolidated result message: non-tool_result blocks from the
+		// first matched user message (if it was at targetIdx) followed by
+		// all collected tool_results.
+		consolidated := Message{Role: "user", Content: make([]ContentBlock, 0, len(collectedResults)+len(resultMsgs[0].content))}
+		if resultMsgs[0].idx == targetIdx && len(resultMsgs[0].content) > 0 {
+			consolidated.Content = append(consolidated.Content, resultMsgs[0].content...)
+		}
+		consolidated.Content = append(consolidated.Content, collectedResults...)
+
+		// Build new message slice.
+		var newMsgs []Message
+		newMsgs = append(newMsgs, messages[:targetIdx]...)
+		newMsgs = append(newMsgs, consolidated)
+
+		// Collect remaining non-empty content from messages between
+		// targetIdx and scanEnd, excluding the tool_results we moved.
+		// Skip the first result message if it was already merged at targetIdx.
+		for j := targetIdx; j < scanEnd && j < len(messages); j++ {
+			// Determine remaining content for this message.
+			var remaining []ContentBlock
+			role := messages[j].Role
+			isResultMsg := false
+			for _, rm := range resultMsgs {
+				if rm.idx == j {
+					isResultMsg = true
+					if j == targetIdx {
+						// Already merged into consolidated above.
+						remaining = nil
+					} else {
+						remaining = rm.content
+					}
+					break
+				}
+			}
+			if !isResultMsg {
+				remaining = messages[j].Content
+			}
+			if len(remaining) > 0 {
+				newMsgs = append(newMsgs, Message{Role: role, Content: remaining})
+			}
+		}
+
+		// Append everything after scanEnd.
+		if scanEnd < len(messages) {
+			newMsgs = append(newMsgs, messages[scanEnd:]...)
+		}
+
+		// Copy newMsgs in-place into messages and truncate.
+		// copy handles the min(len(messages), len(newMsgs)) case correctly.
+		prevLen := len(messages)
+		copy(messages, newMsgs)
+		messages = messages[:len(newMsgs)]
+		if len(newMsgs) < prevLen {
+			i -= prevLen - len(newMsgs)
+		}
+	}
+	return messages
+}
+
+// wrapStreamWithTransform lazily captures the model from the first
+// message_start event in the stream, then applies the provided transform
+// function to the remaining events. If no transform is set or the first
+// event is not message_start, the original channel is returned unchanged.
