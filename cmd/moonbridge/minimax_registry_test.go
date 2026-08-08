@@ -102,9 +102,9 @@ func assertMiniMaxOffers(t *testing.T, offers []config.OfferFileConfig) {
 	t.Helper()
 	want := map[string]config.ModelPricingFileConfig{
 		"MiniMax-M3": {
-			InputPrice:     0.3,
-			OutputPrice:    1.2,
-			CacheReadPrice: 0.06,
+			InputPrice:     0.6,
+			OutputPrice:    2.4,
+			CacheReadPrice: 0.12,
 		},
 		"MiniMax-M2.7": {
 			InputPrice:      0.3,

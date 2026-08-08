@@ -245,9 +245,9 @@ providers:
     offers:
       - model: MiniMax-M3
         pricing:
-          input_price: 0.3
-          output_price: 1.2
-          cache_read_price: 0.06
+          input_price: 0.6
+          output_price: 2.4
+          cache_read_price: 0.12
       - model: MiniMax-M2.7
         pricing:
           input_price: 0.3
@@ -263,9 +263,9 @@ providers:
     offers:
       - model: MiniMax-M3
         pricing:
-          input_price: 0.3
-          output_price: 1.2
-          cache_read_price: 0.06
+          input_price: 0.6
+          output_price: 2.4
+          cache_read_price: 0.12
       - model: MiniMax-M2.7
         pricing:
           input_price: 0.3
@@ -283,9 +283,9 @@ providers:
     offers:
       - model: MiniMax-M3
         pricing:
-          input_price: 0.3
-          output_price: 1.2
-          cache_read_price: 0.06
+          input_price: 0.6
+          output_price: 2.4
+          cache_read_price: 0.12
       - model: MiniMax-M2.7
         pricing:
           input_price: 0.3
@@ -301,9 +301,9 @@ providers:
     offers:
       - model: MiniMax-M3
         pricing:
-          input_price: 0.3
-          output_price: 1.2
-          cache_read_price: 0.06
+          input_price: 0.6
+          output_price: 2.4
+          cache_read_price: 0.12
       - model: MiniMax-M2.7
         pricing:
           input_price: 0.3
