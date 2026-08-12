@@ -3,5 +3,8 @@
   "display_name": "MiniMax M2.7",
   "description": "Text model with always-on reasoning.",
   "supports_reasoning": true,
+  "supported_reasoning_levels": [
+    {"effort": "always_on", "description": "Always-on reasoning"}
+  ],
   "input_modalities": ["text"]
 }

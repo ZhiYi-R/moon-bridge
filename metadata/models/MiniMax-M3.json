@@ -3,5 +3,9 @@
   "display_name": "MiniMax M3",
   "description": "Long-context multimodal model with adaptive reasoning.",
   "supports_reasoning": true,
+  "supported_reasoning_levels": [
+    {"effort": "adaptive", "description": "Adaptive reasoning"},
+    {"effort": "disabled", "description": "Reasoning disabled"}
+  ],
   "input_modalities": ["text", "image", "video"]
 }
