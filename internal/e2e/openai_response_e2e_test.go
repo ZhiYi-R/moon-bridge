@@ -5,9 +5,12 @@ package e2e_test
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/openai"
 )
 
@@ -401,6 +404,131 @@ func TestOpenAIResponsePassthroughE2E_Streaming(t *testing.T) {
 	}
 	if !foundOutputItemAdded {
 		t.Error("expected output_item.added event, not found")
+	}
+}
+
+// TestOpenAIResponseAnthropicE2E_ReasoningToolReplay verifies the full
+// streaming path from an Anthropic thinking/tool-use response through the
+// OpenAI Responses stream, then back to an Anthropic continuation request.
+func TestOpenAIResponseAnthropicE2E_ReasoningToolReplay(t *testing.T) {
+	ctx := context.Background()
+	cfg := e2eMinimalConfig()
+	hooks := format.CorePluginHooks{}.WithDefaults()
+	reg := newTestRegistry(t, cfg, hooks)
+
+	client, ok := reg.GetClient(configOpenAIResponse)
+	if !ok {
+		t.Fatal("OpenAI Responses client adapter not found")
+	}
+	clientStream, ok := reg.GetClientStream(configOpenAIResponse)
+	if !ok {
+		t.Fatal("OpenAI Responses stream adapter not found")
+	}
+	provider, ok := reg.GetProvider(configAnthropic)
+	if !ok {
+		t.Fatal("Anthropic provider adapter not found")
+	}
+	providerStream, ok := reg.GetProviderStream(configAnthropic)
+	if !ok {
+		t.Fatal("Anthropic provider stream adapter not found")
+	}
+
+	mockSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		writeSSE(w, "message_start", `{"type":"message_start","message":{"id":"msg_reasoning_001","type":"message","role":"assistant","content":[],"model":"deepseek-v4","usage":{"input_tokens":5,"output_tokens":0}}}`)
+		writeSSE(w, "content_block_start", `{"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}`)
+		writeSSE(w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"check repository state"}}`)
+		writeSSE(w, "content_block_delta", `{"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"sig_replay_001"}}`)
+		writeSSE(w, "content_block_stop", `{"type":"content_block_stop","index":0}`)
+		writeSSE(w, "content_block_start", `{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"lookup","input":{}}}`)
+		writeSSE(w, "content_block_delta", `{"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"moon\"}"}}`)
+		writeSSE(w, "content_block_stop", `{"type":"content_block_stop","index":1}`)
+		writeSSE(w, "message_delta", `{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"input_tokens":5,"output_tokens":8}}`)
+		writeSSE(w, "message_stop", `{"type":"message_stop"}`)
+	}))
+	defer mockSrv.Close()
+
+	firstCore, err := client.ToCoreRequest(ctx, &openai.ResponsesRequest{
+		Model:  "deepseek-v4",
+		Input:  json.RawMessage(`"Use lookup"`),
+		Stream: true,
+	})
+	if err != nil {
+		t.Fatalf("first ToCoreRequest: %v", err)
+	}
+	upstreamAny, err := provider.FromCoreRequest(ctx, firstCore)
+	if err != nil {
+		t.Fatalf("first FromCoreRequest: %v", err)
+	}
+	stream, err := anthropic.NewClient(anthropic.ClientConfig{BaseURL: mockSrv.URL, APIKey: "test-key", Client: mockSrv.Client()}).StreamMessage(ctx, *upstreamAny.(*anthropic.MessageRequest))
+	if err != nil {
+		t.Fatalf("StreamMessage: %v", err)
+	}
+	defer stream.Close()
+	coreStream, err := providerStream.ToCoreStream(ctx, stream)
+	if err != nil {
+		t.Fatalf("ToCoreStream: %v", err)
+	}
+	streamAny, err := clientStream.FromCoreStream(ctx, firstCore, coreStream.Events)
+	if err != nil {
+		t.Fatalf("FromCoreStream: %v", err)
+	}
+
+	var response openai.Response
+	var createdID string
+	for event := range streamAny.(*openai.OpenAIStreamResult).Chan() {
+		switch event.Event {
+		case "response.created":
+			createdID = event.Data.(openai.ResponseLifecycleEvent).Response.ID
+		case "response.completed":
+			response = event.Data.(openai.ResponseLifecycleEvent).Response
+		}
+	}
+	if createdID != "msg_reasoning_001" {
+		t.Fatalf("response.created ID = %q, want msg_reasoning_001", createdID)
+	}
+	if len(response.Output) != 2 {
+		t.Fatalf("stream output = %+v, want reasoning and function_call", response.Output)
+	}
+
+	input, err := json.Marshal(response.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var continuation []map[string]any
+	if err := json.Unmarshal(input, &continuation); err != nil {
+		t.Fatal(err)
+	}
+	continuation = append(continuation, map[string]any{"type": "function_call_output", "call_id": "call_1", "output": "found it"})
+	input, err = json.Marshal(continuation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondCore, err := client.ToCoreRequest(ctx, &openai.ResponsesRequest{Model: "deepseek-v4", Input: input})
+	if err != nil {
+		t.Fatalf("continuation ToCoreRequest: %v", err)
+	}
+	secondAny, err := provider.FromCoreRequest(ctx, secondCore)
+	if err != nil {
+		t.Fatalf("continuation FromCoreRequest: %v", err)
+	}
+	second := secondAny.(*anthropic.MessageRequest)
+	if len(second.Messages) != 3 {
+		t.Fatalf("continuation messages = %+v", second.Messages)
+	}
+	assistant := second.Messages[1]
+	if assistant.Role != "assistant" || len(assistant.Content) != 2 {
+		t.Fatalf("assistant replay = %+v", assistant)
+	}
+	if got := assistant.Content[0]; got.Type != "thinking" || got.Thinking != "check repository state" || got.Signature != "sig_replay_001" {
+		t.Fatalf("replayed thinking = %+v", got)
+	}
+	if got := assistant.Content[1]; got.Type != "tool_use" || got.ID != "call_1" || got.Name != "lookup" {
+		t.Fatalf("replayed tool use = %+v", got)
+	}
+	if got := second.Messages[2]; got.Role != "user" || len(got.Content) != 1 || got.Content[0].Type != "tool_result" || got.Content[0].ToolUseID != "call_1" {
+		t.Fatalf("replayed tool result = %+v", got)
 	}
 }
 

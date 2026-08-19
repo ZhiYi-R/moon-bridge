@@ -7,8 +7,17 @@ import (
 	"testing"
 
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/anthropic"
 	"moonbridge/internal/protocol/openai"
 )
+
+type noOpCacheManager struct{}
+
+func (noOpCacheManager) PlanAndInject(_ context.Context, _ *anthropic.MessageRequest, _ *format.CoreRequest) (string, string) {
+	return "", ""
+}
+
+func (noOpCacheManager) UpdateRegistry(_ context.Context, _, _ string, _ anthropic.Usage) {}
 
 func TestToCoreRequest_BasicText(t *testing.T) {
 	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
@@ -291,7 +300,7 @@ func TestToCoreRequest_KeepsToolUseAdjacentToToolResultWhenReasoningPrecedesOutp
 		Model: "gpt-5.4",
 		Input: json.RawMessage(`[
 			{"type":"function_call","id":"fc_1","call_id":"call_1","name":"tool_a","arguments":"{\"a\":1}"},
-			{"type":"reasoning","summary":[{"type":"text","text":"thinking after tool call"}]},
+			{"type":"reasoning","summary":[{"type":"summary_text","text":"thinking after tool call","signature":"sig_1"}]},
 			{"type":"function_call_output","call_id":"call_1","output":"ok"}
 		]`),
 	}
@@ -311,7 +320,7 @@ func TestToCoreRequest_KeepsToolUseAdjacentToToolResultWhenReasoningPrecedesOutp
 	if len(assistant.Content) != 2 {
 		t.Fatalf("assistant content len=%d, want 2; got %+v", len(assistant.Content), assistant.Content)
 	}
-	if assistant.Content[0].Type != "reasoning" || assistant.Content[0].ReasoningText != "thinking after tool call" {
+	if assistant.Content[0].Type != "reasoning" || assistant.Content[0].ReasoningText != "thinking after tool call" || assistant.Content[0].ReasoningSignature != "sig_1" {
 		t.Fatalf("assistant.Content[0]=%+v, want merged reasoning", assistant.Content[0])
 	}
 	if assistant.Content[1].Type != "tool_use" || assistant.Content[1].ToolUseID != "call_1" {
@@ -436,5 +445,155 @@ func TestFromCoreStream_NoDuplicateDoneForToolUse(t *testing.T) {
 	}
 	if itemDone != 1 {
 		t.Fatalf("output_item.done (tool) count=%d, want 1", itemDone)
+	}
+}
+
+func TestFromCoreStream_ReasoningLifecycleUsesResponsesSchema(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+	coreReq := &format.CoreRequest{Model: "deepseek-v4-flash"}
+	evCh := make(chan format.CoreStreamEvent, 5)
+	evCh <- format.CoreStreamEvent{Type: format.CoreEventCreated, ItemID: "resp_1"}
+	evCh <- format.CoreStreamEvent{
+		Type:  format.CoreContentBlockStarted,
+		Index: 0,
+		ContentBlock: &format.CoreContentBlock{
+			Type: "reasoning",
+		},
+	}
+	evCh <- format.CoreStreamEvent{Type: format.CoreTextDelta, Index: 0, Delta: "inspect stream"}
+	evCh <- format.CoreStreamEvent{
+		Type:  format.CoreContentBlockDone,
+		Index: 0,
+		ContentBlock: &format.CoreContentBlock{
+			Type:               "reasoning",
+			ReasoningSignature: "sig_1",
+		},
+	}
+	evCh <- format.CoreStreamEvent{Type: format.CoreEventCompleted}
+	close(evCh)
+
+	streamAny, err := adapter.FromCoreStream(context.Background(), coreReq, evCh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := streamAny.(*openai.OpenAIStreamResult)
+
+	var added, textDone, partDone, itemDone bool
+	for ev := range result.Chan() {
+		switch ev.Event {
+		case "response.reasoning_summary_part.added":
+			data := ev.Data.(openai.ReasoningSummaryPartAddedEvent)
+			if data.Part.Type != "summary_text" || data.Part.Text != "" {
+				t.Fatalf("added part = %+v, want empty summary_text", data.Part)
+			}
+			added = true
+		case "response.output_item.added":
+			data := ev.Data.(openai.OutputItemEvent)
+			if data.Item.Type == "reasoning" && (len(data.Item.Summary) != 1 || data.Item.Summary[0].Type != "summary_text" || data.Item.Summary[0].Text != "") {
+				t.Fatalf("initial reasoning item = %+v, want one empty summary_text part", data.Item)
+			}
+		case "response.reasoning_summary_text.done":
+			data := ev.Data.(openai.ReasoningSummaryTextDoneEvent)
+			if data.Text != "inspect stream" {
+				t.Fatalf("done text = %q", data.Text)
+			}
+			textDone = true
+		case "response.reasoning_summary_part.done":
+			data := ev.Data.(openai.ReasoningSummaryPartDoneEvent)
+			if data.Part.Type != "summary_text" || data.Part.Text != "inspect stream" || data.Part.Signature != "sig_1" {
+				t.Fatalf("done part = %+v", data.Part)
+			}
+			partDone = true
+		case "response.output_item.done":
+			data := ev.Data.(openai.OutputItemEvent)
+			if data.Item.Type == "reasoning" {
+				if data.Item.Status != "completed" || len(data.Item.Summary) != 1 || data.Item.Summary[0].Type != "summary_text" {
+					t.Fatalf("completed reasoning item = %+v", data.Item)
+				}
+				itemDone = true
+			}
+		}
+	}
+	if !added || !textDone || !partDone || !itemDone {
+		t.Fatalf("reasoning lifecycle incomplete: added=%t textDone=%t partDone=%t itemDone=%t", added, textDone, partDone, itemDone)
+	}
+}
+
+func TestTwoTurnStream_ReplaysReasoningBeforeToolUseWithoutSessionState(t *testing.T) {
+	client := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+	firstReq := &format.CoreRequest{Model: "deepseek-v4-flash"}
+	events := make(chan format.CoreStreamEvent, 8)
+	events <- format.CoreStreamEvent{Type: format.CoreEventCreated, ItemID: "resp_1"}
+	events <- format.CoreStreamEvent{Type: format.CoreContentBlockStarted, Index: 0, ContentBlock: &format.CoreContentBlock{Type: "reasoning"}}
+	events <- format.CoreStreamEvent{Type: format.CoreTextDelta, Index: 0, Delta: "exact provider thinking"}
+	events <- format.CoreStreamEvent{Type: format.CoreContentBlockDone, Index: 0, ContentBlock: &format.CoreContentBlock{Type: "reasoning", ReasoningSignature: "sig_exact"}}
+	events <- format.CoreStreamEvent{Type: format.CoreContentBlockStarted, Index: 1, ContentBlock: &format.CoreContentBlock{Type: "tool_use", ToolUseID: "call_1", ToolName: "lookup"}}
+	events <- format.CoreStreamEvent{Type: format.CoreToolCallArgsDone, Index: 1, Delta: `{"query":"moon"}`}
+	events <- format.CoreStreamEvent{Type: format.CoreEventCompleted}
+	close(events)
+
+	streamAny, err := client.FromCoreStream(context.Background(), firstReq, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstResp openai.Response
+	for event := range streamAny.(*openai.OpenAIStreamResult).Chan() {
+		if event.Event == "response.completed" {
+			firstResp = event.Data.(openai.ResponseLifecycleEvent).Response
+		}
+	}
+	if len(firstResp.Output) != 2 {
+		t.Fatalf("first output = %+v, want reasoning and tool call", firstResp.Output)
+	}
+
+	var secondInput []map[string]any
+	encodedOutput, err := json.Marshal(firstResp.Output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(encodedOutput, &secondInput); err != nil {
+		t.Fatal(err)
+	}
+	secondInput = append(secondInput, map[string]any{
+		"type":    "function_call_output",
+		"call_id": "call_1",
+		"output":  "tool result",
+	})
+	rawInput, err := json.Marshal(secondInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	secondCore, err := client.ToCoreRequest(context.Background(), &openai.ResponsesRequest{
+		Model: "deepseek-v4-flash",
+		Input: rawInput,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := anthropic.NewAnthropicProviderAdapter(0, noOpCacheManager{}, format.CorePluginHooks{})
+	converted, err := provider.FromCoreRequest(context.Background(), secondCore)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondAnthropic := converted.(*anthropic.MessageRequest)
+	if len(secondAnthropic.Messages) != 3 {
+		t.Fatalf("second messages = %+v", secondAnthropic.Messages)
+	}
+	if got := secondAnthropic.Messages[0]; got.Role != "user" || len(got.Content) != 1 || got.Content[0].Type != "text" || got.Content[0].Text != "_" {
+		t.Fatalf("Anthropic placeholder = %+v", got)
+	}
+	assistant := secondAnthropic.Messages[1]
+	if assistant.Role != "assistant" || len(assistant.Content) != 2 {
+		t.Fatalf("assistant replay = %+v", assistant)
+	}
+	if got := assistant.Content[0]; got.Type != "thinking" || got.Thinking != "exact provider thinking" || got.Signature != "sig_exact" {
+		t.Fatalf("replayed thinking = %+v", got)
+	}
+	if got := assistant.Content[1]; got.Type != "tool_use" || got.ID != "call_1" || got.Name != "lookup" {
+		t.Fatalf("replayed tool use = %+v", got)
+	}
+	if got := secondAnthropic.Messages[2]; got.Role != "user" || len(got.Content) != 1 || got.Content[0].Type != "tool_result" || got.Content[0].ToolUseID != "call_1" {
+		t.Fatalf("tool result = %+v", got)
 	}
 }

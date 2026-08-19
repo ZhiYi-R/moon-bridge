@@ -596,6 +596,7 @@ func (s *streamConverterState) convertEvent(events chan<- format.CoreStreamEvent
 
 			s.emit(events, format.CoreStreamEvent{
 				Type:   format.CoreEventCreated,
+				ItemID: s.msgID,
 				Status: "in_progress",
 				Model:  s.model,
 			})
@@ -687,6 +688,11 @@ func (s *streamConverterState) convertEvent(events chan<- format.CoreStreamEvent
 				Delta: ev.Delta.PartialJSON,
 			})
 
+		case ev.Delta.Type == "signature_delta":
+			if sig := ev.Delta.Signature; sig != "" {
+				s.blockSignatures[index] = sig
+			}
+
 		case ev.Delta.Type == "thinking_delta" || blockType == "thinking":
 			s.emit(events, format.CoreStreamEvent{
 				Type:  format.CoreTextDelta,
@@ -696,11 +702,6 @@ func (s *streamConverterState) convertEvent(events chan<- format.CoreStreamEvent
 					Type: "reasoning",
 				},
 			})
-
-		case ev.Delta.Type == "signature_delta":
-			if sig := ev.Delta.Signature; sig != "" {
-				s.blockSignatures[index] = sig
-			}
 		}
 
 	case "content_block_stop":

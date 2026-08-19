@@ -3,11 +3,28 @@ package anthropic_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"testing"
 
 	"moonbridge/internal/format"
 	"moonbridge/internal/protocol/anthropic"
 )
+
+type fixtureStream struct {
+	events []anthropic.StreamEvent
+	index  int
+}
+
+func (s *fixtureStream) Next() (anthropic.StreamEvent, error) {
+	if s.index >= len(s.events) {
+		return anthropic.StreamEvent{}, io.EOF
+	}
+	event := s.events[s.index]
+	s.index++
+	return event, nil
+}
+
+func (s *fixtureStream) Close() error { return nil }
 
 // ---------------------------------------------------------------------------
 // noopCacheManager — no-op implementation of anthropic.CacheManager
@@ -63,6 +80,29 @@ func TestFromCoreRequest_BasicTextMessage(t *testing.T) {
 	}
 	if msgReq.Messages[0].Content[0].Text != "hello" {
 		t.Errorf("text = %q", msgReq.Messages[0].Content[0].Text)
+	}
+}
+
+func TestToCoreStream_CreatedEventCarriesResponseID(t *testing.T) {
+	adapter := newTestAdapter()
+	stream := &fixtureStream{events: []anthropic.StreamEvent{
+		{
+			Type: "message_start",
+			Message: &anthropic.MessageResponse{
+				ID:    "msg_provider_1",
+				Model: "deepseek-v4-flash",
+			},
+		},
+		{Type: "message_stop"},
+	}}
+
+	result, err := adapter.ToCoreStream(context.Background(), stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := <-result.Events
+	if first.Type != format.CoreEventCreated || first.ItemID != "msg_provider_1" {
+		t.Fatalf("created event = %+v, want response ID", first)
 	}
 }
 

@@ -312,7 +312,7 @@ func TestRememberStreamResponseContentCachesDeepSeekThinkingForLaterReplay(t *te
 				Type:   "reasoning",
 				Status: "completed",
 				Summary: []openai.ReasoningItemSummary{{
-					Type:      "text",
+					Type:      "summary_text",
 					Text:      "trace stream reasoning",
 					Signature: "sig-trace-stream",
 				}},

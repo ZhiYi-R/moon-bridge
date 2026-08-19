@@ -487,10 +487,13 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 				io := len(response.Output)
 				outputIndexes[index] = io
 				response.Output = append(response.Output, OutputItem{
-					Type:    "reasoning",
-					ID:      id,
-					Status:  "in_progress",
-					Summary: []ReasoningItemSummary{},
+					Type:   "reasoning",
+					ID:     id,
+					Status: "in_progress",
+					// The Responses schema requires a summary array on a reasoning
+					// item. Codex uses this initial part to register the active item
+					// before it receives reasoning-summary delta events.
+					Summary: []ReasoningItemSummary{{Type: "summary_text", Text: ""}},
 				})
 				send(StreamEvent{
 					Event: "response.output_item.added",
@@ -509,6 +512,10 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 						ItemID:         id,
 						OutputIndex:    io,
 						SummaryIndex:   0,
+						Part: ReasoningItemSummary{
+							Type: "summary_text",
+							Text: "",
+						},
 					},
 				})
 				contentText[index] = ""
@@ -932,11 +939,26 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 						sig = event.ContentBlock.ReasoningSignature
 					}
 					response.Output[idx].Summary = []ReasoningItemSummary{{
-						Type:      "text",
+						Type:      "summary_text",
 						Text:      contentText[index],
 						Signature: sig,
 					}}
 				}
+				part := ReasoningItemSummary{Type: "summary_text", Text: contentText[index]}
+				if idx, ok := outputIndexes[index]; ok && idx < len(response.Output) && len(response.Output[idx].Summary) > 0 {
+					part = response.Output[idx].Summary[0]
+				}
+				send(StreamEvent{
+					Event: "response.reasoning_summary_text.done",
+					Data: ReasoningSummaryTextDoneEvent{
+						Type:           "response.reasoning_summary_text.done",
+						SequenceNumber: next(),
+						ItemID:         itemIDs[index],
+						OutputIndex:    outputIndexes[index],
+						SummaryIndex:   0,
+						Text:           part.Text,
+					},
+				})
 				send(StreamEvent{
 					Event: "response.reasoning_summary_part.done",
 					Data: ReasoningSummaryPartDoneEvent{
@@ -945,8 +967,20 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 						ItemID:         itemIDs[index],
 						OutputIndex:    outputIndexes[index],
 						SummaryIndex:   0,
+						Part:           part,
 					},
 				})
+				if idx, ok := outputIndexes[index]; ok && idx < len(response.Output) {
+					send(StreamEvent{
+						Event: "response.output_item.done",
+						Data: OutputItemEvent{
+							Type:           "response.output_item.done",
+							SequenceNumber: next(),
+							OutputIndex:    idx,
+							Item:           response.Output[idx],
+						},
+					})
+				}
 				delete(contentText, index)
 				delete(itemIDs, index)
 				delete(outputIndexes, index)
