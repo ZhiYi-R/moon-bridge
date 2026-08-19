@@ -232,7 +232,9 @@ func loadDotEnv(t testing.TB) {
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Log(".env.test not found — relying on OS env vars")
+			if t != nil {
+				t.Log(".env.test not found — relying on OS env vars")
+			}
 			return
 		}
 		dir = parent
