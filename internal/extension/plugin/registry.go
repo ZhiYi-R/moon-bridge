@@ -29,6 +29,7 @@ type Registry struct {
 	streamInterceptors     []StreamInterceptor
 	errorTransformers      []ErrorTransformer
 	sessionProviders       []SessionStateProvider
+	thinkingPrependers     []ThinkingPrepender
 	logConsumers           []LogConsumer
 	dbProviders            []DBProvider
 	dbConsumers            []DBConsumer
@@ -90,6 +91,9 @@ func (r *Registry) Register(p Plugin) {
 	}
 	if v, ok := p.(SessionStateProvider); ok {
 		r.sessionProviders = append(r.sessionProviders, v)
+	}
+	if v, ok := p.(ThinkingPrepender); ok {
+		r.thinkingPrependers = append(r.thinkingPrependers, v)
 	}
 	if v, ok := p.(LogConsumer); ok {
 		r.logConsumers = append(r.logConsumers, v)
@@ -343,6 +347,55 @@ func (r *Registry) TransformError(model string, msg string) string {
 	return msg
 }
 
+// PrependThinking restores provider-specific thinking blocks into assistant
+// messages before a request is sent upstream. It chains ThinkingPrepender
+// plugins enabled for the request model, passing each plugin its per-session
+// state (when available via the context, see format.WithPluginSessionData).
+//
+// Tool-call assistant messages are routed through PrependThinkingForToolUse;
+// text-only assistant messages through PrependThinkingForAssistant.
+func (r *Registry) PrependThinking(ctx context.Context, req *format.CoreRequest) {
+	if r == nil || req == nil {
+		return
+	}
+	sessionData := format.PluginSessionDataFromContext(ctx)
+	for _, p := range r.thinkingPrependers {
+		plugin := p.(Plugin)
+		if !plugin.EnabledForModel(req.Model) {
+			continue
+		}
+		var sessionState any
+		if sessionData != nil {
+			sessionState = sessionData[plugin.Name()]
+		}
+		for i := range req.Messages {
+			msg := &req.Messages[i]
+			if msg.Role != "assistant" || len(msg.Content) == 0 {
+				continue
+			}
+			if toolCallID := firstToolUseID(msg.Content); toolCallID != "" {
+				updated := p.PrependThinkingForToolUse([]format.CoreMessage{*msg}, toolCallID, nil, sessionState)
+				if len(updated) > 0 {
+					msg.Content = updated[0].Content
+				}
+			} else {
+				msg.Content = p.PrependThinkingForAssistant(msg.Content, nil, sessionState)
+			}
+		}
+	}
+}
+
+// firstToolUseID returns the ID of the first tool_use block in the content
+// slice, or an empty string when none is present.
+func firstToolUseID(blocks []format.CoreContentBlock) string {
+	for _, b := range blocks {
+		if b.Type == "tool_use" && b.ToolUseID != "" {
+			return b.ToolUseID
+		}
+	}
+	return ""
+}
+
 // NewSessionData creates session state for all registered plugins.
 func (r *Registry) NewSessionData() map[string]any {
 	if r == nil {
@@ -525,5 +578,9 @@ func (r *Registry) CorePluginHooks() format.CorePluginHooks {
 			}
 		}
 	}
+
+	// Wire PrependThinkingToAssistant to the ThinkingPrepender capability.
+	hooks.PrependThinkingToAssistant = r.PrependThinking
+
 	return hooks
 }

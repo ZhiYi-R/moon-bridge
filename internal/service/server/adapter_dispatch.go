@@ -75,7 +75,6 @@ func (s *Server) handleWithAdapters(
 	// Get or create session for this request.
 	requestStart := time.Now()
 	sess := s.sessionForRequest(r)
-	_ = sess
 
 	// Initialize trace record.
 	bodyBytes, _ := json.Marshal(openAIReq)
@@ -168,6 +167,12 @@ func (s *Server) handleWithAdapters(
 	// Override CoreRequest model alias with upstream model name so
 	// the upstream provider receives the correct model identifier.
 	coreReq.Model = preferred.UpstreamModel
+
+	// Inject per-session plugin state so Core hooks (e.g. ThinkingPrepender)
+	// can restore thinking blocks from the conversation's session state.
+	if sess != nil {
+		ctx = format.WithPluginSessionData(ctx, sess.ExtensionData)
+	}
 
 	// Inject web search tools at Core level if mode is "injected".
 	// This replaces web_search with tavily_search/firecrawl_fetch tools.

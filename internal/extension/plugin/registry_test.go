@@ -1,6 +1,7 @@
 package plugin_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"moonbridge/internal/format"
@@ -102,6 +103,29 @@ type mockStreamState struct {
 func (s *mockStreamState) CompletedThinkingText() string { return s.completed }
 func (s *mockStreamState) RecordToolCall(id string)      {}
 func (s *mockStreamState) Reset(index int)               {}
+
+type testThinkingPrepender struct {
+	testPlugin
+	toolUseCalls   int
+	assistantCalls int
+	seenSession    any
+}
+
+func (p *testThinkingPrepender) PrependThinkingForToolUse(messages []format.CoreMessage, toolCallID string, _ []openai.ReasoningItemSummary, sessionState any) []format.CoreMessage {
+	p.toolUseCalls++
+	p.seenSession = sessionState
+	if len(messages) == 0 {
+		return messages
+	}
+	messages[0].Content = append(messages[0].Content, format.CoreContentBlock{Type: "reasoning", ReasoningText: "cached-" + toolCallID})
+	return messages
+}
+
+func (p *testThinkingPrepender) PrependThinkingForAssistant(blocks []format.CoreContentBlock, _ []openai.ReasoningItemSummary, sessionState any) []format.CoreContentBlock {
+	p.assistantCalls++
+	p.seenSession = sessionState
+	return append([]format.CoreContentBlock{{Type: "reasoning", ReasoningText: "assistant"}}, blocks...)
+}
 
 // --- Tests ---
 
@@ -283,4 +307,82 @@ func TestRegistryOnStreamCompleteDispatch(t *testing.T) {
 		t.Fatal("OnStreamComplete called for disabled plugin")
 	}
 
+}
+
+func TestRegistryPrependThinkingDispatch(t *testing.T) {
+	r := plugin.NewRegistry(nil)
+	tp := &testThinkingPrepender{testPlugin: testPlugin{name: "tp", enabled: true}}
+	r.Register(tp)
+
+	req := &format.CoreRequest{
+		Model: "deepseek-v4",
+		Messages: []format.CoreMessage{
+			{Role: "assistant", Content: []format.CoreContentBlock{{Type: "tool_use", ToolUseID: "tu_1"}}},
+			{Role: "assistant", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}},
+			{Role: "user", Content: []format.CoreContentBlock{{Type: "text", Text: "..."}}},
+		},
+	}
+
+	ctx := format.WithPluginSessionData(context.Background(), map[string]any{"tp": "session-state"})
+	r.PrependThinking(ctx, req)
+
+	if tp.toolUseCalls != 1 {
+		t.Fatalf("tool use calls = %d, want 1", tp.toolUseCalls)
+	}
+	if tp.assistantCalls != 1 {
+		t.Fatalf("assistant calls = %d, want 1", tp.assistantCalls)
+	}
+	if tp.seenSession != "session-state" {
+		t.Fatalf("session state = %v, want session-state", tp.seenSession)
+	}
+	if len(req.Messages[0].Content) != 2 || req.Messages[0].Content[1].ReasoningText != "cached-tu_1" {
+		t.Fatalf("tool use message not updated: %+v", req.Messages[0].Content)
+	}
+	if len(req.Messages[1].Content) != 2 || req.Messages[1].Content[0].Type != "reasoning" || req.Messages[1].Content[0].ReasoningText != "assistant" {
+		t.Fatalf("assistant text message not updated: %+v", req.Messages[1].Content)
+	}
+	if len(req.Messages[2].Content) != 1 {
+		t.Fatalf("user message modified: %+v", req.Messages[2].Content)
+	}
+}
+
+func TestRegistryPrependThinkingSkipsDisabled(t *testing.T) {
+	r := plugin.NewRegistry(nil)
+	tp := &testThinkingPrepender{testPlugin: testPlugin{name: "tp", enabled: false}}
+	r.Register(tp)
+
+	req := &format.CoreRequest{
+		Model:    "deepseek-v4",
+		Messages: []format.CoreMessage{{Role: "assistant", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}}},
+	}
+	r.PrependThinking(context.Background(), req)
+
+	if tp.assistantCalls != 0 || tp.toolUseCalls != 0 {
+		t.Fatal("disabled prepender should not be called")
+	}
+	if len(req.Messages[0].Content) != 1 {
+		t.Fatalf("message modified by disabled prepender: %+v", req.Messages[0].Content)
+	}
+}
+
+func TestCorePluginHooksPrependThinkingWired(t *testing.T) {
+	r := plugin.NewRegistry(nil)
+	tp := &testThinkingPrepender{testPlugin: testPlugin{name: "tp", enabled: true}}
+	r.Register(tp)
+
+	hooks := r.CorePluginHooks()
+	if hooks.PrependThinkingToAssistant == nil {
+		t.Fatal("PrependThinkingToAssistant hook is nil")
+	}
+
+	req := &format.CoreRequest{
+		Model:    "deepseek-v4",
+		Messages: []format.CoreMessage{{Role: "assistant", Content: []format.CoreContentBlock{{Type: "text", Text: "hi"}}}},
+	}
+	ctx := format.WithPluginSessionData(context.Background(), map[string]any{"tp": "s"})
+	hooks.PrependThinkingToAssistant(ctx, req)
+
+	if tp.assistantCalls != 1 {
+		t.Fatalf("hook did not dispatch to prepender: assistantCalls=%d", tp.assistantCalls)
+	}
 }
