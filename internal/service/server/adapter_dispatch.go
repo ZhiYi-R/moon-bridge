@@ -2644,21 +2644,13 @@ func prependCachedThinking(upstreamReq *anthropic.MessageRequest, sess *session.
 		return
 	}
 
-	// For each assistant message, prepend cached thinking from the previous turn.
+	// Every assistant message needs a thinking block while thinking is enabled.
+	// DeepSeek rejects a conversation whose assistant turn carries none with
+	// "`content[].thinking` in the thinking mode must be passed back", and that
+	// applies to text-only turns as well as tool-call turns.
 	for i := range upstreamReq.Messages {
 		msg := &upstreamReq.Messages[i]
 		if msg.Role != "assistant" || len(msg.Content) == 0 {
-			continue
-		}
-		// Only tool-call assistant messages require thinking replay fallback.
-		hasToolUse := false
-		for _, block := range msg.Content {
-			if block.Type == "tool_use" {
-				hasToolUse = true
-				break
-			}
-		}
-		if !hasToolUse {
 			continue
 		}
 		// Check if the message already has a thinking block.
@@ -2678,12 +2670,25 @@ func prependCachedThinking(upstreamReq *anthropic.MessageRequest, sess *session.
 				break
 			}
 		}
-		// Fallback: prepend empty thinking block as response boundary.
-		// Prevents model from continuing previous response text.
-		if !foundCachedThinking && !hasThinkingBlock(msg.Content) {
-			prepended, _ := deepseekv4.PrependRequiredThinkingForAssistantText(anthropicContentSliceToFormat(msg.Content))
-			msg.Content = formatContentSliceToAnthropic(prepended)
+		if foundCachedThinking {
+			continue
 		}
+		// Then by assistant text, so a text-only turn replays the thinking it was
+		// generated with.
+		core := state.PrependCachedForAssistantText(anthropicContentSliceToFormat(msg.Content))
+		if !deepseekv4.HasThinkingBlock(core) {
+			// Fallback: prepend an empty thinking block as response boundary.
+			// Prevents model from continuing previous response text, and satisfies
+			// the provider's replay requirement for this turn.
+			var inserted bool
+			core, inserted = deepseekv4.PrependRequiredThinkingForAssistantText(core)
+			if inserted {
+				slog.Default().Warn(
+					"DeepSeek V4 历史缺少可回放 thinking，已在请求侧补空 thinking block",
+					"target", "assistant_text")
+			}
+		}
+		msg.Content = formatContentSliceToAnthropic(core)
 	}
 }
 

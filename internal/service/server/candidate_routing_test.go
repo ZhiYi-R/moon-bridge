@@ -78,7 +78,7 @@ func TestComputeCostWithProviderPricingNilStats(t *testing.T) {
 	}
 }
 
-func TestPrependCachedThinkingSkipsAssistantTextAndFallsBackForToolUse(t *testing.T) {
+func TestPrependCachedThinkingCoversAssistantTextAndFallsBackForToolUse(t *testing.T) {
 	sess := session.New()
 	state := deepseekv4.NewState()
 	sess.InitExtensions(map[string]any{
@@ -104,8 +104,17 @@ func TestPrependCachedThinkingSkipsAssistantTextAndFallsBackForToolUse(t *testin
 
 	prependCachedThinking(req, sess)
 
-	if len(req.Messages[0].Content) != 1 || req.Messages[0].Content[0].Type != "text" {
-		t.Fatalf("assistant text message should remain unchanged, got %+v", req.Messages[0].Content)
+	// DeepSeek rejects a conversation in which an assistant turn carries no
+	// thinking block, text-only turns included, so this message must gain the
+	// empty boundary block rather than staying bare.
+	if len(req.Messages[0].Content) != 2 {
+		t.Fatalf("assistant text message should gain a thinking block, got %+v", req.Messages[0].Content)
+	}
+	if req.Messages[0].Content[0].Type != "thinking" || req.Messages[0].Content[0].Thinking != "" {
+		t.Fatalf("assistant text message should gain an empty thinking block, got %+v", req.Messages[0].Content[0])
+	}
+	if req.Messages[0].Content[1].Type != "text" || req.Messages[0].Content[1].Text != "plain assistant text" {
+		t.Fatalf("text block misplaced after fallback prepend, got %+v", req.Messages[0].Content)
 	}
 
 	if len(req.Messages[1].Content) < 2 {
