@@ -278,20 +278,9 @@ func (a *OpenAIAdapter) FromCoreResponse(ctx context.Context, resp *format.CoreR
 		InputTokensDetails: InputTokensDetails{
 			CachedTokens: resp.Usage.CachedInputTokens,
 		},
-	}
-	// Extract OutputTokensDetails from extensions if available.
-	if resp.Extensions != nil {
-		if otRaw, ok := resp.Extensions["output_tokens_details"]; ok {
-			if otMap, ok := otRaw.(map[string]any); ok {
-				if rt, ok := otMap["reasoning_tokens"]; ok {
-					if rtVal, ok := rt.(float64); ok {
-						usage.OutputTokensDetails = OutputTokensDetails{
-							ReasoningTokens: int(rtVal),
-						}
-					}
-				}
-			}
-		}
+		OutputTokensDetails: OutputTokensDetails{
+			ReasoningTokens: resp.Usage.ReasoningTokens,
+		},
 	}
 	response.Usage = usage
 
@@ -870,6 +859,9 @@ func (a *OpenAIAdapter) streamLoopWithBuf(ctx context.Context, coreReq *format.C
 					TotalTokens:  event.Usage.InputTokens + event.Usage.OutputTokens,
 					InputTokensDetails: InputTokensDetails{
 						CachedTokens: event.Usage.CachedInputTokens,
+					},
+					OutputTokensDetails: OutputTokensDetails{
+						ReasoningTokens: event.Usage.ReasoningTokens,
 					},
 				}
 			}

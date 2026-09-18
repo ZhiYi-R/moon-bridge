@@ -222,6 +222,9 @@ func (a *ChatProviderAdapter) ToCoreResponseWithRequest(ctx context.Context, req
 		if chatResp.Usage.PromptTokensDetails != nil {
 			coreResp.Usage.CachedInputTokens = chatResp.Usage.PromptTokensDetails.CachedTokens
 		}
+		if chatResp.Usage.CompletionTokensDetails != nil {
+			coreResp.Usage.ReasoningTokens = chatResp.Usage.CompletionTokensDetails.ReasoningTokens
+		}
 	}
 
 	return coreResp, nil
@@ -545,6 +548,9 @@ func (a *ChatProviderAdapter) ToCoreStreamWithRequest(ctx context.Context, req *
 					}
 					if chunk.Usage.PromptTokensDetails != nil {
 						finalUsage.CachedInputTokens = chunk.Usage.PromptTokensDetails.CachedTokens
+					}
+					if chunk.Usage.CompletionTokensDetails != nil {
+						finalUsage.ReasoningTokens = chunk.Usage.CompletionTokensDetails.ReasoningTokens
 					}
 				}
 			}

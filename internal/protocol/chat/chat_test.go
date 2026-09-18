@@ -978,6 +978,24 @@ func TestTypes_Usage_JSON(t *testing.T) {
 	}
 }
 
+func TestToCoreResponse_ReasoningTokens(t *testing.T) {
+	adapter := newTestAdapter()
+	raw := `{"id":"chatcmpl-1","choices":[{"index":0,"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],
+		"usage":{"prompt_tokens":60,"completion_tokens":284,"total_tokens":344,
+		         "completion_tokens_details":{"reasoning_tokens":182}}}`
+	var chatResp chat.ChatResponse
+	if err := json.Unmarshal([]byte(raw), &chatResp); err != nil {
+		t.Fatal(err)
+	}
+	result, err := adapter.ToCoreResponse(context.Background(), &chatResp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Usage.OutputTokens != 284 || result.Usage.ReasoningTokens != 182 {
+		t.Errorf("Usage = %+v, want output=284 reasoning=182", result.Usage)
+	}
+}
+
 // ============================================================================
 // FromCoreRequest — CoreRequest -> *ChatRequest
 // ============================================================================

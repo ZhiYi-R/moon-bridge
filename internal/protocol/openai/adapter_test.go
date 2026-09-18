@@ -438,3 +438,20 @@ func TestFromCoreStream_NoDuplicateDoneForToolUse(t *testing.T) {
 		t.Fatalf("output_item.done (tool) count=%d, want 1", itemDone)
 	}
 }
+
+func TestFromCoreResponse_ReasoningTokens(t *testing.T) {
+	adapter := openai.NewOpenAIAdapter(format.CorePluginHooks{})
+	coreResp := &format.CoreResponse{
+		ID:     "resp_1",
+		Status: "completed",
+		Usage:  format.CoreUsage{InputTokens: 10, OutputTokens: 284, ReasoningTokens: 182},
+	}
+	result, err := adapter.FromCoreResponse(context.Background(), coreResp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp := result.(*openai.Response)
+	if resp.Usage.OutputTokensDetails.ReasoningTokens != 182 {
+		t.Errorf("reasoning_tokens = %d, want 182", resp.Usage.OutputTokensDetails.ReasoningTokens)
+	}
+}

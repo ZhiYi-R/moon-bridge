@@ -200,6 +200,7 @@ type CoreUsage struct {
 	OutputTokens      int `json:"output_tokens,omitempty"`
 	TotalTokens       int `json:"total_tokens,omitempty"`
 	CachedInputTokens int `json:"cached_input_tokens,omitempty"`
+	ReasoningTokens   int `json:"reasoning_tokens,omitempty"`
 }
 
 // ============================================================================

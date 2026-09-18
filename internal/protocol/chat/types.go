@@ -138,6 +138,9 @@ type Usage struct {
 	TotalTokens      int `json:"total_tokens"`
 	// PromptTokensDetails contains detailed breakdown of prompt_tokens.
 	PromptTokensDetails *PromptTokensDetails `json:"prompt_tokens_details,omitempty"`
+	// CompletionTokensDetails contains detailed breakdown of
+	// completion_tokens. DeepSeek reports reasoning_tokens here.
+	CompletionTokensDetails *CompletionTokensDetails `json:"completion_tokens_details,omitempty"`
 }
 
 // PromptTokensDetails provides a breakdown of prompt token counts.
@@ -145,6 +148,13 @@ type PromptTokensDetails struct {
 	// CachedTokens is the number of tokens retrieved from the prompt cache.
 	// Maps to CoreUsage.CachedInputTokens.
 	CachedTokens int `json:"cached_tokens,omitempty"`
+}
+
+// CompletionTokensDetails provides a breakdown of completion token counts.
+type CompletionTokensDetails struct {
+	// ReasoningTokens is the number of tokens spent on chain-of-thought.
+	// Maps to CoreUsage.ReasoningTokens.
+	ReasoningTokens int `json:"reasoning_tokens,omitempty"`
 }
 
 // ============================================================================
