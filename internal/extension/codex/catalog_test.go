@@ -25,6 +25,15 @@ func TestBuildModelInfoFromRouteEnablesApplyPatchFreeform(t *testing.T) {
 	}
 }
 
+func TestBuildModelInfoFromRouteSetsAutoReviewModelOverride(t *testing.T) {
+	info := codex.BuildModelInfoFromRoute("gpt-test", "default", config.RouteEntry{
+		ContextWindow: 100000,
+	})
+	if info.AutoReviewModelOverride != info.Slug {
+		t.Fatalf("auto_review_model_override = %q, want slug %q", info.AutoReviewModelOverride, info.Slug)
+	}
+}
+
 func TestBuildModelInfoFromRouteUsesTokenTruncationPolicy(t *testing.T) {
 	info := codex.BuildModelInfoFromRoute("gpt-5.2", "default", config.RouteEntry{
 		ContextWindow: 200000,
@@ -462,6 +471,10 @@ func TestWriteModelsCatalogProducesValidJSON(t *testing.T) {
 	}
 	if len(result.Models) == 0 {
 		t.Fatal("expected at least 1 model in catalog")
+	}
+	if result.Models[0].AutoReviewModelOverride != result.Models[0].Slug {
+		t.Fatalf("auto_review_model_override = %q, want slug %q",
+			result.Models[0].AutoReviewModelOverride, result.Models[0].Slug)
 	}
 }
 
