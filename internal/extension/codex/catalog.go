@@ -20,35 +20,40 @@ import (
 
 // ModelInfo represents a model entry in the OpenAI /v1/models response.
 type ModelInfo struct {
-	Slug                        string                    `json:"slug"`
-	DisplayName                 string                    `json:"display_name"`
-	Description                 string                    `json:"description,omitempty"`
-	DefaultReasoningLevel       string                    `json:"default_reasoning_level,omitempty"`
-	SupportedReasoningLevels    []ReasoningLevelPresetDTO `json:"supported_reasoning_levels"`
-	ShellType                   string                    `json:"shell_type"`
-	Visibility                  string                    `json:"visibility"`
-	SupportedInAPI              bool                      `json:"supported_in_api"`
-	Priority                    int                       `json:"priority"`
-	AdditionalSpeedTiers        []string                  `json:"additional_speed_tiers"`
-	AvailabilityNux             *ModelAvailabilityNux     `json:"availability_nux"`
-	Upgrade                     *ModelInfoUpgrade         `json:"upgrade"`
-	BaseInstructions            string                    `json:"base_instructions"`
-	SupportsReasoningSummaries  bool                      `json:"supports_reasoning_summaries"`
-	DefaultReasoningSummary     string                    `json:"default_reasoning_summary"`
-	SupportVerbosity            bool                      `json:"support_verbosity"`
-	DefaultVerbosity            *string                   `json:"default_verbosity"`
-	ApplyPatchToolType          *string                   `json:"apply_patch_tool_type"`
-	WebSearchToolType           string                    `json:"web_search_tool_type"`
-	TruncationPolicy            TruncationPolicyConfig    `json:"truncation_policy"`
-	SupportsParallelToolCalls   bool                      `json:"supports_parallel_tool_calls"`
-	SupportsImageDetailOriginal bool                      `json:"supports_image_detail_original"`
-	ContextWindow               *int                      `json:"context_window,omitempty"`
-	MaxContextWindow            *int                      `json:"max_context_window,omitempty"`
-	AutoCompactTokenLimit       *int                      `json:"auto_compact_token_limit,omitempty"`
-	EffectiveContextWindowPct   int                       `json:"effective_context_window_percent"`
-	ExperimentalSupportedTools  []string                  `json:"experimental_supported_tools"`
-	InputModalities             []string                  `json:"input_modalities"`
-	SupportsSearchTool          bool                      `json:"supports_search_tool"`
+	Slug                     string                    `json:"slug"`
+	DisplayName              string                    `json:"display_name"`
+	Description              string                    `json:"description,omitempty"`
+	DefaultReasoningLevel    string                    `json:"default_reasoning_level,omitempty"`
+	SupportedReasoningLevels []ReasoningLevelPresetDTO `json:"supported_reasoning_levels"`
+	ShellType                string                    `json:"shell_type"`
+	Visibility               string                    `json:"visibility"`
+	SupportedInAPI           bool                      `json:"supported_in_api"`
+	Priority                 int                       `json:"priority"`
+	// AutoReviewModelOverride points Codex's automatic approval reviewer at a
+	// model the bridge actually serves. Without it Codex falls back to its
+	// built-in "codex-auto-review" id, which Moon Bridge does not route, so
+	// every approval review fails closed.
+	AutoReviewModelOverride     string                 `json:"auto_review_model_override"`
+	AdditionalSpeedTiers        []string               `json:"additional_speed_tiers"`
+	AvailabilityNux             *ModelAvailabilityNux  `json:"availability_nux"`
+	Upgrade                     *ModelInfoUpgrade      `json:"upgrade"`
+	BaseInstructions            string                 `json:"base_instructions"`
+	SupportsReasoningSummaries  bool                   `json:"supports_reasoning_summaries"`
+	DefaultReasoningSummary     string                 `json:"default_reasoning_summary"`
+	SupportVerbosity            bool                   `json:"support_verbosity"`
+	DefaultVerbosity            *string                `json:"default_verbosity"`
+	ApplyPatchToolType          *string                `json:"apply_patch_tool_type"`
+	WebSearchToolType           string                 `json:"web_search_tool_type"`
+	TruncationPolicy            TruncationPolicyConfig `json:"truncation_policy"`
+	SupportsParallelToolCalls   bool                   `json:"supports_parallel_tool_calls"`
+	SupportsImageDetailOriginal bool                   `json:"supports_image_detail_original"`
+	ContextWindow               *int                   `json:"context_window,omitempty"`
+	MaxContextWindow            *int                   `json:"max_context_window,omitempty"`
+	AutoCompactTokenLimit       *int                   `json:"auto_compact_token_limit,omitempty"`
+	EffectiveContextWindowPct   int                    `json:"effective_context_window_percent"`
+	ExperimentalSupportedTools  []string               `json:"experimental_supported_tools"`
+	InputModalities             []string               `json:"input_modalities"`
+	SupportsSearchTool          bool                   `json:"supports_search_tool"`
 }
 
 // ModelAvailabilityNux is a placeholder for Codex model availability nux.
@@ -425,6 +430,7 @@ func newModelInfo(
 		Visibility:                  "list",
 		SupportedInAPI:              true,
 		Priority:                    0,
+		AutoReviewModelOverride:     slug,
 		AdditionalSpeedTiers:        []string{},
 		BaseInstructions:            baseInstructions,
 		SupportsReasoningSummaries:  supportsReasoningSummaries,
