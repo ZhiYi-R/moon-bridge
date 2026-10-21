@@ -157,7 +157,7 @@ function UsageDashboard({ stats }: { stats: UsageStats }) {
         <UsageMetric icon="north_east" tone="tertiary" value={t("overview.outputValue", { count: formatTokenValue(stats.totals.output_tokens) })} label={t("overview.outputTokens")} />
         <UsageMetric icon="bolt" tone="secondary" value={t("overview.cacheHitValue", { rate: formatPercent(stats.totals.cache_hit_rate) })} label={t("overview.cacheHit")} />
         <UsageMetric icon="sync_alt" tone="secondary" value={t("overview.cacheRatioValue", { ratio: formatRatio(stats.totals.cache_rw_ratio) })} label={t("overview.cacheReadWrite")} />
-        <UsageMetric icon="payments" tone="tertiary" value={t("overview.totalCostValue", { cost: formatCurrency(stats.totals.total_cost) })} label={t("overview.totalCost")} />
+        <UsageMetric icon="payments" tone="tertiary" value={t("overview.totalCostValue", { cost: stats.totals.total_cost == null ? t("common.unknown") : formatCurrency(stats.totals.total_cost) })} label={t("overview.totalCost")} />
       </motion.div>
 
       <div className="usage-chart-grid">
@@ -255,17 +255,19 @@ function UsageBarChart({
 }: {
   ariaLabel: string;
   title: string;
-  segments: Array<{ label: string; value: number; className: string }>;
+  segments: Array<{ label: string; value: number | null; className: string }>;
 }) {
-  const total = segments.reduce((sum, segment) => sum + Math.max(0, segment.value), 0);
+  const { t } = useI18n();
+  const hasUnknown = segments.some((segment) => segment.value == null);
+  const total = segments.reduce((sum, segment) => segment.value == null ? sum : sum + Math.max(0, segment.value), 0);
   return (
     <section className="usage-chart" role="img" aria-label={ariaLabel} tabIndex={0}>
       <div className="usage-chart__header">
         <h3>{title}</h3>
-        <span>{formatNumber(total)}</span>
+        <span>{hasUnknown ? t("common.unknown") : formatNumber(total)}</span>
       </div>
       <div className="usage-chart__bar" aria-hidden="true">
-        {segments.map((segment) => (
+        {segments.map((segment) => segment.value == null ? null : (
           <span
             className={`usage-chart__segment ${segment.className}`}
             key={segment.label}
@@ -278,7 +280,7 @@ function UsageBarChart({
           <li key={segment.label}>
             <span className={`usage-chart__dot ${segment.className}`} aria-hidden="true" />
             <span>{segment.label}</span>
-            <strong>{formatNumber(segment.value)}</strong>
+            <strong>{segment.value == null ? t("common.unknown") : formatNumber(segment.value)}</strong>
           </li>
         ))}
       </ul>
@@ -298,8 +300,8 @@ function UsageModelRow({ row }: { row: UsageStatsModelRow }) {
       <td>{formatTokenValue(row.cache_creation)}</td>
       <td>{formatTokenValue(row.cache_read)}</td>
       <td>{formatPercent(row.cache_hit_rate)}</td>
-      <td>{formatCurrency(row.cost)}</td>
-      <td>{formatCurrency(row.avg_cost_per_mtoken)}{t("overview.costPerMillionSuffix")}</td>
+      <td>{row.cost == null ? t("common.unknown") : formatCurrency(row.cost)}</td>
+      <td>{row.avg_cost_per_mtoken == null ? t("common.unknown") : <>{formatCurrency(row.avg_cost_per_mtoken)}{t("overview.costPerMillionSuffix")}</>}</td>
     </tr>
   );
 }
@@ -381,12 +383,12 @@ function formatCurrency(value: number) {
 function chartAriaLabel(
   t: (key: MessageKey, values?: Record<string, string | number>) => string,
   title: string,
-  values: Array<[string, number]>,
+  values: Array<[string, number | null]>,
   emptySummary: string
 ) {
   const summary = values.length > 0
     ? values
-      .map(([label, value]) => t("overview.chartAriaItem", { label, value: formatNumber(value) }))
+      .map(([label, value]) => t("overview.chartAriaItem", { label, value: value == null ? t("common.unknown") : formatNumber(value) }))
       .join(t("overview.chartAriaSeparator"))
     : emptySummary;
   return t("overview.chartAriaLabel", { title, summary });

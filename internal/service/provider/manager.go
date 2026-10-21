@@ -727,7 +727,13 @@ func (pm *ProviderManager) WebSearchConfigForKey(key string) string {
 func (pm *ProviderManager) FirstUpstreamModelForKey(key string) string {
 	pm.mu.RLock()
 	defer pm.mu.RUnlock()
-	for _, route := range pm.routes {
+	aliases := make([]string, 0, len(pm.routes))
+	for alias := range pm.routes {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	for _, alias := range aliases {
+		route := pm.routes[alias]
 		pk := route.Provider
 		if pk == "" {
 			pk = pm.defaultK
@@ -737,9 +743,19 @@ func (pm *ProviderManager) FirstUpstreamModelForKey(key string) string {
 		}
 	}
 
-	// Fallback: use the first model from the provider's own catalog.
-	if cfg, ok := pm.providers[key]; ok && len(cfg.ModelNames) > 0 {
-		return cfg.ModelNames[0]
+	// Offers retain the configured order; ModelNames may originate from a map.
+	if cfg, ok := pm.providers[key]; ok {
+		if len(cfg.Offers) > 0 {
+			if cfg.Offers[0].UpstreamName != "" {
+				return cfg.Offers[0].UpstreamName
+			}
+			return cfg.Offers[0].Model
+		}
+		names := append([]string(nil), cfg.ModelNames...)
+		sort.Strings(names)
+		if len(names) > 0 {
+			return names[0]
+		}
 	}
 	return ""
 }

@@ -43,7 +43,7 @@ func (t *StatsTracker) RecordBilling(model, actualModel string, usage stats.Bill
 // CostForRequest computes the cost for a request using the stats collector's pricing.
 func (t *StatsTracker) CostForRequest(requestModel, actualModel, providerKey string, usage stats.BillingUsage) float64 {
 	if t.stats == nil {
-		return 0
+		return -1
 	}
 	return t.stats.ComputeBillingCost(requestModel, usage)
 }

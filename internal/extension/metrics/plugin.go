@@ -93,25 +93,27 @@ func (p *Plugin) AggregateUsage(query plugin.UsageQuery) (plugin.UsageAggregate,
 		return plugin.UsageAggregate{}, err
 	}
 	out := plugin.UsageAggregate{
-		Requests:      agg.Requests,
-		InputTokens:   agg.InputTokens,
-		OutputTokens:  agg.OutputTokens,
-		CacheCreation: agg.CacheCreation,
-		CacheRead:     agg.CacheRead,
-		Cost:          agg.Cost,
-		Earliest:      agg.Earliest,
-		Latest:        agg.Latest,
+		Requests:         agg.Requests,
+		InputTokens:      agg.InputTokens,
+		OutputTokens:     agg.OutputTokens,
+		CacheCreation:    agg.CacheCreation,
+		CacheRead:        agg.CacheRead,
+		Cost:             agg.Cost,
+		UnpricedRequests: agg.UnpricedRequests,
+		Earliest:         agg.Earliest,
+		Latest:           agg.Latest,
 	}
 	for _, m := range agg.ByModel {
 		out.ByModel = append(out.ByModel, plugin.UsageModelAggregate{
-			Model:         m.Model,
-			ActualModel:   m.ActualModel,
-			Requests:      m.Requests,
-			InputTokens:   m.InputTokens,
-			OutputTokens:  m.OutputTokens,
-			CacheCreation: m.CacheCreation,
-			CacheRead:     m.CacheRead,
-			Cost:          m.Cost,
+			Model:            m.Model,
+			ActualModel:      m.ActualModel,
+			Requests:         m.Requests,
+			InputTokens:      m.InputTokens,
+			OutputTokens:     m.OutputTokens,
+			CacheCreation:    m.CacheCreation,
+			CacheRead:        m.CacheRead,
+			Cost:             m.Cost,
+			UnpricedRequests: m.UnpricedRequests,
 		})
 	}
 	return out, nil
@@ -173,6 +175,7 @@ func (p *Plugin) OnRequestCompleted(_ *plugin.RequestContext, result plugin.Requ
 		NormalizedCacheRead:     int64(result.Usage.NormalizedCacheRead),
 		RawUsageJSON:            string(result.Usage.RawUsageJSON),
 		Cost:                    result.Cost,
+		CostUnknown:             result.CostUnknown,
 		ResponseTime:            result.Duration,
 		Status:                  result.Status,
 		ErrorMessage:            result.ErrorMessage,

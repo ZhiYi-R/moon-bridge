@@ -118,7 +118,10 @@ export type StatsSummary = {
   input_tokens: number;
   output_tokens: number;
   cache_hit_rate: number;
-  total_cost: number;
+  total_cost: number | null;
+  cost_unknown?: boolean;
+  unpriced_requests?: number;
+  currency?: "CNY";
   duration: string;
 };
 
@@ -136,7 +139,10 @@ export type UsageStatsTotals = {
   cache_hit_rate: number;
   cache_write_rate: number;
   cache_rw_ratio: number;
-  total_cost: number;
+  total_cost: number | null;
+  cost_unknown?: boolean;
+  unpriced_requests?: number;
+  currency?: "CNY";
   duration: string;
 };
 
@@ -149,8 +155,10 @@ export type UsageStatsModelRow = {
   cache_creation: number;
   cache_read: number;
   cache_hit_rate: number;
-  cost: number;
-  avg_cost_per_mtoken: number;
+  cost: number | null;
+  avg_cost_per_mtoken: number | null;
+  cost_unknown?: boolean;
+  unpriced_requests?: number;
 };
 
 export type SessionInfo = {

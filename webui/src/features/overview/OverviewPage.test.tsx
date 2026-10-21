@@ -42,6 +42,41 @@ describe("OverviewPage", () => {
     restoreURLMethods();
   });
 
+  test("shows unknown rather than zero when pricing is unavailable", async () => {
+    const data = usageStats();
+    data.totals.total_cost = null;
+    data.totals.cost_unknown = true;
+    data.by_model[0].cost = null;
+    data.by_model[0].avg_cost_per_mtoken = null;
+    vi.spyOn(management, "getUsageStats").mockResolvedValue(data);
+    vi.spyOn(logs, "getRecentLogs").mockResolvedValue([]);
+    vi.spyOn(logs, "createLogStream").mockResolvedValue(new Response(new ReadableStream<Uint8Array>()));
+    renderWithConsoleProviders(<OverviewPage />);
+    await screen.findAllByText("unknown");
+    expect(within(metricCard("Total cost")).getByText("unknown")).toBeInTheDocument();
+    expect(screen.getAllByText("unknown").length).toBeGreaterThanOrEqual(3);
+    expect(screen.queryByText("¥0.00")).not.toBeInTheDocument();
+    const chart = screen.getByRole("img", { name: /Cost by model chart/ });
+    expect(chart).toHaveAttribute("aria-label", expect.stringContaining(`${data.by_model[0].model}: unknown`));
+    expect(within(chart).getAllByText("unknown")).toHaveLength(2);
+    expect(chart.querySelectorAll(".usage-chart__segment")).toHaveLength(0);
+  });
+
+  test("preserves known chart amounts alongside unknown costs", async () => {
+    const data = usageStats();
+    data.totals.total_cost = null;
+    data.by_model.push({ ...data.by_model[0], model: "unpriced", cost: null, avg_cost_per_mtoken: null });
+    vi.spyOn(management, "getUsageStats").mockResolvedValue(data);
+    vi.spyOn(logs, "getRecentLogs").mockResolvedValue([]);
+    vi.spyOn(logs, "createLogStream").mockResolvedValue(new Response(new ReadableStream<Uint8Array>()));
+    renderWithConsoleProviders(<OverviewPage />);
+    const chart = await screen.findByRole("img", { name: /Cost by model chart.*unpriced: unknown/ });
+    expect(within(chart).getByText("0.42")).toBeInTheDocument();
+    expect(within(chart).getAllByText("unknown")).toHaveLength(2);
+    expect(chart.querySelectorAll(".usage-chart__segment")).toHaveLength(1);
+    expect(chart.querySelector(".usage-chart__segment")).toHaveStyle({ inlineSize: "100%" });
+  });
+
   test("renders a usage dashboard with model charts and bottom logs instead of runtime status panels", async () => {
     vi.spyOn(configGraph, "getConfigGraph").mockResolvedValue(
       configGraphFixture({

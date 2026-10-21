@@ -1,0 +1,15 @@
+{
+  "context_window": 1000000,
+  "display_name": "MiniMax M3.1 Flash",
+  "description": "Fast long-context multimodal model with always-on adaptive reasoning.",
+  "supports_reasoning": true,
+  "supported_reasoning_levels": [
+    {"effort": "low", "description": "Light reasoning"},
+    {"effort": "medium", "description": "Balanced reasoning"},
+    {"effort": "high", "description": "Deep reasoning"},
+    {"effort": "xhigh", "description": "Very deep reasoning"},
+    {"effort": "max", "description": "Maximum reasoning"}
+  ],
+  "default_reasoning_level": "max",
+  "input_modalities": ["text", "image", "video"]
+}

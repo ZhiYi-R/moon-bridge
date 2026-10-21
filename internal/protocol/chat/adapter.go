@@ -14,6 +14,7 @@ import (
 
 	"moonbridge/internal/extension/codextool"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/minimax"
 )
 
 // ============================================================================
@@ -144,6 +145,15 @@ func (a *ChatProviderAdapter) FromCoreRequest(ctx context.Context, req *format.C
 	// reasoning_effort: surfaced from the OpenAI Responses input via
 	// Extensions["openai"]["reasoning"]["effort"] (see openai.OpenAIAdapter).
 	if effort := extractReasoningEffort(req.Extensions); effort != "" {
+		chatReq.ReasoningEffort = effort
+	}
+
+	thinking, effort, err := minimax.Reasoning(req, "adaptive")
+	if err != nil {
+		return nil, err
+	}
+	if thinking != "" {
+		chatReq.Thinking = &ThinkingConfig{Type: thinking}
 		chatReq.ReasoningEffort = effort
 	}
 

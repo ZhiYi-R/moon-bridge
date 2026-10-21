@@ -24,6 +24,10 @@ func (server *Server) onRequestCompleted(model, actualModel, providerKey string,
 	if server.pluginRegistry == nil {
 		return
 	}
+	costUnknown := cost < 0
+	if costUnknown {
+		cost = 0
+	}
 	inputTokens := usage.NormalizedInputTokens
 	outputTokens := usage.NormalizedOutputTokens
 	cacheCreation := usage.NormalizedCacheCreation
@@ -39,6 +43,7 @@ func (server *Server) onRequestCompleted(model, actualModel, providerKey string,
 			CacheCreation: cacheCreation,
 			CacheRead:     cacheRead,
 			Cost:          cost,
+			CostUnknown:   costUnknown,
 			Duration:      time.Since(startTime),
 			Status:        status,
 			ErrorMessage:  errMsg,

@@ -172,8 +172,12 @@ func TestLogUsageLine_zeroUsage(t *testing.T) {
 	assertField(t, entry, "actual_model", "test-actual")
 	assertField(t, entry, "input_fresh", 0)
 	assertField(t, entry, "output_tokens", 0)
-	assertField(t, entry, "request_cost", 0.0)
-	assertField(t, entry, "total_cost", 0.0)
+	if value, present := entry["request_cost"]; !present || value != nil {
+		t.Fatalf("unpriced request cost must be null: %v", entry)
+	}
+	if value, present := entry["total_cost"]; !present || value != nil {
+		t.Fatalf("unpriced total cost must be null: %v", entry)
+	}
 	assertField(t, entry, "cache_hit_rate", 0.0)
 	assertField(t, entry, "cache_write_rate", 0.0)
 }

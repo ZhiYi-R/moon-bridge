@@ -3,9 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+
 	"fmt"
 	"io"
 	"log/slog"
+	"moonbridge/internal/protocol/minimax"
 	"net/http"
 	"time"
 
@@ -211,7 +214,16 @@ func (s *Server) handleWithAdapters(
 		record.Error = traceError("from_core_request", err)
 		record.OpenAIResponse = payload
 		adapterHookErr = "from_core_request"
-		writeOpenAIError(w, http.StatusInternalServerError, payload)
+		statusCode := http.StatusInternalServerError
+		var invalid *minimax.InvalidControlError
+		if errors.As(err, &invalid) {
+			statusCode = http.StatusBadRequest
+			payload.Error.Type = "invalid_request_error"
+			payload.Error.Code = "invalid_reasoning"
+			payload.Error.Message = invalid.Error()
+			record.OpenAIResponse = payload
+		}
+		writeOpenAIError(w, statusCode, payload)
 		return
 	}
 	// Protocol-specific type assertion and upstream call.
@@ -751,7 +763,7 @@ func (s *Server) handleWithAdapters(
 			"input_cache_write", 0,
 			"output_tokens", outputTokens,
 			"cache_hit_rate", fmt.Sprintf("%.1f%%", cacheHitRate),
-			"request_cost", reqCost,
+			"request_cost", stats.NullableCost(reqCost),
 			"duration", reqDuration,
 		)
 
@@ -1769,7 +1781,7 @@ func (s *Server) handleAdapterStream(
 		"input_cached_tokens", cachedInput,
 		"output_tokens", outputTokens,
 		"cache_hit_rate", fmt.Sprintf("%.1f%%", cacheHitRate),
-		"request_cost", reqCost,
+		"request_cost", stats.NullableCost(reqCost),
 		"duration", reqDuration,
 	)
 

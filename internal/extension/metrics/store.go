@@ -3,6 +3,7 @@ package metrics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -31,10 +32,23 @@ type Record struct {
 	NormalizedCacheCreation int64         `json:"normalized_cache_creation"`
 	NormalizedCacheRead     int64         `json:"normalized_cache_read"`
 	RawUsageJSON            string        `json:"raw_usage_json,omitempty"`
-	Cost                    float64       `json:"cost"`
+	Cost                    float64       `json:"-"`
+	CostUnknown             bool          `json:"cost_unknown"`
 	ResponseTime            time.Duration `json:"response_time"`
 	Status                  string        `json:"status"`
 	ErrorMessage            string        `json:"error_message,omitempty"`
+}
+
+func (r Record) MarshalJSON() ([]byte, error) {
+	type plain Record
+	var cost *float64
+	if !r.CostUnknown {
+		cost = &r.Cost
+	}
+	return json.Marshal(struct {
+		plain
+		Cost *float64 `json:"cost"`
+	}{plain(r), cost})
 }
 
 // QueryOptions controls filtering and ordering for Record queries.
@@ -104,6 +118,11 @@ func (s *Store) Record(r Record) error {
 	table, err := s.s.Table("request_metrics")
 	if err != nil {
 		return err
+	}
+	// The existing NOT NULL cost column uses -1 only as an internal unknown
+	// sentinel. Queries expose null and aggregates exclude it from sums.
+	if r.CostUnknown {
+		r.Cost = -1
 	}
 	ms := r.ResponseTime.Milliseconds()
 	ts := r.Timestamp.UTC().Format(time.RFC3339Nano)
@@ -199,6 +218,9 @@ func (s *Store) Query(opts QueryOptions) ([]Record, error) {
 		if err != nil {
 			return nil, fmt.Errorf("scan metrics row: %w", err)
 		}
+		if r.Cost < 0 {
+			r.CostUnknown, r.Cost = true, 0
+		}
 		r.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
 		r.ResponseTime = time.Duration(ms) * time.Millisecond
 		records = append(records, r)
@@ -211,27 +233,29 @@ func (s *Store) Query(opts QueryOptions) ([]Record, error) {
 
 // UsageModelAggregate holds aggregated usage for one model over a window.
 type UsageModelAggregate struct {
-	Model         string
-	ActualModel   string
-	Requests      int64
-	InputTokens   int64
-	OutputTokens  int64
-	CacheCreation int64
-	CacheRead     int64
-	Cost          float64
+	Model            string
+	ActualModel      string
+	Requests         int64
+	InputTokens      int64
+	OutputTokens     int64
+	CacheCreation    int64
+	CacheRead        int64
+	Cost             float64
+	UnpricedRequests int64
 }
 
 // UsageAggregate holds aggregated usage totals plus per-model rows for a window.
 type UsageAggregate struct {
-	Requests      int64
-	InputTokens   int64
-	OutputTokens  int64
-	CacheCreation int64
-	CacheRead     int64
-	Cost          float64
-	Earliest      time.Time
-	Latest        time.Time
-	ByModel       []UsageModelAggregate
+	Requests         int64
+	InputTokens      int64
+	OutputTokens     int64
+	CacheCreation    int64
+	CacheRead        int64
+	Cost             float64
+	UnpricedRequests int64
+	Earliest         time.Time
+	Latest           time.Time
+	ByModel          []UsageModelAggregate
 }
 
 // AggregateUsage returns aggregated usage for the [since, until) window using
@@ -264,7 +288,8 @@ func (s *Store) AggregateUsage(since, until time.Time) (UsageAggregate, error) {
 	modelQuery := fmt.Sprintf(`SELECT model, actual_model, COUNT(*),
 		COALESCE(SUM(input_tokens), 0), COALESCE(SUM(output_tokens), 0),
 		COALESCE(SUM(cache_creation), 0), COALESCE(SUM(cache_read), 0),
-		COALESCE(SUM(cost), 0)
+		COALESCE(SUM(CASE WHEN cost >= 0 THEN cost ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN cost < 0 THEN 1 ELSE 0 END), 0)
 		FROM %s%s GROUP BY model, actual_model`, table, whereSQL)
 	rows, err := s.s.QueryContext(context.Background(), modelQuery, args...)
 	if err != nil {
@@ -273,7 +298,7 @@ func (s *Store) AggregateUsage(since, until time.Time) (UsageAggregate, error) {
 	for rows.Next() {
 		var m UsageModelAggregate
 		if err := rows.Scan(&m.Model, &m.ActualModel, &m.Requests,
-			&m.InputTokens, &m.OutputTokens, &m.CacheCreation, &m.CacheRead, &m.Cost); err != nil {
+			&m.InputTokens, &m.OutputTokens, &m.CacheCreation, &m.CacheRead, &m.Cost, &m.UnpricedRequests); err != nil {
 			rows.Close()
 			return agg, fmt.Errorf("scan metrics aggregate: %w", err)
 		}
@@ -283,6 +308,7 @@ func (s *Store) AggregateUsage(since, until time.Time) (UsageAggregate, error) {
 		agg.CacheCreation += m.CacheCreation
 		agg.CacheRead += m.CacheRead
 		agg.Cost += m.Cost
+		agg.UnpricedRequests += m.UnpricedRequests
 		agg.ByModel = append(agg.ByModel, m)
 	}
 	if err := rows.Err(); err != nil {

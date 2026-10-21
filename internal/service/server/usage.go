@@ -145,6 +145,10 @@ func logBillingUsageLine(requestModel, actualModel string, usage stats.BillingUs
 		requestCost = sessionStats.ComputeBillingCost(requestModel, usage)
 		summary = sessionStats.Summary()
 	}
+	totalCost := summary.TotalCost
+	if summary.UnpricedRequests > 0 {
+		totalCost = -1
+	}
 	rwRatio := stats.BillingCacheRWRatio(usage)
 	slog.Info("请求完成",
 		"request_model", requestModel,
@@ -153,8 +157,8 @@ func logBillingUsageLine(requestModel, actualModel string, usage stats.BillingUs
 		"input_cache_read", usage.CacheReadInputTokens,
 		"input_cache_write", usage.CacheCreationInputTokens,
 		"output_tokens", usage.OutputTokens,
-		"request_cost", requestCost,
-		"total_cost", summary.TotalCost,
+		"request_cost", stats.NullableCost(requestCost),
+		"total_cost", stats.NullableCost(totalCost),
 		"cache_hit_rate", summary.CacheHitRate,
 		"cache_write_rate", summary.CacheWriteRate,
 		"cache_rw_ratio", rwRatio,

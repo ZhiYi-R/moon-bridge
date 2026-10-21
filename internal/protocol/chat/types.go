@@ -26,7 +26,13 @@ type ChatRequest struct {
 	// ReasoningEffort is the OpenAI Chat Completions reasoning_effort field
 	// ("low" | "medium" | "high" | "minimal"). Populated from the inbound
 	// OpenAI Responses request's reasoning.effort.
-	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	ReasoningEffort string          `json:"reasoning_effort,omitempty"`
+	Thinking        *ThinkingConfig `json:"thinking,omitempty"`
+}
+
+// ThinkingConfig is the MiniMax Chat thinking control, independent of effort.
+type ThinkingConfig struct {
+	Type string `json:"type"`
 }
 
 // ChatMessage represents a single message in the conversation.

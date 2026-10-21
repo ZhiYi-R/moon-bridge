@@ -220,6 +220,23 @@ func BuildModelInfosFromConfig(providerCfg config.ProviderConfig, pluginCfg conf
 		models = append(models, BuildModelInfoFromRoute(alias, ownedBy, route))
 	}
 
+	// Keep the ordinary MiniMax text choice ahead of M3 without moving other
+	// models or route aliases. YAML map iteration does not define catalog order.
+	flash, m3 := -1, -1
+	for i := range models {
+		switch models[i].Slug {
+		case "MiniMax-M3.1-Flash":
+			flash = i
+		case "MiniMax-M3":
+			m3 = i
+		}
+	}
+	if flash >= 0 && m3 >= 0 {
+		models[m3].Priority = 1
+		if m3 < flash {
+			models[m3], models[flash] = models[flash], models[m3]
+		}
+	}
 	models = injectVisualModalities(models, pluginCfg)
 	return models
 }

@@ -74,7 +74,9 @@ function aggregateTotals(byModel: UsageStatsModelRow[], range: UsageRange): Usag
   const outputTokens = sum((row) => row.output_tokens);
   const cacheCreation = sum((row) => row.cache_creation);
   const cacheRead = sum((row) => row.cache_read);
-  const totalCost = Math.round(sum((row) => row.cost) * 100) / 100;
+  const totalCost = byModel.some((row) => row.cost == null)
+    ? null
+    : Math.round(sum((row) => row.cost ?? 0) * 100) / 100;
 
   return {
     requests,

@@ -9,6 +9,7 @@ import (
 
 	"moonbridge/internal/extension/codextool"
 	"moonbridge/internal/format"
+	"moonbridge/internal/protocol/minimax"
 )
 
 // ---------------------------------------------------------------------------
@@ -286,6 +287,18 @@ func (a *AnthropicProviderAdapter) FromCoreRequest(ctx context.Context, req *for
 		OutputConfig:  a.coreOutputConfig(req.Output),
 		CacheControl:  a.coreCacheControl(req.CacheControl),
 		Metadata:      req.Metadata,
+	}
+
+	thinking, effort, err := minimax.Reasoning(req, "disabled")
+	if err != nil {
+		return nil, err
+	}
+	if thinking != "" {
+		anthropicReq.Thinking = &ThinkingConfig{Type: thinking}
+		anthropicReq.OutputConfig = nil
+		if effort != "" {
+			anthropicReq.OutputConfig = &OutputConfig{Effort: effort}
+		}
 	}
 
 	// System

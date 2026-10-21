@@ -158,6 +158,12 @@ models:
   claude-sonnet-4-20250514:
     extensions: {}   # no overrides, metadata only
 
+  MiniMax-M3.1-Flash:
+    extensions: {}   # no overrides, metadata only
+
+  MiniMax-M3:
+    extensions: {}   # no overrides, metadata only
+
   # kimi-for-coding:
   #   context_window: 128000
   #   extensions:
@@ -229,6 +235,61 @@ providers:
           cache_write_price: 3.75
           cache_read_price: 0.30
 
+  # MiniMax global endpoints: https://platform.minimax.io/docs
+  # Lower offer priority wins: global Chat, China Chat, then Anthropic.
+  # Explicit provider/model references bypass these example priorities.
+  # Pricing fields throughout MoonBridge are CNY per million tokens.
+  # MiniMax pricing is intentionally unconfigured: published Flash rates are
+  # USD, and M3 also changes price above 512k request input tokens. No FX rate
+  # or tier is inferred here. Missing prices mean unknown cost, never free.
+  # Configure verified CNY prices only when they match your billing contract.
+  minimax-global-anthropic:
+    protocol: "anthropic"
+    base_url: "https://api.minimax.io/anthropic"
+    api_key: "replace-with-minimax-api-key"
+    version: "2023-06-01"
+    user_agent: "moonbridge/1.0"
+    offers:
+      - model: MiniMax-M3.1-Flash
+        priority: 20
+      - model: MiniMax-M3
+        priority: 20
+
+  minimax-global-openai:
+    protocol: "openai-chat"
+    base_url: "https://api.minimax.io/v1"
+    api_key: "replace-with-minimax-api-key"
+    user_agent: "moonbridge/1.0"
+    offers:
+      - model: MiniMax-M3.1-Flash
+        priority: 0
+      - model: MiniMax-M3
+        priority: 0
+
+  # MiniMax China endpoints: https://platform.minimaxi.com/docs
+  minimax-cn-anthropic:
+    protocol: "anthropic"
+    base_url: "https://api.minimaxi.com/anthropic"
+    api_key: "replace-with-minimax-api-key"
+    version: "2023-06-01"
+    user_agent: "moonbridge/1.0"
+    offers:
+      - model: MiniMax-M3.1-Flash
+        priority: 30
+      - model: MiniMax-M3
+        priority: 30
+
+  minimax-cn-openai:
+    protocol: "openai-chat"
+    base_url: "https://api.minimaxi.com/v1"
+    api_key: "replace-with-minimax-api-key"
+    user_agent: "moonbridge/1.0"
+    offers:
+      - model: MiniMax-M3.1-Flash
+        priority: 10
+      - model: MiniMax-M3
+        priority: 10
+
   # Google Gemini (Vertex AI via GenAI SDK)
   # gemini:
   #   protocol: "google-genai"
@@ -248,6 +309,12 @@ providers:
 # add friendly fallback names like "moonbridge".
 # Backward-compatible shorthand: <route>: "provider/upstream-model"
 routes:
+  # MiniMax ordinary text default. Select "minimax" explicitly or set
+  # defaults.model to "minimax" for a MiniMax-only installation.
+  # Use minimax-cn-openai here to keep requests in the China region.
+  minimax:
+    model: MiniMax-M3.1-Flash
+    provider: minimax-global-openai
   moonbridge:
     model: deepseek-v4-pro
     provider: deepseek

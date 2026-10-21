@@ -73,8 +73,8 @@ func TestFilterCandidatesByInputNoProviderMgr(t *testing.T) {
 
 func TestComputeCostWithProviderPricingNilStats(t *testing.T) {
 	cost := computeCostWithProviderPricing(nil, nil, "model", "model", "provider", stats.BillingUsage{})
-	if cost != 0 {
-		t.Fatalf("nil stats should return 0, got %f", cost)
+	if cost != -1 {
+		t.Fatalf("nil stats should return unknown sentinel -1, got %f", cost)
 	}
 }
 

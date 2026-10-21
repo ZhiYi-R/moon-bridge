@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"sort"
 	"time"
@@ -109,12 +110,15 @@ func (r *Router) handleGetStatsSummary(w http.ResponseWriter, req *http.Request)
 
 	summary := r.stats.Summary()
 	respondJSON(w, http.StatusOK, map[string]any{
-		"requests":       summary.Requests,
-		"input_tokens":   summary.InputTokens,
-		"output_tokens":  summary.OutputTokens,
-		"cache_hit_rate": summary.CacheHitRate,
-		"total_cost":     summary.TotalCost,
-		"duration":       summary.Duration.String(),
+		"requests":          summary.Requests,
+		"input_tokens":      summary.InputTokens,
+		"output_tokens":     summary.OutputTokens,
+		"cache_hit_rate":    summary.CacheHitRate,
+		"total_cost":        summary.CostValue(),
+		"cost_unknown":      summary.UnpricedRequests > 0,
+		"unpriced_requests": summary.UnpricedRequests,
+		"currency":          "CNY",
+		"duration":          summary.Duration.String(),
 	})
 }
 
@@ -180,16 +184,17 @@ type usageStatsResponse struct {
 }
 
 type usageTotals struct {
-	Requests       int64   `json:"requests"`
-	InputTokens    int64   `json:"input_tokens"`
-	OutputTokens   int64   `json:"output_tokens"`
-	CacheCreation  int64   `json:"cache_creation"`
-	CacheRead      int64   `json:"cache_read"`
-	CacheHitRate   float64 `json:"cache_hit_rate"`
-	CacheWriteRate float64 `json:"cache_write_rate"`
-	CacheRWRatio   float64 `json:"cache_rw_ratio"`
-	TotalCost      float64 `json:"total_cost"`
-	Duration       string  `json:"duration"`
+	Requests         int64   `json:"requests"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheCreation    int64   `json:"cache_creation"`
+	CacheRead        int64   `json:"cache_read"`
+	CacheHitRate     float64 `json:"cache_hit_rate"`
+	CacheWriteRate   float64 `json:"cache_write_rate"`
+	CacheRWRatio     float64 `json:"cache_rw_ratio"`
+	TotalCost        float64 `json:"-"`
+	UnpricedRequests int64   `json:"unpriced_requests"`
+	Duration         string  `json:"duration"`
 }
 
 type usageModelRow struct {
@@ -201,8 +206,37 @@ type usageModelRow struct {
 	CacheCreation     int64   `json:"cache_creation"`
 	CacheRead         int64   `json:"cache_read"`
 	CacheHitRate      float64 `json:"cache_hit_rate"`
-	Cost              float64 `json:"cost"`
-	AvgCostPerMTokens float64 `json:"avg_cost_per_mtoken"`
+	Cost              float64 `json:"-"`
+	AvgCostPerMTokens float64 `json:"-"`
+	UnpricedRequests  int64   `json:"unpriced_requests"`
+}
+
+func (v usageTotals) MarshalJSON() ([]byte, error) {
+	type plain usageTotals
+	var cost *float64
+	if v.UnpricedRequests == 0 {
+		cost = &v.TotalCost
+	}
+	return json.Marshal(struct {
+		plain
+		TotalCost   *float64 `json:"total_cost"`
+		CostUnknown bool     `json:"cost_unknown"`
+		Currency    string   `json:"currency"`
+	}{plain(v), cost, v.UnpricedRequests > 0, "CNY"})
+}
+
+func (v usageModelRow) MarshalJSON() ([]byte, error) {
+	type plain usageModelRow
+	var cost, average *float64
+	if v.UnpricedRequests == 0 {
+		cost, average = &v.Cost, &v.AvgCostPerMTokens
+	}
+	return json.Marshal(struct {
+		plain
+		Cost        *float64 `json:"cost"`
+		Average     *float64 `json:"avg_cost_per_mtoken"`
+		CostUnknown bool     `json:"cost_unknown"`
+	}{plain(v), cost, average, v.UnpricedRequests > 0})
 }
 
 func emptyUsageStatsResponse() usageStatsResponse {
@@ -230,6 +264,7 @@ func usageStatsFromSummary(summary stats.Summary) usageStatsResponse {
 			CacheRead:         modelStats.CacheRead,
 			CacheHitRate:      rate(modelStats.CacheRead, modelStats.InputTokens),
 			Cost:              modelStats.Cost,
+			UnpricedRequests:  modelStats.UnpricedRequests,
 			AvgCostPerMTokens: costPerMTokens(modelStats.Cost, modelStats.InputTokens+modelStats.OutputTokens),
 		})
 	}
@@ -242,16 +277,17 @@ func usageStatsFromSummary(summary stats.Summary) usageStatsResponse {
 
 	return usageStatsResponse{
 		Totals: usageTotals{
-			Requests:       summary.Requests,
-			InputTokens:    summary.InputTokens,
-			OutputTokens:   summary.OutputTokens,
-			CacheCreation:  summary.CacheCreation,
-			CacheRead:      summary.CacheRead,
-			CacheHitRate:   summary.CacheHitRate,
-			CacheWriteRate: summary.CacheWriteRate,
-			CacheRWRatio:   ratio(summary.CacheRead, summary.CacheCreation),
-			TotalCost:      summary.TotalCost,
-			Duration:       summary.Duration.String(),
+			Requests:         summary.Requests,
+			InputTokens:      summary.InputTokens,
+			OutputTokens:     summary.OutputTokens,
+			CacheCreation:    summary.CacheCreation,
+			CacheRead:        summary.CacheRead,
+			CacheHitRate:     summary.CacheHitRate,
+			CacheWriteRate:   summary.CacheWriteRate,
+			CacheRWRatio:     ratio(summary.CacheRead, summary.CacheCreation),
+			TotalCost:        summary.TotalCost,
+			UnpricedRequests: summary.UnpricedRequests,
+			Duration:         summary.Duration.String(),
 		},
 		ByModel: rows,
 	}
@@ -272,6 +308,7 @@ func usageStatsFromAggregate(agg plugin.UsageAggregate) usageStatsResponse {
 			CacheRead:         m.CacheRead,
 			CacheHitRate:      rate(m.CacheRead, m.InputTokens),
 			Cost:              m.Cost,
+			UnpricedRequests:  m.UnpricedRequests,
 			AvgCostPerMTokens: costPerMTokens(m.Cost, m.InputTokens+m.OutputTokens),
 		})
 	}
@@ -289,16 +326,17 @@ func usageStatsFromAggregate(agg plugin.UsageAggregate) usageStatsResponse {
 
 	return usageStatsResponse{
 		Totals: usageTotals{
-			Requests:       agg.Requests,
-			InputTokens:    agg.InputTokens,
-			OutputTokens:   agg.OutputTokens,
-			CacheCreation:  agg.CacheCreation,
-			CacheRead:      agg.CacheRead,
-			CacheHitRate:   rate(agg.CacheRead, agg.InputTokens),
-			CacheWriteRate: rate(agg.CacheCreation, agg.InputTokens),
-			CacheRWRatio:   ratio(agg.CacheRead, agg.CacheCreation),
-			TotalCost:      agg.Cost,
-			Duration:       duration.String(),
+			Requests:         agg.Requests,
+			InputTokens:      agg.InputTokens,
+			OutputTokens:     agg.OutputTokens,
+			CacheCreation:    agg.CacheCreation,
+			CacheRead:        agg.CacheRead,
+			CacheHitRate:     rate(agg.CacheRead, agg.InputTokens),
+			CacheWriteRate:   rate(agg.CacheCreation, agg.InputTokens),
+			CacheRWRatio:     ratio(agg.CacheRead, agg.CacheCreation),
+			TotalCost:        agg.Cost,
+			UnpricedRequests: agg.UnpricedRequests,
+			Duration:         duration.String(),
 		},
 		ByModel: rows,
 	}

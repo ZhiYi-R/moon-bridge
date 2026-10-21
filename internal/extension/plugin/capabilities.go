@@ -134,6 +134,7 @@ type RequestResult struct {
 	CacheCreation int
 	CacheRead     int
 	Cost          float64
+	CostUnknown   bool
 	Status        string // "success" or "error"
 	ErrorMessage  string
 	Duration      time.Duration
@@ -207,28 +208,30 @@ type UsageQuery struct {
 
 // UsageModelAggregate holds aggregated usage for a single model.
 type UsageModelAggregate struct {
-	Model         string
-	ActualModel   string
-	Requests      int64
-	InputTokens   int64
-	OutputTokens  int64
-	CacheCreation int64
-	CacheRead     int64
-	Cost          float64
+	Model            string
+	ActualModel      string
+	Requests         int64
+	InputTokens      int64
+	OutputTokens     int64
+	CacheCreation    int64
+	CacheRead        int64
+	Cost             float64
+	UnpricedRequests int64
 }
 
 // UsageAggregate holds aggregated usage totals plus a per-model breakdown for a
 // queried time window, sourced from persisted (cross-session) metrics.
 type UsageAggregate struct {
-	Requests      int64
-	InputTokens   int64
-	OutputTokens  int64
-	CacheCreation int64
-	CacheRead     int64
-	Cost          float64
-	Earliest      time.Time
-	Latest        time.Time
-	ByModel       []UsageModelAggregate
+	Requests         int64
+	InputTokens      int64
+	OutputTokens     int64
+	CacheCreation    int64
+	CacheRead        int64
+	Cost             float64
+	UnpricedRequests int64
+	Earliest         time.Time
+	Latest           time.Time
+	ByModel          []UsageModelAggregate
 }
 
 // UsageSource is implemented by plugins that persist per-request usage and can

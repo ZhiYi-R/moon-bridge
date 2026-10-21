@@ -326,7 +326,7 @@ func (s *Server) Close() error {
 
 func computeCostWithProviderPricing(pm *provider.ProviderManager, stats *stats.SessionStats, requestModel, actualModel, providerKey string, usage stats.BillingUsage) float64 {
 	if stats == nil {
-		return 0
+		return -1
 	}
 	if pm != nil {
 		if meta, ok := pm.ModelMetaFor(actualModel, providerKey); ok {

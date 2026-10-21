@@ -2,6 +2,7 @@ package stats
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -73,7 +74,8 @@ type SessionStats struct {
 	totalCacheRead     int64
 
 	// Cumulative cost (RMB)
-	totalCost float64
+	totalCost        float64
+	unpricedRequests int64
 
 	// Per-model breakdown
 	byModel map[string]*ModelStats
@@ -85,12 +87,31 @@ type SessionStats struct {
 
 // ModelStats tracks usage and cost for a specific model.
 type ModelStats struct {
-	Requests      int64
-	InputTokens   int64
-	OutputTokens  int64
-	CacheCreation int64
-	CacheRead     int64
-	Cost          float64
+	Requests         int64
+	InputTokens      int64
+	OutputTokens     int64
+	CacheCreation    int64
+	CacheRead        int64
+	Cost             float64 `json:"-"` // Known subtotal only; use CostValue for a complete estimate.
+	UnpricedRequests int64
+}
+
+// CostValue is nil when any included request has no configured CNY price.
+func (m ModelStats) CostValue() *float64 {
+	if m.UnpricedRequests > 0 {
+		return nil
+	}
+	v := m.Cost
+	return &v
+}
+
+func (m ModelStats) MarshalJSON() ([]byte, error) {
+	type plain ModelStats
+	return json.Marshal(struct {
+		plain
+		Cost        *float64
+		CostUnknown bool
+	}{plain(m), m.CostValue(), m.UnpricedRequests > 0})
 }
 
 // NewSessionStats creates a new session stats tracker.
@@ -131,9 +152,12 @@ func (s *SessionStats) RecordBilling(model string, actualModel string, usage Bil
 
 	// Compute cost if pricing is available for this model
 	var cost float64
-	if p, ok := s.pricing[model]; ok {
+	p, priced := s.pricing[model]
+	if priced {
 		cost = computeBillingCost(usage, p)
 		s.totalCost += cost
+	} else {
+		s.unpricedRequests++
 	}
 
 	if model != "" {
@@ -145,7 +169,11 @@ func (s *SessionStats) RecordBilling(model string, actualModel string, usage Bil
 		s.byModel[model].OutputTokens += int64(usage.OutputTokens)
 		s.byModel[model].CacheCreation += int64(usage.CacheCreationInputTokens)
 		s.byModel[model].CacheRead += int64(usage.CacheReadInputTokens)
-		s.byModel[model].Cost += cost
+		if priced {
+			s.byModel[model].Cost += cost
+		} else {
+			s.byModel[model].UnpricedRequests++
+		}
 
 		// Track the actual model name for display
 		if actualModel != "" {
@@ -196,6 +224,7 @@ func (s *SessionStats) Summary() Summary {
 		CacheWriteRate:      cacheWriteRate,
 		EffectiveInputSaved: s.totalCacheRead,
 		TotalCost:           s.totalCost,
+		UnpricedRequests:    s.unpricedRequests,
 		ByModel:             copyByModel(s.byModel),
 		ActualModelNames:    copyStringMap(s.actualModelNames),
 	}
@@ -235,9 +264,28 @@ type Summary struct {
 	CacheHitRate        float64
 	CacheWriteRate      float64
 	EffectiveInputSaved int64
-	TotalCost           float64
+	TotalCost           float64 `json:"-"` // Known subtotal; not the total when UnpricedRequests > 0.
+	UnpricedRequests    int64
 	ByModel             map[string]*ModelStats
 	ActualModelNames    map[string]string
+}
+
+func (s Summary) CostValue() *float64 {
+	if s.UnpricedRequests > 0 {
+		return nil
+	}
+	v := s.TotalCost
+	return &v
+}
+
+func (s Summary) MarshalJSON() ([]byte, error) {
+	type plain Summary
+	return json.Marshal(struct {
+		plain
+		TotalCost   *float64
+		CostUnknown bool
+		Currency    string
+	}{plain(s), s.CostValue(), s.UnpricedRequests > 0, "CNY"})
 }
 
 // LogValue implements slog.LogValuer for structured logging.
@@ -253,7 +301,11 @@ func (s Summary) LogValue() slog.Value {
 		slog.Int64("cache_saved_tokens", s.EffectiveInputSaved),
 		slog.Duration("duration", s.Duration),
 	}
-	attrs = append(attrs, slog.Float64("cost_cny", s.TotalCost))
+	cost := s.TotalCost
+	if s.UnpricedRequests > 0 {
+		cost = -1
+	}
+	attrs = append(attrs, slog.Any("cost_cny", NullableCost(cost)), slog.Bool("cost_unknown", s.UnpricedRequests > 0))
 	return slog.GroupValue(attrs...)
 }
 
@@ -359,8 +411,12 @@ func FormatSummaryLine(s Summary) string {
 		rwRatio = float64(s.CacheRead) / float64(s.CacheCreation)
 	}
 	totalTokens := s.InputTokens + s.OutputTokens
-	return fmt.Sprintf("统计：缓存命中率 %.1f%%, 读写比 %.2f, 累计计费 %.2f 元, 总token %s",
-		s.CacheHitRate, rwRatio, s.TotalCost, FormatTokenCount(totalTokens))
+	cost := fmt.Sprintf("%.2f 元", s.TotalCost)
+	if s.UnpricedRequests > 0 {
+		cost = "unknown（未配置价格）"
+	}
+	return fmt.Sprintf("统计：缓存命中率 %.1f%%, 读写比 %.2f, 累计计费 %s, 总token %s",
+		s.CacheHitRate, rwRatio, cost, FormatTokenCount(totalTokens))
 }
 
 // ErrorLineParams holds data needed to format a per-request error log block.
@@ -408,9 +464,13 @@ func WriteSummary(w io.Writer, s Summary) {
 	if rwRatio > 0 {
 		fmt.Fprintf(&buf, "  缓存读写比: %.2f\n", rwRatio)
 	}
-	fmt.Fprintf(&buf, "  累计费用: ¥%.6f\n", s.TotalCost)
+	if s.UnpricedRequests > 0 {
+		fmt.Fprintln(&buf, "  累计费用: unknown（未配置价格）")
+	} else {
+		fmt.Fprintf(&buf, "  累计费用: ¥%.6f\n", s.TotalCost)
+	}
 	totalTokens := s.InputTokens + s.OutputTokens
-	if totalTokens > 0 {
+	if totalTokens > 0 && s.UnpricedRequests == 0 {
 		fmt.Fprintf(&buf, "  全局平均成本: %s\n", FormatAvgCost(s.TotalCost, totalTokens))
 	}
 	for model, ms := range s.ByModel {
@@ -426,7 +486,9 @@ func WriteSummary(w io.Writer, s Summary) {
 				displayName = model + " → " + actual
 			}
 		}
-		if ms.Cost > 0 {
+		if ms.UnpricedRequests > 0 {
+			fmt.Fprintf(&buf, "    %s: unknown（未配置价格，%d 次请求）\n", displayName, ms.Requests)
+		} else if ms.Cost > 0 {
 			modelTokens := ms.InputTokens + ms.OutputTokens
 			fmt.Fprintf(&buf, "    %s: ¥%.6f (%d 次, %s 输入, %s 输出, %s)\n",
 				displayName, ms.Cost, ms.Requests,
@@ -438,25 +500,30 @@ func WriteSummary(w io.Writer, s Summary) {
 	buf.WriteTo(w)
 }
 
-// ComputeCost returns the cost in RMB for a given model and usage without
-// recording it in the session stats. Returns 0 if no pricing is configured
-// for the model.
+// ComputeCost returns the cost in CNY, or -1 when no pricing is configured.
+// Use NullableCost before exposing its result in logs or JSON.
 func (s *SessionStats) ComputeCost(model string, usage Usage) float64 {
 	return s.ComputeBillingCost(model, usage.BillingUsage())
 }
 
-// ComputeBillingCost returns the cost in RMB for a given model and billing
-// usage without recording it in the session stats. Returns 0 if no pricing is
-// configured for the model.
+// ComputeBillingCost returns CNY cost, or -1 when pricing is unknown.
 func (s *SessionStats) ComputeBillingCost(model string, usage BillingUsage) float64 {
 	if s == nil {
-		return 0
+		return -1
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, ok := s.pricing[model]
 	if !ok {
-		return 0
+		return -1
 	}
 	return computeBillingCost(usage, p)
+}
+
+// NullableCost converts the internal unknown sentinel for logs and JSON.
+func NullableCost(cost float64) any {
+	if cost < 0 {
+		return nil
+	}
+	return cost
 }
