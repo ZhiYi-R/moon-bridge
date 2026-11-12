@@ -114,11 +114,15 @@ func assertMiniMaxOffers(t *testing.T, protocol string, offers []config.OfferFil
 	t.Helper()
 	want := map[string]config.ModelPricingFileConfig{
 		"MiniMax-M3": {
-			InputPrice:     0.6,
-			OutputPrice:    2.4,
-			CacheReadPrice: 0.12,
+			InputPrice:     0.3,
+			OutputPrice:    1.2,
+			CacheReadPrice: 0.06,
 		},
-		"MiniMax-M3.1-Flash": {},
+		"MiniMax-M3.1-Flash": {
+			InputPrice:     0.15,
+			OutputPrice:    0.6,
+			CacheReadPrice: 0.015,
+		},
 	}
 	if len(offers) != len(want) {
 		t.Fatalf("offer count = %d, want %d", len(offers), len(want))
